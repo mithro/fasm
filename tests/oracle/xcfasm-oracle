@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+#
+# Copyright 2017-2022 F4PGA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs the oracle (f4pga-xc-fasm) `xcfasm` tool -- FASM -> frames -> .bit,
+# end to end -- for Series7 parts, e.g.:
+#
+#   tests/oracle/xcfasm-oracle --db-root <db>/artix7 \
+#       --part xc7a35tcsg324-1 --part_file <db>/artix7/xc7a35tcsg324-1/part.yaml \
+#       --fn_in in.fasm --bit_out out.bit
+#
+# IMPORTANT: xcfasm shells out to `xc7frames2bit` *by bare name* (its
+# --frm2bit flag defaults to the literal string "xc7frames2bit", looked up
+# on PATH -- see xc_fasm/xc_fasm.py and docs/rewrite/DESIGN-xilinx-db.md
+# section 8.4), so it needs the oracle's C++ tools on PATH:
+#
+#   source tests/oracle/xilinx-env.sh
+#   tests/oracle/xcfasm-oracle ...
+#
+# Run tests/oracle/setup-xilinx.sh first to create tests/oracle/venv-xilinx.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The installed console-script entry point, not `python -m xc_fasm.xc_fasm`:
+# a script file's own directory (venv-xilinx/bin, no fasm/ subdir of its
+# own) is prepended to sys.path, never the caller's current directory, so
+# this cannot be shadowed by the live repository's fasm/ the way a `-m`
+# invocation run from the repo root could be. See tests/oracle/README.md,
+# "Avoiding the current-directory shadowing pitfall".
+BIN="$SCRIPT_DIR/venv-xilinx/bin/xcfasm"
+
+if [[ ! -x "$BIN" ]]; then
+  echo "xcfasm-oracle: $BIN not found; run tests/oracle/setup-xilinx.sh first" >&2
+  exit 1
+fi
+
+if ! command -v xc7frames2bit >/dev/null 2>&1; then
+  echo "xcfasm-oracle: WARNING: xc7frames2bit not on PATH;" \
+    "'source tests/oracle/xilinx-env.sh' first, or pass --frm2bit <path>" >&2
+fi
+
+exec "$BIN" "$@"
