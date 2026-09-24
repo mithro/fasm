@@ -29,14 +29,20 @@
 //! * an `output` module: string formatting, canonicalisation and
 //!   `merge_features` / `merge_and_sort` (`MergeModel`) equivalents.
 //!
-//! [`idstring`] and `model` exist so far; the `parser` and `output` modules
-//! follow in later tasks of `docs/rewrite/TASKS.md`.
+//! [`idstring`], `model` and `output` exist so far; the `parser` module
+//! follows in a later task of `docs/rewrite/TASKS.md`.
 
 pub mod idstring;
 pub mod model;
+pub mod output;
 
 pub use model::{
     Annotation, FasmLine, FeatureValue, ModelError, SetFasmFeature, ValueFormat, ValueParseError,
+};
+pub use output::{
+    canonical_features, fasm_line_to_string, fasm_tuple_to_string, fasm_value_to_str,
+    merge_and_sort, merge_and_sort_by_key, merge_features, set_feature_to_str,
+    try_canonical_features, write_fasm_value, write_set_feature, MergeModel, OutputError,
 };
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.
