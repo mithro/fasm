@@ -390,3 +390,17 @@ what happened, branch/commit references, open issues.
   capi-test` 12/12 incl. valgrind and the compiler matrix; worktree
   removed. Phase 4 (C and C++ wrappers) complete.
 * T3.3 (Python fast paths: fasm_tuple_to_string, merge_and_sort) started.
+* Integration fix (orchestrator): the CLI difftest tests/cli had been
+  failing on the T1.5 synthetic divergence corpus since the T2.1 merge (the
+  earlier "715 passed" run predated the corpus); documented divergent
+  classes and the invalid set are now skipped there (tools/difftest.py
+  covers them). Result: 1132 passed, 12 skipped in 59 s (was 21 minutes
+  with 149 failures). Noted: yapf 0.24.0 cannot parse
+  tests/cli/test_cli_compat.py (control characters in string literals);
+  CI's yapf job only covers fasm/ and tests/*.py.
+* T5.4/T5.5 interim (branch `worktree-agent-a201f3154dd57871c`, 11
+  commits): assembler + .frm + fasm2frames CLI done; mini-db fixtures and
+  the counter design match the oracle .frm byte for byte (dense, sparse,
+  PUDC_B); xilinx-difftest 69/69 identical; 1M line xc7a200t assembly 0.9 s
+  vs 28 s (31x); counter design only 3-4x because of the eager database
+  load (T5.3 cache will fix). Waiting for the final report.
