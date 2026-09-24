@@ -954,6 +954,60 @@ class Generator(object):
             self.rng.shuffle(lines)
         return [self.decorate(line) for line in lines]
 
+    def expected_frames(self, p):
+        """The frames prjxray's `get_frames(sparse=True)` gives for pass
+        `p` without --emit_pudc_b_pullup, from this model: every frame of a
+        bits block a feature has bits in (in use, zero filled) and every
+        stored bit, with the required and the STEPDOWN features. A cross
+        check of the model and of any assembler (--expected-frm)."""
+        bits = dict(p.design.bits)
+        in_use = set()
+
+        def use(tile, unit):
+            blocks = self.db.bits_blocks(tile)
+            for block_type, _, _, _ in unit.bits or ():
+                base, _, frames, _ = blocks[block_type]
+                in_use.update(range(base, base + frames))
+
+        for tile, units in p.placed.items():
+            for unit in units:
+                use(tile, unit)
+        for text in self.db.required_features:
+            parsed = parse_simple_feature(text)
+            if parsed is not None and parsed[0] in self.db.grid:
+                for address in parsed[2]:
+                    unit = self.features_of(parsed[0]).find(parsed[1], address)
+                    if unit is not None:
+                        use(parsed[0], unit)
+        if p is self.passes[0]:
+            saved, self.cur = self.cur, p
+            try:
+                for tile, feature in self.stepdown_features():
+                    unit = None
+                    if tile in self.db.grid:
+                        unit = self.features_of(tile).find(feature, None)
+                    if unit is None:
+                        continue
+                    use(tile, unit)
+                    for key, isset in unit_positions(
+                            unit, self.db.bits_blocks(tile)) or ():
+                        bits.setdefault(key, isset)
+            finally:
+                self.cur = saved
+        frames = dict((f, [0] * FRAME_WORDS) for f in in_use)
+        for (frame, word, bit), isset in bits.items():
+            words = frames.setdefault(frame, [0] * FRAME_WORDS)
+            if isset:
+                words[word] |= 1 << bit
+        return frames
+
+    def write_expected(self, p, path):
+        frames = self.expected_frames(p)
+        with open(path, 'w') as f:
+            for address in sorted(frames):
+                words = ','.join('0x%08X' % w for w in frames[address])
+                f.write('0x%08X %s\n' % (address, words))
+
     def write_pass(self, p, path):
         count = 0
         with open(path, 'w') as f:
@@ -1164,6 +1218,12 @@ def main(argv=None):
                         help='most files (features.fasm, features-2.fasm, '
                         '...) for features that conflict on every tile of '
                         'their type (default %(default)s)')
+    parser.add_argument('--expected-frm',
+                        action='store_true',
+                        help='also write <file>.expected.frm, the sparse '
+                        'frames of each features file (without the PUDC_B '
+                        'pull-up) computed by this generator\'s model of '
+                        'prjxray, a cross check')
     parser.add_argument('--no-errors',
                         action='store_true',
                         help='do not write errors/')
@@ -1185,7 +1245,7 @@ def main(argv=None):
     for d in (args.out_dir, os.path.join(args.out_dir, 'errors')):
         if os.path.isdir(d):
             for f in os.listdir(d):
-                if f.endswith('.fasm'):
+                if f.endswith('.fasm') or f.endswith('.expected.frm'):
                     os.remove(os.path.join(d, f))
     files = []
     lines = 0
@@ -1196,6 +1256,9 @@ def main(argv=None):
             name = 'features-%d.fasm' % p.index
         lines += gen.write_pass(p, os.path.join(args.out_dir, name))
         files.append(name)
+        if args.expected_frm:
+            expected = name[:-len('.fasm')] + '.expected.frm'
+            gen.write_expected(p, os.path.join(args.out_dir, expected))
     errors = []
     if not args.no_errors:
         errors = write_errors(gen, os.path.join(args.out_dir, 'errors'),
