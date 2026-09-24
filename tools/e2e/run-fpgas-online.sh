@@ -125,6 +125,11 @@ ALL_PAIRS=(
   acorn-pcie:acorn
 )
 
+if [[ "${1:-}" == "--config" ]]; then
+  design_config "$2" "$3"
+  exit 0
+fi
+
 if [[ "${1:-}" == "--list" ]]; then
   echo "design:board  part  kind  extra_args"
   for pair in "${ALL_PAIRS[@]}"; do
