@@ -107,7 +107,7 @@ design_config() {
     spi-flash-id:acorn)    echo "gateware/spiflash_soc_acorn.py|xc7a200tfbg484-3|artix7|--variant cle-215+ --no-compile-software|soc" ;;
     uart:acorn)            echo "gateware/uart_soc_acorn.py|xc7a200tfbg484-3|artix7|--variant cle-215+ --no-compile-software|soc" ;;
     pmod-pin-id:acorn)     echo "gateware/pmod_pin_id_acorn.py|xc7a200tfbg484-3|artix7|--variant cle-215+|plain" ;;
-    acorn-pcie:acorn)      echo "gateware/acorn_pcie.py|xc7a200tfbg484-3|artix7|--variant cle-215+|soc" ;;
+    acorn-pcie:acorn)      echo "gateware/acorn_pcie_soc.py|xc7a200tfbg484-3|artix7|--variant cle-215+|soc" ;;
     *) echo "" ;;
   esac
 }
@@ -228,7 +228,16 @@ fi
 # Find the produced FASM. "soc" builds put it under
 # designs/<design>/build/<board>/gateware/*.fasm; "plain" builds put it
 # directly under designs/<design>/build/<board>/*.fasm.
-BUILD_TREE="$DESIGN_DIR/build/$BOARD"
+# The sqrl_acorn-based scripts (uart/spi-flash-id/pmod-pin-id *_acorn.py)
+# hardcode "acorn" as their own build subdirectory regardless of --variant
+# (cle-101 == LiteFury, cle-215/cle-215+ == NiteFury/Acorn CLE-215+ all
+# share one gateware script and one output_dir/build_dir), so "litefury"
+# and "acorn" board names both look under build/acorn here.
+case "$BOARD" in
+  litefury) BUILD_SUBDIR="acorn" ;;
+  *) BUILD_SUBDIR="$BOARD" ;;
+esac
+BUILD_TREE="$DESIGN_DIR/build/$BUILD_SUBDIR"
 mapfile -t FASM_FILES < <(find "$BUILD_TREE" -name '*.fasm' 2>/dev/null)
 [[ "${#FASM_FILES[@]}" -ge 1 ]] || die "no .fasm produced under $BUILD_TREE (build reported success?); see $OUT_DIR/build.log"
 [[ "${#FASM_FILES[@]}" -eq 1 ]] || log "WARNING: multiple .fasm files found, using the first: ${FASM_FILES[*]}"
