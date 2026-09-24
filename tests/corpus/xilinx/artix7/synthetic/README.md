@@ -30,7 +30,13 @@ with the checked in reference output.
   `FasmLookupError`s (`unknown_feature.fasm`), a `KeyError` for an unknown
   tile (`unknown_tile.fasm`) or a STEPDOWN IOB tile without IO bank
   (`stepdown_no_bank.fasm`), `FasmInconsistentBits`
-  (`inconsistent.fasm`) and a syntax error (`parse_error.fasm`).
+  (`inconsistent.fasm`), a syntax error (`parse_error.fasm`), a value
+  range error alone (`value_range.fasm`: the reference fails inside a
+  ctypes callback) and followed by a syntax error, which wins
+  (`value_range_then_syntax.fasm`, and the same in a ROI's
+  `required_features`: `roi_required_precedence.{fasm,roi.json}`), and a
+  ROI whose `required_features` is a JSON object, joined in file order
+  (`roi_dict_order.{fasm,roi.json}`).
 
 No octal and no large decimal values are used: the reference's ANTLR
 parser misreads them (see the parser section of `docs/rewrite/COMPAT.md`).

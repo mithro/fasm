@@ -351,11 +351,15 @@ variables, error cases).
 | Case | Original (`xc_fasm.fasm2frames`) | Rust |
 |---|---|---|
 | Any error (rule 1) | an uncaught exception: exit code 1, a traceback on stderr ending with `<exception type>: <message>` | exit code 1, only the last line(s) of that traceback on stderr: `prjxray.fasm_assembler.FasmLookupError: Segment DB ...` (all messages, one per line), `prjxray.fasm_assembler.FasmInconsistentBits: FASM line "..." wanted to set bit (frame, word, bit) but was cleared by FASM line "..."`, `KeyError: 'TILE'`, `Exception: Parse error at L:C - ...`, `FileNotFoundError: [Errno 2] No such file or directory: 'path'`, ... with the original's message text |
-| FASM syntax error (rule 2) | `Exception: Parse error at L:C - <ANTLR message>` | same `L:C`, the Rust parser's message (as for the `fasm` tool; the parser differences of "Parser" above apply, e.g. octal values and large decimal values the ANTLR parser misreads) |
+| FASM syntax error (rule 2) | `Exception: Parse error at L:C - <ANTLR message>` | same `L:C`, the Rust parser's message (as for the `fasm` tool; the parser differences of "Parser" above apply, e.g. octal values and large decimal values the ANTLR parser misreads). The ANTLR precedence is emulated like in the `fasm` tool (`tool::error_to_report`): a syntax error anywhere in the text wins over an earlier value range error (`a = 2\nb c`: `2:2`), for the FASM file, the ROI's `required_features` and the part's `required_features.fasm` |
+| Value range error (`a = 2`, `a[3:0] = 5'h10`, `a[0:1]`) without a later syntax error (rule 4) | the parser's assertion fails inside a ctypes callback: `Exception ignored on calling ctypes callback function: ...` with an `AssertionError: (2, None, None)` traceback, then the tool dies with `TypeError: 'NoneType' object is not iterable`, exit code 1 | `Exception: Parse error at L:C - value 2 does not fit ...` at the value, exit code 1 |
+| FASM file with a non-ASCII comment or annotation value (`# café`) | the ANTLR wrapper returns `None`: `TypeError: 'NoneType' object is not iterable`, exit code 1 | assembled (exit code 0) |
+| A directory (or an unreadable file, `EIO`) as `fn_in` | the C++ parser aborts: `terminate called after throwing an instance of 'std::__ios_failure'`, SIGABRT, exit code 134 | `Exception: Parse error at 0:0 - Couldn't open file`, exit code 1 |
 | Database that cannot be opened: unknown part, missing or malformed files (rule 3) | various exceptions (`AssertionError: Part None not found in {...}`, `AssertionError: Mapping file ... does not exist`, `FileNotFoundError`, `KeyError`, `json.decoder.JSONDecodeError`, `yaml` errors, ...), some only when a tile type is first used (prjxray reads segbits lazily) | `fasm_xilinx.DbError: <file>:<line>: <message>`, when the database is opened (every tile type's segbits are read up front, so a malformed segbits file of an unused tile type is an error too) |
 | ROI `design.json` that is not valid JSON | `json.decoder.JSONDecodeError: <Python message>` | `json.decoder.JSONDecodeError: <path>: <serde_json message>` |
 | ROI bounds that are not numbers | a `TypeError` from the first comparison that fails, only if a tile is compared | `TypeError: '<=' not supported between instances of ...` when the ROI is read |
 | Order in which STEPDOWN features are added (and so of the messages of a `FasmLookupError`, or which conflict is reported, for them) | Python `set` iteration order (banks, tiles of a bank, tags; changes from run to run with the string hash seed) | first seen order: banks and tags in the order of the FASM lines, tiles in `part.json` `iobanks` then `package_pins.csv` order |
+| Several STEPDOWN features on IOB tiles without a package pin (unbonded IOBs, e.g. `LIOB33_X0Y101` on xc7a35tcsg324-1) | `KeyError` for the first such tile in `set` order (depends on `PYTHONHASHSEED`) | `KeyError` for the first such tile in file order |
 | `required_features.fasm` of the part | a `set`: arbitrary order | file order, duplicates dropped |
 | More than one PUDC_B pin in the part | `AssertionError: ((tile, site), (tile, site))` | the same text (`AssertionError: (('T1', 'IOB_Y0'), ('T2', 'IOB_X0Y1'))`) |
 | A feature that is exactly the PUDC_B tile name (no `.`), with `--emit_pudc_b_pullup` | `IndexError: list index out of range` (in the feature callback) | the same |
@@ -367,10 +371,13 @@ variables, error cases).
 
 `tools/difftest-xilinx.py` applies rules 1 (drops the oracle's
 `Traceback (most recent call last):` line and the indented frame lines),
-2 (compares parse errors up to the message) and 3 (for an exception type
-the Rust tool does not reproduce, only checks that both fail with exit
-code 1 and an error on stderr); `tests/cli/test_fasm2frames_compat.py`
-does the same.
+2 (compares parse errors up to the message), 3 (a database error: the
+oracle fails with an exception outside the reproduced ones and the Rust
+tool with `fasm_xilinx.DbError`; only the exit codes, 1, are compared)
+and 4 (an ANTLR value range error on the oracle side, a parse error on
+the Rust side: both become `<value range error>`, exit code 1); every
+other stderr difference fails. `tests/cli/test_fasm2frames_compat.py`
+applies rules 1 to 3.
 
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 

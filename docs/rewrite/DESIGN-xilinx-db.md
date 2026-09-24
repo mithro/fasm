@@ -2045,11 +2045,17 @@ like `init_frame_at_address` in the loop.
 parsed file's `Vec<FasmLine>` moved in once; error messages are rendered
 from them (`fasm_line_to_string`) only when needed. Keeping the lines is
 what makes `set_features` (STEPDOWN, PUDC_B) available without a second
-data structure. The hot path does not allocate: set bits of the value
+data structure. The common path does not allocate: set bits of the value
 are enabled straight from `FeatureValue::iter_set_bits` (not
 `canonical_features`, which collects into a `Vec` and iterates over
 every address of the range, T1.4b), with `canonical_features`' rules and
-asserts (`AssertionError` for a width 1 value other than 1).
+asserts (`AssertionError` for a width 1 value other than 1). The review
+measured 0.125 allocations per line on average over generated corpora,
+almost all on `_SING` alias tiles: `Database::lookup_feature` builds a
+string when an alias renames the site, and every bit dropped past the
+frame end gets its own warning string (the line text is now rendered
+once per feature, not once per bit). Interning, growing the bit map and
+the parser's own allocations (annotations, comments) come on top.
 
 **Semantics checked against the oracle** (all covered by
 `tests/assembler_mini_db.rs`, the difftest or the CLI test):
