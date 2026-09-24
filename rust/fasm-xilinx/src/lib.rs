@@ -27,11 +27,16 @@
 //!   configuration bits ([`Database::lookup_feature`]);
 //! * frame address arithmetic for Series7, UltraScale and UltraScale+
 //!   ([`FrameAddress`], [`Architecture::segbit_position`],
-//!   [`Part::iter_frame_addresses`]).
+//!   [`Part::iter_frame_addresses`]);
+//! * the FASM -> frames assembler: [`FasmAssembler`] (a port of
+//!   `prjxray.fasm_assembler.FasmAssembler`) and [`fasm2frames`] (the
+//!   whole flow of f4pga-xc-fasm's `xc_fasm.fasm2frames`: ROI, required
+//!   features, PUDC_B pullup, STEPDOWN propagation);
+//! * [`Frames`] and the `.frm` text format ([`Frames::write_frm`],
+//!   [`Frames::read_frm`]).
 //!
-//! Still to come (tasks T5.3-T5.6, T6.x): a binary cache of a loaded
-//! database, the `FasmAssembler` / `fasm2frames` equivalent and the
-//! bitstream writer and reader.
+//! Still to come (tasks T5.3, T5.6, T6.x): a binary cache of a loaded
+//! database and the bitstream writer and reader.
 //!
 //! The file formats and the reference behaviour are described in
 //! `docs/rewrite/DESIGN-xilinx-db.md`.
@@ -50,6 +55,19 @@
 //! }
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! Assembling a FASM file into frames and writing them as `.frm` text:
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use fasm_xilinx::{fasm2frames, Database, Fasm2FramesOptions};
+//!
+//! let db = Database::open(Path::new("prjxray-db/artix7"), Some("xc7a35tcsg324-1"))?;
+//! let options = Fasm2FramesOptions { sparse: true, ..Default::default() };
+//! let frames = fasm2frames(&db, Path::new("top.fasm"), &options, &mut |w| eprintln!("{w}"))?;
+//! frames.write_frm(&mut std::io::stdout().lock())?;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -57,6 +75,7 @@
 mod arch;
 mod db;
 mod error;
+mod frames;
 mod json;
 mod part;
 mod segbits;
@@ -71,6 +90,7 @@ pub use db::{
     TileType, TileTypeFiles,
 };
 pub use error::DbError;
+pub use frames::{FrameDifference, Frames, FrmError, FrmErrorKind};
 pub use part::{read_package_pins, BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};
 pub use segbits::{PpipType, SegBit, SegbitsEntry, SegbitsMatch, TileSegbits};
 pub use tilegrid::{BitAlias, BitsBlock, ClockRegion, Grid, Tile};
