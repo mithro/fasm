@@ -523,3 +523,11 @@ what happened, branch/commit references, open issues.
   crashes), `make fuzz`. Found pre-existing: tools/difftest.py has no class
   for the T5.4 fasm2frames error corpus (3 unexplained); classifier fix
   requested on the same branch before review.
+* Core hardening (T1.4b, T1.3b, T1.6) reviewed (Opus): 2,500 random huge
+  range cases 0 mismatches vs the oracle, difftest 0 unexplained with the
+  new `xilinx_error_corpus` class. REQUEST CHANGES: the roundtrip fuzz
+  target did not assert model equality in the non-canonical branch; fixed
+  in 2756667 (plus `*.fasm.xz` seeds, 100 seed files per target, 20,000
+  fuzz runs clean). Merged 79e66ea with --no-ff; on the merged tree: fmt,
+  clippy -D warnings clean, all workspace tests pass (229 in fasm),
+  difftest.py 100/100 explained. Worktree removed.
