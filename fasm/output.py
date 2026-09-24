@@ -25,6 +25,13 @@ merge_and_sort - Groups and sorts FASM lines, useful for non-canonical output.
 import enum
 from fasm import SetFasmFeature, FasmLine, ValueFormat
 
+try:
+    # Only used by merge_and_sort's fast path below (T3.3); see the
+    # equivalent try/except in fasm/__init__.py.
+    from fasm import _fasm_rs
+except ImportError:
+    _fasm_rs = None
+
 
 def is_only_comment(line):
     """ Returns True if line is only a comment. """
@@ -357,6 +364,28 @@ class MergeModel(object):
                     set_feature=None, annotations=None, comment=None)
 
 
+def _merge_and_sort_py(model, zero_function=None, sort_key=None):
+    """ The pure Python implementation of merge_and_sort (see its
+    docstring); also the reference merge_and_sort falls back to when the
+    fast path (fasm._fasm_rs.merge_and_sort, T3.3) is unavailable or
+    declines model. Kept under this name so both implementations can be
+    exercised directly (docs/rewrite/DESIGN-python.md,
+    tests/test_fast_paths.py). """
+    merged_model = MergeModel()
+
+    for line in model:
+        merged_model.add_to_model(line)
+
+    # Add the last processed annotation or comment blocks to the model
+    if merged_model.state != MergeModel.State.NoGroup:
+        if merged_model.current_group is not None:
+            merged_model.groups.append(merged_model.current_group)
+
+    merged_model.merge_addresses()
+    return merged_model.output_sorted_lines(
+        zero_function=zero_function, sort_key=sort_key)
+
+
 def merge_and_sort(model, zero_function=None, sort_key=None):
     """ Given a model, groups and sorts entries.
 
@@ -388,17 +417,27 @@ def merge_and_sort(model, zero_function=None, sort_key=None):
 
     Sorting logic:
      - Features will appear before raw annotations.
+
+    Uses fasm._fasm_rs.merge_and_sort (T3.3), a Rust implemented fast path,
+    when the extension is available and it can reproduce
+    _merge_and_sort_py's result exactly for (model, zero_function,
+    sort_key) (see docs/rewrite/DESIGN-python.md); otherwise falls back to
+    _merge_and_sort_py, which is also the reference: both give the same
+    lines (in the same order), or the same exception, for every input.
+    _merge_and_sort_py returns a lazy generator; the fast path returns a
+    materialised list (it must run the whole algorithm, including every
+    zero_function/sort_key call, to know whether it can handle model at
+    all), wrapped in iter() so callers of merge_and_sort still see an
+    iterator either way. This means zero_function/sort_key are called
+    eagerly, when merge_and_sort is called, rather than lazily as the
+    caller consumes the returned iterator -- the calls themselves happen
+    the same number of times, with the same arguments, in the same order,
+    only sooner.
     """
-    merged_model = MergeModel()
+    if _fasm_rs is not None:
+        fast = _fasm_rs.merge_and_sort(model, zero_function, sort_key)
+        if fast is not None:
+            return iter(fast)
 
-    for line in model:
-        merged_model.add_to_model(line)
-
-    # Add the last processed annotation or comment blocks to the model
-    if merged_model.state != MergeModel.State.NoGroup:
-        if merged_model.current_group is not None:
-            merged_model.groups.append(merged_model.current_group)
-
-    merged_model.merge_addresses()
-    return merged_model.output_sorted_lines(
-        zero_function=zero_function, sort_key=sort_key)
+    return _merge_and_sort_py(
+        model, zero_function=zero_function, sort_key=sort_key)
