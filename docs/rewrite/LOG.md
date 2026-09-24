@@ -205,3 +205,8 @@ what happened, branch/commit references, open issues.
   re-run by implementer: 0 unexplained of 5092. Pip heavy input parses at
   150-164 MB/s (below the 200 target; interning dominates) recorded under
   T8.2. Sent back to the reviewer for re-review.
+* T0.5 implemented on branch `worktree-agent-a8af0fc27a5fcfc7c` (4 commits):
+  .github/workflows/rust.yml (lint, test on 3 OSes + doc, msrv 1.88.0,
+  oracle job building the Python oracle), dependabot, workspace
+  rust-version = 1.88 (as_chunks needs 1.88), Makefile rust-doc/rust-check.
+  Sent for review.
