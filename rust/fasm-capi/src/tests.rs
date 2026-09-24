@@ -31,6 +31,30 @@ fn repo_path(rel: &str) -> std::path::PathBuf {
         .join(rel)
 }
 
+/// `examples/many.fasm`, embedded so that the tests can parse it without
+/// file system access (which Miri's default isolation forbids).
+const MANY_FASM: &str = include_str!("../../../examples/many.fasm");
+
+/// Python oracle output for `examples/many.fasm`.
+const MANY_OUT: &str = include_str!("../../../tests/corpus/oracle/many.fasm.out.txt");
+
+/// Python oracle canonical output for `examples/many.fasm`.
+const MANY_CANONICAL: &str = include_str!("../../../tests/corpus/oracle/many.fasm.canonical.txt");
+
+/// Parses `examples/many.fasm`: through `fasm_parse_file` normally, through
+/// `fasm_parse_string` under Miri (no file system access by default).
+fn parse_many() -> *mut fasm_file {
+    if cfg!(miri) {
+        return parse(MANY_FASM);
+    }
+    let path = CString::new(repo_path("examples/many.fasm").to_str().unwrap()).unwrap();
+    let mut file = ptr::null_mut();
+    // SAFETY: valid pointers; `err` may be NULL.
+    let status = unsafe { fasm_parse_file(path.as_ptr(), &mut file, ptr::null_mut()) };
+    assert_eq!(status, fasm_status::FASM_OK);
+    file
+}
+
 /// Copies an owned `fasm_string` into a `String` and frees it.
 fn take_string(s: *mut fasm_string) -> String {
     assert!(!s.is_null());
@@ -134,14 +158,9 @@ fn status_strings() {
 
 #[test]
 fn parse_and_access_many_fasm() {
-    let path = CString::new(repo_path("examples/many.fasm").to_str().unwrap()).unwrap();
-    let mut file = ptr::null_mut();
+    let file = parse_many();
     // SAFETY: valid pointers; `err` may be NULL.
     unsafe {
-        assert_eq!(
-            fasm_parse_file(path.as_ptr(), &mut file, ptr::null_mut()),
-            fasm_status::FASM_OK
-        );
         assert_eq!(fasm_file_line_count(file), 40);
         assert!(fasm_file_line(file, 40).is_null());
 
@@ -260,12 +279,9 @@ fn parse_and_access_many_fasm() {
 
         // Whole file output matches the Python oracle.
         let out = take_string(fasm_file_to_string(file, false, ptr::null_mut()));
-        let expected = std::fs::read_to_string(repo_path("tests/corpus/oracle/many.fasm.out.txt"));
-        assert_eq!(out, expected.unwrap());
+        assert_eq!(out, MANY_OUT);
         let out = take_string(fasm_file_to_string(file, true, ptr::null_mut()));
-        let expected =
-            std::fs::read_to_string(repo_path("tests/corpus/oracle/many.fasm.canonical.txt"));
-        assert_eq!(out, expected.unwrap());
+        assert_eq!(out, MANY_CANONICAL);
 
         fasm_file_free(file);
     }
@@ -352,6 +368,7 @@ fn parse_errors() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "opens files (Miri isolation)")]
 fn parse_file_errors() {
     let mut file = ptr::null_mut();
     let mut err = ptr::null_mut();
@@ -403,14 +420,17 @@ fn streaming() {
         names: Vec::new(),
         stop_after: usize::MAX,
     };
-    let user = ptr::from_mut(&mut state).cast::<c_void>();
+    // `user` is re-derived from `state` for every call (`user(&mut state)`),
+    // so the direct accesses to `state` between calls never invalidate a
+    // pointer the callback still uses (Stacked Borrows, checked by Miri).
+    let user = |state: &mut Collected| ptr::from_mut(state).cast::<c_void>();
     // SAFETY: valid pointers; `collect` accepts `user`.
     unsafe {
         let status = fasm_parse_string_cb(
             text.as_ptr().cast(),
             text.len(),
             Some(collect),
-            user,
+            user(&mut state),
             ptr::null_mut(),
         );
         assert_eq!(status, fasm_status::FASM_OK);
@@ -431,7 +451,7 @@ fn streaming() {
             text.as_ptr().cast(),
             text.len(),
             Some(collect),
-            user,
+            user(&mut state),
             ptr::null_mut(),
         );
         assert_eq!(status, fasm_status::FASM_OK);
@@ -446,7 +466,7 @@ fn streaming() {
             bad.as_ptr().cast(),
             bad.len(),
             Some(collect),
-            user,
+            user(&mut state),
             &mut err,
         );
         assert_eq!(status, fasm_status::FASM_ERR_PARSE);
@@ -455,21 +475,40 @@ fn streaming() {
         assert_eq!(state.names, [(1, "A.B".to_owned())]);
 
         // NULL callback.
-        let status = fasm_parse_string_cb(text.as_ptr().cast(), text.len(), None, user, &mut err);
+        let status = fasm_parse_string_cb(
+            text.as_ptr().cast(),
+            text.len(),
+            None,
+            user(&mut state),
+            &mut err,
+        );
         assert_eq!(status, fasm_status::FASM_ERR_INVALID_ARG);
         fasm_error_free(err);
 
-        // From a file.
+        // From a file (not under Miri: no file system access by default).
+        if cfg!(miri) {
+            return;
+        }
         state.names.clear();
         let path = CString::new(repo_path("examples/many.fasm").to_str().unwrap()).unwrap();
-        let status = fasm_parse_file_cb(path.as_ptr(), Some(collect), user, ptr::null_mut());
+        let status = fasm_parse_file_cb(
+            path.as_ptr(),
+            Some(collect),
+            user(&mut state),
+            ptr::null_mut(),
+        );
         assert_eq!(status, fasm_status::FASM_OK);
         assert_eq!(state.names.len(), 40);
         assert_eq!(
             state.names[10],
             (13, "INT_L_X10Y146.SW6BEG0.WW2END0".to_owned())
         );
-        let status = fasm_parse_file_cb(c"/nonexistent".as_ptr(), Some(collect), user, &mut err);
+        let status = fasm_parse_file_cb(
+            c"/nonexistent".as_ptr(),
+            Some(collect),
+            user(&mut state),
+            &mut err,
+        );
         assert_eq!(status, fasm_status::FASM_ERR_IO);
         fasm_error_free(err);
     }
