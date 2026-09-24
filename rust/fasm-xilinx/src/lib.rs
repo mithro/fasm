@@ -14,26 +14,19 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Xilinx bitstream support for FASM.
-//!
-//! This crate will provide, per `docs/rewrite/PLAN.md`:
-//!
-//! * a database loader for prjxray-db / prjuray-db layouts (`settings.sh`,
-//!   `tilegrid.json`, `segbits_*.db`, `ppips_*.db`, `mask_*.db`,
-//!   `part.yaml` / `part.json`, `package_pins.csv`), with an optional
-//!   content hashed binary cache;
-//! * a `FasmAssembler` equivalent of `prjxray.fasm_assembler` +
-//!   `xc_fasm.fasm2frames`, producing frames from FASM features;
-//! * a bitstream writer/reader equivalent of prjxray `xc7frames2bit` for
-//!   Series7, UltraScale and UltraScale+ (prjuray) architectures.
-//!
-//! None of the above exists yet; this crate currently only depends on the
-//! `fasm` core crate for the workspace skeleton (task T0.3).
+//! Xilinx bitstream support for FASM (work in progress, task T5.2):
+//! frame addresses and the segbits / pseudo PIP tables of prjxray-db and
+//! prjuray-db. See `docs/rewrite/DESIGN-xilinx-db.md`.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn depends_on_fasm_crate() {
-        assert!(!fasm::VERSION.is_empty());
-    }
-}
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+mod arch;
+mod error;
+mod segbits;
+
+pub use arch::{
+    Architecture, BitPosition, BitPositionError, BlockType, FrameAddress, FrameAddressFields,
+};
+pub use error::DbError;
+pub use segbits::{PpipType, SegBit, SegbitsEntry, SegbitsMatch, TileSegbits};

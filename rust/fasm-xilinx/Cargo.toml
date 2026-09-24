@@ -14,6 +14,10 @@ path = "src/lib.rs"
 
 [dependencies]
 fasm = { path = "../fasm" }
+# Hasher of the IdString keyed maps (same as the fasm interner).
+foldhash = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true
