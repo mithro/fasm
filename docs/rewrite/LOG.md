@@ -562,3 +562,8 @@ what happened, branch/commit references, open issues.
   pass, real db cache tests 6/6, xilinx-difftest 107/107 fasm2frames,
   60/60 xcfasm, 6/6 bitread identical with the cache on. Worktree
   removed. Remaining cache work is T5.3b.
+* Container restart interrupted the T6.2 agent before its first commit
+  (worktree clean at 57e7d1f, reconnaissance scratch in its target/t62
+  kept); resumed from its transcript. T5.9 (per database synthetic
+  corpus generator + all-parts difftest over artix7/kintex7/spartan7/
+  zynq7) started (Opus) in the slot freed by the T5.3 merge.
