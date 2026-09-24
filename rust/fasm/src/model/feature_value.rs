@@ -355,6 +355,13 @@ impl FeatureValue {
     }
 
     /// Returns `self << n`.
+    ///
+    /// Allocates `O(n)` bits (roughly `n / 8` bytes, on the heap once that
+    /// exceeds [`INLINE_BITS`]): there is no upper bound on `n` for the
+    /// caller to accidentally exceed, so a caller building a value from
+    /// untrusted or unchecked input (e.g. a `FeatureAddress` bit index
+    /// straight from parsed text) should bound `n` itself first rather
+    /// than relying on this to fail fast.
     #[must_use]
     pub fn shl(&self, n: u32) -> Self {
         if n == 0 || self.is_zero() {

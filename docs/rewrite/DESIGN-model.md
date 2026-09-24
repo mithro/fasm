@@ -61,12 +61,14 @@ parse error in the Rust parser (T1.3), to be recorded in
 ## `SetFasmFeature::new` vs `new_unchecked`
 
 `new` reproduces the asserts scattered across
-`fasm/output.py::set_feature_width`/`set_feature_to_str` and
+`fasm/__init__.py::set_feature_width`/`set_feature_to_str` and
 `fasm/parser/textx.py::set_feature_model_to_tuple` as a `Result`:
-`end` without `start`, `end < start`, and a value that needs more bits than
-the address width allows are all rejected with a `ModelError` instead of
-panicking. `new_unchecked` skips all of that for the parser's (T1.3) hot
-path, where the grammar and width checks will already have been applied
+`end` without `start`, `end < start`, a `FeatureAddress` range that does not
+fit in a `u32` (`start == 0, end == u32::MAX`), and a value that needs more
+bits than the address width allows are all rejected with a `ModelError`
+instead of panicking or overflowing. `new_unchecked` skips all of that for
+the parser's (T1.3) hot path, where the grammar and width checks will
+already have been applied
 while parsing; `SetFasmFeature::width()` (and anything else that assumes
 the invariant) documents that it can panic if `new_unchecked` was used to
 build an invalid value.
