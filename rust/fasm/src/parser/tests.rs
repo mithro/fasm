@@ -805,13 +805,13 @@ fn lines_iterator_line_numbers() {
     );
 }
 
-/// Huge values are handled in time linear in their length, whether they
-/// are accepted, rejected by a width check or rejected by the decimal
-/// digit limit, and error messages stay short.
-#[test]
-fn huge_values_are_fast_and_errors_short() {
+/// Shared test cases for `huge_values_are_fast_and_errors_short` (always
+/// run, generously timed / correctness only) and
+/// `huge_values_strict_timing` (`#[ignore]`d, tightly timed; see T1.3b in
+/// `docs/rewrite/TASKS.md`).
+fn huge_value_timing_cases() -> Vec<(String, Option<ParseErrorKind>)> {
     let mb = 1 << 20;
-    let cases: Vec<(String, Option<ParseErrorKind>)> = vec![
+    vec![
         // Decimal values: over the digit limit, or too wide.
         (
             format!("a = {}", "9".repeat(mb)),
@@ -878,14 +878,25 @@ fn huge_values_are_fast_and_errors_short() {
             format!("a[{}]", "9".repeat(mb)),
             Some(ParseErrorKind::AddressOutOfRange),
         ),
-    ];
-    for (input, expected) in cases {
+    ]
+}
+
+/// Runs [`huge_value_timing_cases`], asserting correctness (result/error
+/// kind, short error messages) unconditionally and timing against
+/// `budget` per case.
+///
+/// `budget` is deliberately a parameter rather than a hardcoded constant:
+/// see `huge_values_are_fast_and_errors_short` (generous, always run) and
+/// `huge_values_strict_timing` (tight, `#[ignore]`d) below for why two
+/// different budgets exist for the same cases (T1.3b).
+fn assert_huge_values_fast(budget: std::time::Duration) {
+    for (input, expected) in huge_value_timing_cases() {
         let start = std::time::Instant::now();
         let result = parse_fasm_string(&input);
         let elapsed = start.elapsed();
         assert!(
-            elapsed < std::time::Duration::from_millis(500),
-            "{elapsed:?} for {}...",
+            elapsed < budget,
+            "{elapsed:?} (budget {budget:?}) for {}...",
             &input[..40.min(input.len())]
         );
         match (result, expected) {
@@ -897,6 +908,38 @@ fn huge_values_are_fast_and_errors_short() {
             (r, _) => panic!("unexpected {:?} for {}...", r.map(|_| ()), &input[..40]),
         }
     }
+}
+
+/// Huge values are handled in time roughly linear in their length, whether
+/// they are accepted, rejected by a width check or rejected by the decimal
+/// digit limit, and error messages stay short.
+///
+/// # T1.3b: timing budget
+///
+/// This used to assert a tight, 500 ms (debug build) budget unconditionally
+/// and was observed to fail spuriously once under full `cargo test
+/// --workspace` parallel load (many other tests competing for CPU, not an
+/// actual regression in the parser). The correctness assertions
+/// (`assert_huge_values_fast`'s match on result/error kind and message
+/// length) still run unconditionally and are the real regression coverage
+/// for this test; the timing assertion here uses a generous default budget
+/// (5 s per case) that stays meaningful — a quadratic-or-worse regression
+/// on a ~1-10 MB input would take far longer than 5 s even on a loaded
+/// machine, so this still catches an accidental return to `O(n^2)` — while
+/// no longer flaking under contention.
+///
+/// Setting `FASM_TIMING_TESTS=1` switches this test to the original tight
+/// 500 ms budget, for a deliberate, opt-in performance check (e.g. a local
+/// run on a quiet machine, or a dedicated perf CI lane) instead of running
+/// the separate `#[ignore]`d `huge_values_strict_timing` test below.
+#[test]
+fn huge_values_are_fast_and_errors_short() {
+    let budget = if std::env::var("FASM_TIMING_TESTS").as_deref() == Ok("1") {
+        std::time::Duration::from_millis(500)
+    } else {
+        std::time::Duration::from_secs(5)
+    };
+    assert_huge_values_fast(budget);
 
     let e = parse_fasm_string(&format!("a[257:0] = 'hF{}", "0".repeat(64))).unwrap_err();
     assert_eq!(
@@ -909,6 +952,19 @@ fn huge_values_are_fast_and_errors_short() {
         e.message,
         "value 31 does not fit in the declared width of 4 bit(s)"
     );
+}
+
+/// Strict variant of `huge_values_are_fast_and_errors_short`'s timing
+/// check (the original 500 ms per-case budget), kept available on demand
+/// (`cargo test -p fasm --lib -- --ignored huge_values_strict_timing`,
+/// ideally `--release` and on an otherwise quiet machine) rather than run
+/// by default, since a busy CI machine running the full workspace test
+/// suite in parallel is exactly the environment T1.3b found it flaking in.
+#[test]
+#[ignore = "strict timing budget; flakes under parallel CI load, run explicitly on demand \
+            (T1.3b) or set FASM_TIMING_TESTS=1 on huge_values_are_fast_and_errors_short"]
+fn huge_values_strict_timing() {
+    assert_huge_values_fast(std::time::Duration::from_millis(500));
 }
 
 #[test]

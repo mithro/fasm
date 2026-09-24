@@ -1,0 +1,42 @@
+[package]
+name = "fasm-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone from the top level `fasm` workspace (see `../../../Cargo.toml`'s
+# `[workspace] exclude`): cargo-fuzz requires nightly (`-Z sanitizer` /
+# `-Cinstrument-coverage` via `RUSTFLAGS`, and a `-Z build-std`-adjacent
+# libfuzzer runtime), which the rest of the workspace (built and tested on
+# stable, MSRV 1.88) must not depend on.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.fasm]
+path = ".."
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip"
+path = "fuzz_targets/roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "merge"
+path = "fuzz_targets/merge.rs"
+test = false
+doc = false
+bench = false

@@ -38,6 +38,12 @@ default-members = [
     "rust/fasm-xilinx",
     "rust/fasm-capi",
 ]
+# rust/fasm/fuzz (T1.6) is a standalone cargo-fuzz crate (it declares its own
+# empty `[workspace]`, see its Cargo.toml) that requires nightly; excluded
+# here too so it is never implicitly picked up by a `cargo build`/`test`
+# run in this workspace, which targets stable (MSRV 1.88, see
+# `workspace.package.rust-version` below).
+exclude = ["rust/fasm/fuzz"]
 
 [workspace.package]
 version = "0.1.0"

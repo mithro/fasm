@@ -173,6 +173,34 @@ xilinx-difftest:
 
 .PHONY: xilinx-difftest
 
+# Fuzzing (T1.6, rust/fasm/fuzz/; see its README.md). Needs `cargo-fuzz`
+# (`cargo install cargo-fuzz`) and a nightly toolchain (`rustup toolchain
+# install nightly`); rust/fasm/fuzz is excluded from the main workspace
+# (see Cargo.toml's `[workspace] exclude`) so plain `rust-build`/`rust-test`
+# never need either. FUZZ_SECONDS is the libFuzzer `-max_total_time` per
+# target (default 600s = 10 minutes); FUZZ_JOBS is libFuzzer `-jobs`
+# (default 2, per the task brief's 4-core guidance).
+FUZZ_TARGETS := parse roundtrip merge
+FUZZ_SECONDS ?= 600
+FUZZ_JOBS ?= 2
+
+# (Re)populate fuzz/corpus/<target>/ from tests/corpus/**/*.fasm and
+# examples/*.fasm; see rust/fasm/fuzz/seed-corpus.sh.
+fuzz-corpus:
+	rust/fasm/fuzz/seed-corpus.sh
+
+.PHONY: fuzz-corpus
+
+# Run every fuzz target for FUZZ_SECONDS seconds each.
+fuzz: fuzz-corpus
+	@for target in $(FUZZ_TARGETS); do \
+		echo "==> fuzzing $$target for $(FUZZ_SECONDS)s (-jobs=$(FUZZ_JOBS))"; \
+		( cd rust/fasm && cargo +nightly fuzz run $$target -- \
+			-max_total_time=$(FUZZ_SECONDS) -jobs=$(FUZZ_JOBS) ) || exit 1; \
+	done
+
+.PHONY: fuzz
+
 # C API (rust/fasm-capi, include/fasm/fasm.h; see docs/rewrite/DESIGN-capi.md).
 # ------------------------------------------------------------------------
 
