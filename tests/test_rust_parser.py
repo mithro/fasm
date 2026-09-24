@@ -18,8 +18,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """ Tests of the Rust parser (fasm.parser.rust, the fasm._fasm_rs module).
 
-Needs the extension module to be built, e.g. `maturin develop` or
-`pip install .` into the venv running the tests.
+Needs the extension module to be built into the venv running the tests
+(see tests/README.md):
+
+* in the source tree: `maturin develop` (or `pip install -e .`), then
+  `pytest tests/test_simple.py tests/test_rust_parser.py`; a plain
+  `pip install .` does not work there, because pytest puts the repository
+  root (whose fasm/ has no extension module) first on sys.path;
+* against an installed package (`pip install .`): run pytest from outside
+  the repository root with `--import-mode=importlib`.
+
+Paths are absolute and subprocesses run in a temporary directory, so both
+ways import the same package.
 """
 
 import gc
@@ -39,7 +49,8 @@ from fasm import _fasm_rs
 from fasm.model import Annotation, FasmLine, SetFasmFeature, ValueFormat
 from fasm.parser import rust, textx
 
-ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+ROOT = os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 
 def corpus_files():
@@ -373,7 +384,7 @@ def test_threads():
     assert all(result == expected for result in results)
 
 
-def test_textx_fallback_without_extension():
+def test_textx_fallback_without_extension(tmp_path):
     """ Without the extension module, fasm.parser falls back to textX with
     the RuntimeWarning of the original package. """
     code = '\n'.join(
@@ -388,33 +399,37 @@ def test_textx_fallback_without_extension():
             '       if x.category is RuntimeWarning])',
         ])
     out = subprocess.check_output(
-        [sys.executable, '-c', code], cwd=ROOT, universal_newlines=True)
+        [sys.executable, '-c', code],
+        cwd=str(tmp_path),
+        universal_newlines=True)
     assert out.splitlines() == [
         "['textx'] textx",
         "['Unable to import fast Antlr4 parser implementation.']",
     ]
 
 
-def run_tool(*args):
+def run_tool(cwd, *args):
+    """ Runs `python -m fasm.tool` in `cwd` (not the repository root, whose
+    fasm/ would shadow an installed package). """
     return subprocess.run(
         [sys.executable, '-m', 'fasm.tool'] + list(args),
-        cwd=ROOT,
+        cwd=str(cwd),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         universal_newlines=True)
 
 
 def test_tool(tmp_path):
-    example = os.path.join('examples', 'feature_only.fasm')
+    example = os.path.join(ROOT, 'examples', 'feature_only.fasm')
     for parser in ([], ['--parser', 'rust'], ['--parser', 'antlr'],
                    ['--parser', 'textx']):
-        result = run_tool(example, *parser)
+        result = run_tool(tmp_path, example, *parser)
         assert result.stdout == 'EXAMPLE_FEATURE.X0.Y0.BLAH\n\n', parser
         assert result.stderr == ''
 
     bad = tmp_path / 'bad.fasm'
     bad.write_text('a b\n')
-    result = run_tool(str(bad))
+    result = run_tool(tmp_path, str(bad))
     assert result.stdout.startswith('Error: Parse error at 1:2 - ')
     assert result.stderr == ''
 
