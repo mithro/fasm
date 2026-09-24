@@ -182,15 +182,387 @@ reproducible without an f4pga-examples checkout.
   `xc7a35t` chip database built here (see "How the snap was made
   runnable"); this did not block the actual PnR flow and was not
   investigated further.
-* The prjxray-db copy bundled inside the openXC7 snap is not independently
-  version-pinned the way `tools/fetch-db.sh` pins prjxray-db for the
-  oracle -- it is whatever commit the snap 0.8.2 build shipped with (its
-  own `README.md`/`Info.md` carry no version marker). `PRJXRAY_DB_DIR`
-  (from `openxc7-env.sh`) points at this copy; T7.2/T7.3 should decide
-  whether that is acceptable or whether they need `tools/fetch-db.sh`'s
-  independently pinned copy instead for their comparisons.
+* The prjxray-db copy bundled inside the openXC7 snap is not pinned to
+  the same commit as `tools/fetch-db.sh`'s independently fetched
+  prjxray-db for the oracle -- it is whatever commit the snap 0.8.2 build
+  shipped with. **Correction (T7.2 review):** an earlier version of this
+  bullet claimed its own `README.md`/`Info.md` "carry no version marker
+  either" -- that is wrong: `Info.md` does record one (`Info.md`: "Created
+  using Project X-Ray version 4c157493, last updated Tue Dec 14 07:31:38
+  PM UTC 2021"; full commit `4c157493ec9f13caea4ad3f0c02f8f318f198846`).
+  It is simply a *different, independent* pin from `tools/fetch-db.sh`'s.
+  `PRJXRAY_DB_DIR` (from `openxc7-env.sh`) points at this copy; T7.2 does
+  use it (deliberately -- it is the database nextpnr-xilinx's own chipdb
+  and the whole LiteX openxc7 flow are built against, so it is the
+  correct database for reproducing what openXC7 itself did) -- see
+  "A note on prjxray-db provenance" in the T7.2 section below for the
+  exact, verified differences against the pinned copy and why they
+  matter for some designs' FASM.
 * UltraScale/UltraScale+ (prjuray) are out of scope for this task and for
   the openXC7 snap (it only covers Xilinx 7 series: Spartan7, Artix7,
   Kintex7, Zynq7).
 * Only Linux x86_64 is covered (matches this machine and both the openXC7
   snap and OSS CAD Suite release matrices).
+
+## fpgas.online-test-designs corpus (T7.2)
+
+Builds as many of the Xilinx designs of
+[fpgas.online-test-designs](https://github.com/fpgas-online/fpgas.online-test-designs)
+as feasible with LiteX + the openXC7 flow above, and collects the
+produced FASM (plus a reference `.frm`, regenerated with the byte-exact
+oracle tools, not openXC7's own bundled copies) into
+`tests/corpus/xilinx/artix7/designs/fpgas.online-test-designs/<design>/<board>/`.
+Unlike T7.1's `counter_test` (plain Verilog), these are real LiteX SoC
+targets (CPU + BIOS for several of them) -- see each design's own
+`designs/<design>/README.md` in that repository for what it verifies.
+
+### Setup
+
+```
+tools/e2e/setup-openxc7.sh                            # T7.1, once (xc7a35tcsg324-1 always)
+tools/e2e/setup-openxc7.sh --parts xc7a35tfgg484-2     # NeTV2 (from the MAIN tree, /home/user/fasm)
+tools/e2e/setup-openxc7.sh --parts xc7a100tfgg484-2    # LiteFury          (same)
+tools/e2e/setup-openxc7.sh --parts xc7a200tfbg484-3    # Acorn CLE-215+    (same; see below)
+tools/e2e/setup-litex.sh                               # pinned LiteX venv, tools/e2e/build/litex-venv
+```
+
+A pinned checkout of fpgas.online-test-designs at
+`tools/e2e/build/fpgas.online-test-designs` (gitignored) is also required;
+it was made with (git operations against a path outside this checkout are
+restricted in the agent sandbox this session ran in, hence the tarball
+detour rather than a plain `git clone` into `tools/e2e/build/`):
+
+```
+git clone https://github.com/fpgas-online/fpgas.online-test-designs.git /path/to/scratch/fpgas-src
+git -C /path/to/scratch/fpgas-src checkout 37d24079b28179558632abc12fd92af4ff00a036
+cp -a /path/to/scratch/fpgas-src/. tools/e2e/build/fpgas.online-test-designs/
+echo 37d24079b28179558632abc12fd92af4ff00a036 > tools/e2e/build/fpgas.online-test-designs/.checkout-commit
+```
+
+`tools/e2e/setup-litex.sh` installs LiteX/migen/litex-boards/litedram/
+liteeth/litepcie/litespi/litescope/pythondata-cpu-vexriscv and the two
+pythondata-software-* packages into `tools/e2e/build/litex-venv`, pinned
+to the exact git commits fpgas.online-test-designs' own `uv.lock` uses
+(see the script's header comment). `--with-riscv-gcc` additionally fetches
+the xpack RISC-V GCC cross-compiler (~100 MB) for the few designs that
+have no way to skip software compilation (see "Designs" below); most
+designs are built with `--no-compile-software` instead, since only the
+gateware/FASM matters for this task, not a working BIOS.
+
+### Running
+
+```
+tools/e2e/run-fpgas-online.sh --list              # every known design:board pair, part, extra args
+tools/e2e/run-fpgas-online.sh DESIGN BOARD         # build one (output under tools/e2e/build/out/fpgas-online/)
+tools/e2e/install-fpgas-online-corpus.sh DESIGN BOARD   # copy the result into the corpus + write its README.md
+```
+
+### A note on prjxray-db provenance
+
+**Fixed after T7.2 review; read this before comparing any `.frm` here
+against a different prjxray-db.** Every `.frm`/`.bit` in this corpus was
+regenerated with the oracle tools (`tests/oracle/{fasm2frames,
+xc7frames2bit,bitread}-oracle`) run against `$PRJXRAY_DB_DIR` from
+`tools/e2e/openxc7-env.sh` -- i.e.
+`tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db`,
+**the openXC7 snap's own bundled copy**. This is deliberate, not an
+oversight: it is the exact database nextpnr-xilinx's chipdb and the whole
+LiteX openxc7 flow are built against for these designs, so it is the
+database that reproduces what openXC7 itself actually did, bit for bit.
+
+It is **not** the independently pinned `f4pga/prjxray-db` that
+`tests/oracle/setup-xilinx.sh`'s own `tools/fetch-db.sh` fetches for the
+rest of this repository's Xilinx differential tests (`tests/oracle/build/db/prjxray-db`,
+what `tests/oracle/xilinx-env.sh`'s `PRJXRAY_DB_ROOT` points at). The two
+are different, independently maintained pins of the same underlying
+Project X-Ray reverse-engineering project and are **not always
+identical**.
+
+**Provenance of the snap's copy:** openXC7 snap `0.8.2`
+(sha256 `6b2e07ce99ef33d3a4e41e2fd2eb916f26bb0ece34a97216ed840a0032e98587`,
+same as pinned in `tools/e2e/setup-openxc7.sh`). Its bundled
+`prjxray-db/Info.md` records: *"Created using Project X-Ray version
+[4c157493](https://github.com/SymbiFlow/prjxray/commit/4c157493ec9f13caea4ad3f0c02f8f318f198846),
+last updated Tue Dec 14 07:31:38 PM UTC 2021"* -- this **does** carry a
+version marker (an earlier draft of this README's "Known limitations"
+section, written for T7.1, incorrectly claimed it did not; corrected
+above).
+
+**Verified differences (artix7 family), diffed directly against
+`tests/oracle/build/db/prjxray-db/artix7` on this machine:**
+
+| File | Difference |
+|---|---|
+| `segbits_cfg_center_mid.db` (+ its `.origin_info.db` companion) | snap has an extra line: `CFG_CENTER_MID.STARTUP.USRCCLKO_CONNECTED 26_2196 27_2197 27_2198` (also a harmless line-order difference on `ICAP_WIDTH_X16`, not a content difference) |
+| `segbits_gtp_common.db` | snap has an extra line: `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED 28_1438 28_1439 29_1438` |
+| `segbits_lioi3.db`, `segbits_lioi3_tbytesrc.db`, `segbits_rioi3_tbytesrc.db` | snap has extra `IOI_OCLKM_0`/`IOI_OCLKM_1` entries |
+| `ppips_cfg_center_bot.db`, `ppips_cfg_center_mid.db`, `ppips_cfg_center_top.db` | present **only** in the snap db (the pinned db has no `ppips_cfg_center_*.db` files at all) -- the `CFG_CENTER_STARTUP_*` pseudo-PIPs |
+
+(Spot-checked directly for `segbits_cfg_center_mid.db`, `segbits_gtp_common.db`
+and the three `ppips_cfg_center_*.db` files this session; the
+`segbits_lioi3*`/`rioi3_tbytesrc` entries are as reported by the T7.2
+review and not independently re-diffed here.)
+
+**Which designs this actually affects:** `spi-flash-id` (all four boards
+-- arty/netv2/litefury/acorn) routes its SPI clock through `STARTUPE2`'s
+`USRCCLKO` pin (see `designs/spi-flash-id/gateware/*.py`'s own
+docstring: *"Clock routed via STARTUPE2"*), which sets
+`CFG_CENTER_MID.STARTUP.USRCCLKO_CONNECTED` -- the exact tag only present
+in the snap db above. A differential test that assembles `spi-flash-id`'s
+FASM against the *pinned* db instead will therefore legitimately fail to
+find that tag (`FasmLookupError` or equivalent), not because of a bug in
+the Rust rewrite. Every other design in this corpus does not exercise
+`STARTUPE2`/`GTP`/the `CFG_CENTER` ppips and was independently verified
+identical against the Rust `fasm2frames` with *both* databases where
+applicable, and with the snap db everywhere (18/18 designs; see "Tests"
+below).
+
+**Recommendation for later tasks** (tracked by the orchestrator, not
+implemented here): `tools/fetch-db.sh` gaining an `openxc7` source that
+exposes the snap's bundled db at a stable, independent cache path (e.g.
+alongside its `prjxray`/`prjuray` sources) would let this corpus's
+differential tests select the right database by name instead of relying
+on `tools/e2e/build/openxc7`'s specific layout, and would let a
+future differential run pin *both* databases explicitly per FASM file.
+
+### A LiteX chipdb-naming quirk (Arty a7-35)
+
+`litex/build/xilinx/yosys_nextpnr.py`'s `finalize()` derives the chipdb
+filename it looks for (`$CHIPDB/<dbpart>.bin`) from the platform's *raw*,
+pre-normalisation `device` string via a regex
+(`xc7([aksz])([0-9]+)(.*)-([0-9])`), not from the corrected `--part` name.
+For most parts this just strips the trailing `-<speedgrade>` (e.g.
+`xc7a35tfgg484-2` -> `xc7a35tfgg484`), matching `setup-openxc7.sh --parts`
+naming. But Digilent Arty's `a7-35` variant has raw device
+`xc7a35ticsg324-1L` (an industrial-temperature/low-power grade LiteX
+itself has to special-case elsewhere for openXC7's `--part`/`--device`
+flags) -- the regex mis-parses it and asks for `xc7a35icsg324.bin`
+(missing the `t`), which will never exist. Rather than replicate that
+parsing bug per board or let LiteX's own hardcoded-`/snap/openxc7/current`
+auto-generation path run (unreliable in this environment -- see
+"Requires, in order" above), `run-fpgas-online.sh` probes LiteX's own
+"Chip database file '...' not found" error message on a first attempt and
+symlinks the real, pre-built chipdb under whatever name LiteX actually
+asked for, then retries once. This is transparent and self-correcting;
+nothing under the shared main-tree `tools/e2e/build/openxc7/chipdb/`
+install is ever touched or duplicated, only a per-worktree
+`tools/e2e/build/chipdb-overlay/` of symlinks.
+
+### A Yosys/abc9 `$buf` cell workaround
+
+Beyond the `$scopeinfo` strip fpgas.online-test-designs' own
+`designs/_shared/yosys_workarounds.py` already applies for openXC7
+builds, every SoC design (those with a CPU) additionally hit:
+
+```
+ERROR: Unable to place cell '$auto$rtlil_bufnorm.cc:462:bufNormalize$...', no Bels remaining of type '$buf'
+```
+
+This machine's pinned Yosys (OSS CAD Suite `2026-09-21`) + `-abc9` flow
+leaves stray RTLIL "buffer normal form" `$buf` pass-through cells behind
+that nextpnr-xilinx has no Bel type for. Unlike `$scopeinfo` (debug
+annotations, safe to `delete`), a `$buf` cell's output wire would be left
+undriven by a bare `delete` -- instead, `techmap -map +/techmap.v t:$buf`
+(inserted into `designs/_shared/yosys_workarounds.py`, right before the
+existing `$scopeinfo` delete) resolves each `$buf` into a plain
+connection.
+
+This fix is a **committed patch file**,
+`tools/e2e/patches/fpgas-online-yosys-workarounds-buf.patch` (a standard
+unified diff against `designs/_shared/yosys_workarounds.py` at the pinned
+commit) -- it is not part of fpgas.online-test-designs upstream, so it is
+kept here rather than edited into the pinned (gitignored, never
+committed) checkout by hand. `tools/e2e/run-fpgas-online.sh` applies it
+**automatically**, every run, to `tools/e2e/build/fpgas.online-test-designs`:
+it checks the target file's own content for the patch's marker comment
+first (not `patch`'s exit status -- GNU patch's `--forward` exits 1, not
+0, for a hunk it skips as already applied, which would otherwise abort
+this script under `set -e` after the first run) and only invokes
+`patch -p1 --forward` when the marker is absent, so it is a safe,
+idempotent no-op on every run after the first. Apply it by hand with:
+
+```
+patch -p1 -d tools/e2e/build/fpgas.online-test-designs --forward -r - \
+  < tools/e2e/patches/fpgas-online-yosys-workarounds-buf.patch
+```
+
+The pure-gateware designs (`pmod-loopback`, `pmod-pin-id`) never hit this
+(no CPU, much smaller/simpler netlists); every SoC design did.
+
+### Designs attempted
+
+| Design | Board | Part | Outcome | FASM lines | LiteX build time |
+|---|---|---|---|---|---|
+| pmod-loopback | arty | xc7a35tcsg324-1 | built | 294 | 6s |
+| pmod-loopback | netv2 | xc7a35tfgg484-2 | built | 37 | 5s |
+| pmod-pin-id | arty | xc7a35tcsg324-1 | built | 34578 | 22s |
+| pmod-pin-id | netv2 | xc7a35tfgg484-2 | built | 2120 | 6s |
+| pmod-pin-id | litefury | xc7a100tfgg484-2 | built | 4029 | 14s |
+| uart | arty | xc7a35tcsg324-1 | built (`--no-compile-software`) | 85331 | 62s |
+| uart | netv2 | xc7a35tfgg484-2 | built (`--no-compile-software`) | 86529 | 83s |
+| uart | litefury | xc7a100tfgg484-2 | built (`--no-compile-software`) | 88358 | 74s |
+| spi-flash-id | arty | xc7a35tcsg324-1 | built (`--no-compile-software`) | 57204 | 47s |
+| spi-flash-id | netv2 | xc7a35tfgg484-2 | built (`--no-compile-software`) | 59106 | 63s |
+| spi-flash-id | litefury | xc7a100tfgg484-2 | built (`--no-compile-software`) | 56354 | 57s |
+| ethernet-test | arty | xc7a35tcsg324-1 | built (`--no-compile-software`) | 252344 | 205s |
+| ethernet-test | netv2 | xc7a35tfgg484-2 | built (`--no-compile-software`) | 310255 | 227s |
+| ddr-memory | arty | xc7a35tcsg324-1 | built (`--no-compile-software`) | 189674 | 145s |
+| ddr-memory | netv2 | xc7a35tfgg484-2 | built (`--no-compile-software`) | 273281 | 205s |
+| pcie-enumeration | netv2 | xc7a35tfgg484-2 | **failed** -- see below | -- | -- |
+| pmod-pin-id | acorn | xc7a200tfbg484-3 | built | 4057 | 31s |
+| uart | acorn | xc7a200tfbg484-3 | built (`--no-compile-software`) | 89363 | 93s |
+| spi-flash-id | acorn | xc7a200tfbg484-3 | built (`--no-compile-software`) | 56825 | 71s |
+| acorn-pcie | acorn | xc7a200tfbg484-3 | **failed** -- see below | -- | -- |
+
+Not attempted: `fomu`/`tt` variants of every design (Lattice iCE40, out of
+scope for this Xilinx-only task).
+
+### `pcie-enumeration` / `acorn-pcie` (GTP/PCIe): failure, precisely
+
+`pcie-enumeration/netv2` (`--variant a7-35`) needed two additional fixes
+just to reach synthesis (neither GTP-related, both applied in
+`run-fpgas-online.sh`, safe for every other design too):
+
+1. This script builds a `Builder` directly (not through
+   `build_soc`/`LiteXArgumentParser`'s `--no-compile-software`), so it
+   always tries to compile the BIOS -- needing a RISC-V cross compiler on
+   `PATH`. Fixed by installing one (`tools/e2e/setup-litex.sh
+   --with-riscv-gcc`, xpack RISC-V GCC 14.2.0-3) and adding its `bin/` to
+   `PATH`.
+2. `Builder._check_meson()` then requires `meson`/`ninja` on `PATH` (they
+   are pip-installed into `tools/e2e/build/litex-venv` by
+   `setup-litex.sh` already, just not on `PATH` outside the venv). Fixed
+   by adding the venv's `bin/` to `PATH` too.
+
+With both fixed, synthesis itself fails:
+
+```
+ERROR: Module `\pcie_s7' referenced in module `\kosagi_netv2' in cell `\pcie_s7' is not part of the design.
+```
+
+`pcie_s7` is LitePCIe's Xilinx Series-7 PCIe PHY wrapper
+(`litepcie.phy.s7pciephy`), which instantiates Xilinx's `PCIE_2_1` hard
+IP block via a Vivado-generated, IP-catalogue-specific wrapper module
+that is never present as plain Verilog for Yosys to read -- Vivado
+normally supplies it from its own IP catalogue at synthesis time. There
+is no open source implementation of this wrapper for nextpnr-xilinx/
+openXC7 to synthesize against (unlike LUTs/FFs/BRAM/DSP, the `PCIE_2_1`
+hard block's internal netlist is not part of prjxray's reverse-engineered
+database). This is a genuine, structural GTP/PCIe-hard-IP gap in the
+openXC7 flow, not a configuration problem -- consistent with the T7.2
+brief's expectation that these designs "may fail with openXC7". Not
+investigated further (would need an open source `PCIE_2_1` model, out of
+scope for this task).
+
+`acorn-pcie/acorn` (`--variant cle-215+`) fails even earlier, before
+synthesis, for a related but distinct reason:
+
+```
+AttributeError: 'XilinxYosysNextpnrToolchain' object has no attribute 'pre_placement_commands'
+```
+
+`litepcie.phy.s7pciephy.S7PCIEPHY.add_gt_loc_constraints()` (called from
+`acorn_pcie_soc.py`'s `AcornPCIeSoC.__init__`, to pin the PCIe GTP
+channel location) reads
+`self.platform.toolchain.pre_placement_commands`, an attribute LiteX's
+Vivado toolchain class provides (to inject a Vivado Tcl constraint) but
+the `openxc7`/`yosys+nextpnr` toolchain class
+(`XilinxYosysNextpnrToolchain`) does not -- confirming litepcie's Xilinx
+Series-7 PHY integration code is Vivado-only, independent of and prior to
+the `pcie_s7` blackbox-module gap `pcie-enumeration` hits. Neither is a
+configuration problem to work around; both are genuine gaps in
+openXC7/LiteX's support for Xilinx PCIe hard IP. Not investigated
+further, same rationale as `pcie-enumeration` above.
+
+### Larger parts: xc7a100t (LiteFury) and xc7a200t (Acorn CLE-215+)
+
+Per T7.1's measurements (`xc7a200t`'s chip database export alone exceeded
+8 GiB RAM and was still climbing after 4+ minutes on this machine),
+`xc7a100tfgg484-2`'s chipdb was built first, timeboxed and RAM-watched:
+
+```
+tools/e2e/setup-openxc7.sh --parts xc7a100tfgg484-2
+```
+
+completed in 156s, peak RSS ~4.0 GiB (well under
+this machine's 16 GiB) -- **no memory pressure issue on this machine**,
+unlike T7.1's xc7a200t note; three LiteFury designs (uart, spi-flash-id,
+pmod-pin-id, `--variant cle-101`) were then built successfully (see
+table above). Building it also surfaced a second `_acorn.py`-specific
+quirk: `uart_soc_acorn.py`/`spiflash_soc_acorn.py`/`pmod_pin_id_acorn.py`
+all hardcode `"acorn"` as their own build subdirectory name regardless of
+`--variant` (LiteFury/NiteFury/Acorn CLE-215+ share one gateware script
+per design), so `run-fpgas-online.sh` maps the `litefury` board name to
+`build/acorn/` when locating the produced FASM.
+
+`xc7a200tfbg484-3` (Acorn CLE-215+; note this is the litex-boards default
+device for the `cle-215+` variant, `xc7a200t-fbg484-3` with the dash
+stripped -- *not* `xc7a200tsbg484-2` as an earlier draft of this task
+assumed):
+
+```
+ulimit -v 12000000   # ~11.4 GiB virtual memory cap, so a runaway export
+                      # fails cleanly instead of OOM-killing the machine
+tools/e2e/setup-openxc7.sh --parts xc7a200tfbg484-3
+```
+
+completed successfully in 349s, producing a 317 MiB chipdb, peak RSS
+~8.5 GiB (this machine has 16 GiB total). This **succeeded** on this
+machine, unlike T7.1's report of the same part's `bbaexport.py` alone
+still climbing past 8 GiB and unfinished after 4+ minutes -- plausibly a
+difference in available headroom between sessions (concurrent load from
+other work) rather than a hard limit; `ulimit -v 12000000` was in effect
+the whole time and never triggered. Acorn CLE-215+ designs (uart,
+spi-flash-id, pmod-pin-id, `--variant cle-215+`) then built successfully
+too -- see the table above.
+
+### Tests
+
+`tests/e2e/test_fpgas_online.py`: for every committed design/board in
+the corpus, its FASM parses cleanly (tries `target/release/fasm`, then an
+installed `fasm` Python package, then the pristine oracle -- whichever is
+available) and is a substantial number of lines (not empty/truncated).
+Two further checks are written to activate automatically once their
+prerequisites land in this checkout, skipping cleanly until then, and
+**always** against the openXC7 snap's own bundled prjxray-db specifically
+(see "A note on prjxray-db provenance" above) -- never the differently
+pinned `tests/oracle` db:
+
+* a byte-for-byte comparison of `target/release/fasm2frames`'s output
+  against each committed reference `.frm`;
+* running `tools/difftest-xilinx.py` (T5.9's frames differential test
+  driver, `--db-cache` pointed at the snap db) over the one subset of
+  this corpus its own hardcoded single-part-per-family table can validly
+  cover (the arty-board, plain-text FASM files -- see the module
+  docstring in `tests/e2e/test_fpgas_online.py` for why).
+
+Neither `target/release/fasm2frames` nor `tools/difftest-xilinx.py`
+exists in *this* checkout as committed (T5.4/T5.5, the Rust `fasm-xilinx`
+frame assembler / `fasm2frames` CLI, is `[r]` in `docs/rewrite/TASKS.md`
+-- in review, not yet merged into this branch), so both skip cleanly by
+default: **36 passed / 19 skipped**, ~93s
+(`pytest tests/e2e/test_fpgas_online.py -v`).
+
+Verified once with `target/release/{fasm,fasm2frames}` symlinked in from
+an already-built main-tree checkout (`ln -s /home/user/fasm/target/release/{fasm,fasm2frames} target/release/`,
+not committed -- `target/` is gitignored): **54 passed / 1 skipped**
+(only `test_difftest_xilinx_over_corpus` still skips, since
+`tools/difftest-xilinx.py` genuinely is not present in this checkout).
+All **18/18** `test_corpus_frames_match_rust_fasm2frames` cases passed --
+the Rust `fasm2frames`, run against the snap db, reproduces every
+committed dense `.frm` byte for byte, for every design/board in this
+corpus, confirming the T7.2 review's own finding.
+
+### Corpus summary
+
+18 design/board pairs built and committed, 2 failed for documented,
+structural (not configuration) reasons (`pcie-enumeration`/netv2,
+`acorn-pcie`/acorn -- both need Xilinx PCIe hard IP openXC7 does not
+support). Corpus on-disk size:
+`tests/corpus/xilinx/artix7/designs/fpgas.online-test-designs/` is 11 MiB
+total. FASM plain or `xz`'d over 1 MiB, `.frm` (dense + sparse) always
+`xz`'d, no `.bit` files ever committed (not byte-reproducible -- embeds a
+build timestamp; each design's own README.md records its sha256
+instead).
+
+
