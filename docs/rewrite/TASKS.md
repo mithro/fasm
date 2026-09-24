@@ -42,9 +42,9 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       loudly document `IdString::get` as not a membership test; document that
       raw handle values are insertion order dependent; zero allocation test;
       `Display` padding test (after T1.1).
-- [r] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
+- [x] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
       `SetFasmFeature`, `Annotation`, `FasmLine` + tests.
-- [ ] T1.3 `parser` module: tokenizer + line parser implementing the full
+- [~] T1.3 `parser` module: tokenizer + line parser implementing the full
       grammar with exact ANTLR/textX compatible acceptance and error
       behaviour; streaming and whole-file APIs; tests from
       `examples/*.fasm` and a hand written edge case table (after T1.2).

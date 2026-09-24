@@ -125,3 +125,12 @@ what happened, branch/commit references, open issues.
   rejects a declared width wider than the address width (`a.b[0] = 3'b001`),
   ANTLR accepts it. Fix in progress.
 * T7.1 (openXC7 toolchain setup script) started.
+* T1.2 done: fixes 4771f31 (checked width arithmetic, new
+  `ModelError::AddressRangeTooWide`, 4 tests) and 5ed2f07 (citations, shl
+  doc note) verified by the orchestrator; merged with --no-ff. 137 tests
+  pass, fmt/clippy clean.
+* T1.3 (parser) started. Decision for the parser, to be recorded in
+  COMPAT.md: follow the ANTLR parser where textX and ANTLR disagree
+  (escaped quotes in annotation values, declared width wider than the
+  address width, `_` in plain decimals) except where ANTLR is plainly buggy
+  (32 bit truncation of addresses/plain values), and document every case.
