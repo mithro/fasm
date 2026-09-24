@@ -34,6 +34,11 @@ edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chipsalliance/fasm"
 authors = ["The F4PGA Authors"]
+# Minimum supported Rust version, verified in CI (.github/workflows/rust.yml,
+# the `msrv` job): `rust/fasm/src/idstring/interner.rs` uses
+# `<[u8]>::as_chunks`, stabilized in 1.88.0 (the workspace failed to build
+# on 1.87.0 and below when this was checked).
+rust-version = "1.88"
 
 # Dependencies shared by two or more workspace crates are declared here and
 # pulled in by member crates with `workspace = true`. Kept empty until a

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+rust-version.workspace = true
 description = "pyo3 extension module fasm._fasm_rs, built with maturin, exposing the fasm crate to the existing fasm Python package."
 
 [lib]
