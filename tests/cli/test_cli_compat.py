@@ -348,3 +348,29 @@ def test_broken_pipe(tmp_path):
         assert proc.returncode == 1, (tool, stderr)
         if tool == RUST_CLI:
             assert stderr == b''
+
+
+@pytest.mark.parametrize('argv', [['-h'], ['--help', '--bogus']])
+def test_help_with_closed_stdout(argv):
+    """`fasm -h >&-` (documented difference): Python's `sys.stdout` is None,
+    so argparse prints the help to stderr; the Rust runtime reopens a
+    closed stdout as /dev/null, so the help is discarded. Both exit with
+    0."""
+
+    def run_closed(tool):
+        env = dict(os.environ)
+        env.pop('COLUMNS', None)
+        env.pop('LINES', None)
+        result = subprocess.run(
+            [str(tool)] + argv,
+            cwd=str(ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            preexec_fn=lambda: os.close(1),
+            timeout=600)
+        return result.stderr, result.returncode
+
+    help_text = run(RUST_CLI, ['--help'])[0]
+    assert run_closed(ORACLE) == (help_text, 0)
+    assert run_closed(RUST_CLI) == (b'', 0)
