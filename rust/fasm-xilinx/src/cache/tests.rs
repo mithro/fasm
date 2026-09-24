@@ -825,6 +825,80 @@ fn recent_stat_fingerprints_are_not_trusted() {
 }
 
 #[test]
+fn recently_changed_sources_are_not_cached() {
+    let copy = copy_db("mini-db");
+    let root = copy.path().join("mini-db");
+    let cache = TempDir::new("recent");
+    let dir = cache.path();
+    let key = CacheKey::new(dir, &root, MINI_PART).unwrap();
+    let hour = Duration::from_secs(3600);
+
+    // Every file was just copied: with a one hour window, nothing is
+    // written (the database is still returned).
+    let (db, written) = build_from_text(&key, &root, hour).unwrap();
+    assert!(db == Database::open(&root, Some(MINI_PART)).unwrap());
+    let error = written.unwrap_err();
+    assert!(error.contains("not cached this time"), "{error}");
+    assert!(cache_files(dir).unwrap().is_empty());
+
+    // Two hours old: written. (Only the modification time can be set;
+    // the status change time of the copies is still recent on Unix, so
+    // this part is checked with the modification time alone.)
+    let old = SystemTime::now() - 2 * hour;
+    let mut sources = Plan::new(&root, MINI_PART)
+        .unwrap()
+        .fingerprint(&root, false)
+        .unwrap();
+    for s in &sources {
+        if s.kind == SourceKind::Content {
+            std::fs::File::options()
+                .write(true)
+                .open(root.join(&s.path))
+                .unwrap()
+                .set_modified(old)
+                .unwrap();
+        }
+    }
+    let now = SystemTime::now();
+    assert!(sources::changed_recently(&root, [&sources, &sources], now, hour).is_some());
+    for s in &mut sources {
+        if let Some(stat) = &mut s.stat {
+            let secs = old
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            *stat = StatFingerprint {
+                mtime: (secs, 0),
+                ctime: (secs, 0),
+                ..*stat
+            };
+        }
+    }
+    assert_eq!(
+        sources::changed_recently(&root, [&sources, &sources], now, hour),
+        None
+    );
+    // One recent source in either list is enough.
+    let mut recent = sources.clone();
+    let i = recent
+        .iter()
+        .position(|s| s.kind == SourceKind::Content)
+        .unwrap();
+    if let Some(stat) = &mut recent[i].stat {
+        stat.ctime = (i64::MAX / 2, 0);
+        assert_eq!(
+            sources::changed_recently(&root, [&sources, &recent], now, hour),
+            Some(recent[i].path.as_str())
+        );
+    }
+
+    // With the test window (zero), the same database is cached.
+    let (_, written) = build_from_text(&key, &root, RACY_WINDOW).unwrap();
+    written.unwrap();
+    assert!(is_hit(&open_checked(&root, MINI_PART, dir)));
+}
+
+#[test]
 fn file_names() {
     let root = Path::new("/db/artix7");
     let name = cache_file_name(Layout::Prjxray, "xc7a35tcsg324-1", root);

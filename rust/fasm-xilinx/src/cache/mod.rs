@@ -73,7 +73,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::arch::Architecture;
 use crate::db::{detect_layout, tile_type_names, Database, Layout};
@@ -257,7 +257,7 @@ pub fn open(
         Err(reason) => reason,
     };
     options.log(|| format!("rebuilding {}: {reason}", key.file.display()));
-    let (db, written) = build_from_text(&key, db_root)?;
+    let (db, written) = build_from_text(&key, db_root, sources::RACY_WINDOW)?;
     let write_error = written.err();
     match &write_error {
         Some(e) => options.log(|| format!("not written: {e}")),
@@ -655,15 +655,23 @@ fn load(key: &CacheKey, db_root: &Path, full: bool) -> Result<Loaded, String> {
 
 /// Loads the text files and writes the cache file; the error of the
 /// write (the database is returned either way).
+///
+/// The sources are stat'ed *before* the text files are loaded, hashed (on
+/// another thread) while they are loaded, and stat'ed again after that.
+/// The loader and the hashing read each file at different moments, so
+/// the hash could be of other bytes than the tables if a file were
+/// rewritten in between; such a rewrite changes the size or the
+/// timestamps, but with coarse timestamps (1 s on ext3) a same size
+/// rewrite within the same second does not. So the file is not written
+/// when the two stats differ, and also when any source changed less than
+/// `window` ([`sources::RACY_WINDOW`]) before the build started, or later:
+/// then the next open (of a database left alone for `window`) writes it.
 fn build_from_text(
     key: &CacheKey,
     db_root: &Path,
+    window: Duration,
 ) -> Result<(Database, Result<(), String>), DbError> {
-    // The sources are stat'ed *before* the text files are loaded, hashed
-    // (on another thread) while they are loaded, and stat'ed again after
-    // that: a file changed at any point in between makes the fingerprints
-    // differ and the cache file is not written, so a cache file can never
-    // claim contents it was not built from.
+    let start = SystemTime::now();
     let before = Plan::new(db_root, &key.part).and_then(|plan| {
         let stats = plan
             .fingerprint(db_root, false)
@@ -721,6 +729,14 @@ fn build_from_text(
             || !same_fabric
         {
             return Err("the database changed while it was loaded".to_owned());
+        }
+        if let Some(path) =
+            sources::changed_recently(db_root, [&sources, &after_sources], start, window)
+        {
+            return Err(format!(
+                "{path} changed less than {} s before the build: not cached this time",
+                window.as_secs()
+            ));
         }
         sources::drop_racy(&mut sources, SystemTime::now());
         let info = CacheInfo {
@@ -861,7 +877,7 @@ impl From<DbError> for CacheError {
 pub fn build(dir: &Path, db_root: &Path, part: &str) -> Result<CacheInfo, CacheError> {
     let key = CacheKey::new(dir, db_root, part)
         .ok_or_else(|| CacheError::NotADatabase(db_root.to_path_buf()))?;
-    let (_, written) = build_from_text(&key, db_root)?;
+    let (_, written) = build_from_text(&key, db_root, sources::RACY_WINDOW)?;
     written.map_err(CacheError::Write)?;
     read_info(&key.file).map_err(CacheError::Write)
 }

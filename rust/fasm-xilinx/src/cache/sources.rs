@@ -71,11 +71,18 @@ pub struct StatFingerprint {
 /// fingerprint to be trusted (the "racy git" problem): with a coarse
 /// timestamp granularity (1 s on ext3 and HFS+, 2 s on FAT, clock skew on
 /// network file systems), a file changed again right after it was
-/// fingerprinted can keep the same size and times. Such a file is
-/// recorded without a stat fingerprint, so its content is hashed on every
-/// load until a load finds it old enough and records its fingerprint.
-/// Zero in the unit tests (the window is tested by itself), which rewrite
-/// files and reload them immediately.
+/// fingerprinted can keep the same size and times.
+///
+/// * On load, such a fingerprint is not recorded: the file is hashed on
+///   every load until a load finds it old enough.
+/// * A cache file is not written at all when a source it reads changed
+///   less than this before the build started (or during it, see
+///   [`changed_recently`]): the text loader and the hashing read the
+///   files at different moments, and only the timestamps could show a
+///   same size rewrite in between.
+///
+/// Zero in the unit tests (the window is tested by itself with explicit
+/// values), which rewrite files and reload them immediately.
 #[cfg(not(test))]
 pub(crate) const RACY_WINDOW: Duration = Duration::from_secs(5);
 #[cfg(test)]
@@ -101,6 +108,35 @@ pub(crate) fn drop_racy(sources: &mut [SourceFile], now: SystemTime) {
             source.stat = None;
         }
     }
+}
+
+/// The first `Content` source (in either fingerprint list) whose
+/// modification or status change time is less than `window` before
+/// `start` or later; without stat fingerprints (not Unix), the
+/// modification time the file has now.
+pub(crate) fn changed_recently<'a>(
+    root: &Path,
+    lists: [&'a [SourceFile]; 2],
+    start: SystemTime,
+    window: Duration,
+) -> Option<&'a str> {
+    let limit = start.checked_sub(window);
+    lists.into_iter().flatten().find_map(|s| {
+        if s.kind != SourceKind::Content {
+            return None;
+        }
+        let recent = match &s.stat {
+            Some(stat) => is_racy(stat, start, window),
+            None => match (
+                limit,
+                std::fs::metadata(root.join(&s.path)).and_then(|m| m.modified()),
+            ) {
+                (Some(limit), Ok(modified)) => modified >= limit,
+                _ => true,
+            },
+        };
+        recent.then_some(s.path.as_str())
+    })
 }
 
 #[cfg(unix)]

@@ -2411,9 +2411,19 @@ unreadable or truncated file, wrong magic/version/fingerprint or corrupt
 payload means: load the text files, write a new cache file. Writing
 (`build_from_text`) stats the sources *before* the text load, hashes them
 on a second thread *during* the load, and stats them (and lists the tile
-types, re-derives the fabric) again *after* it: if anything differs the
-file is not written, so a cache file never claims contents it was not
-built from. Files are written to `.<name>.<pid>.<nanos>.tmp` in the cache
+types, re-derives the fabric) again *after* it; if anything differs the
+file is not written. That alone is not enough: the loader and the hashing
+thread read each file at different moments, and on a file system with
+coarse timestamps (1 s on ext3) a same size rewrite within the same
+second leaves both stats equal, so the recorded hash could be of other
+bytes than the tables (the review reproduced this on an ext3 image with a
+concurrent writer; later loads then re-hash, match, and serve stale
+tables). So the file is also not written when any `Content` source's
+modification or status change time (from either stat) is less than 5 s
+before the build started, or later (`sources::changed_recently`; without
+Unix stats, the modification time); the first open of a database changed
+in the last 5 s just loads the text files, the next one writes the cache.
+Files are written to `.<name>.<pid>.<nanos>.tmp` in the cache
 directory and renamed; any error (read-only or missing directory, full
 disk) is reported only with `FASM_XDB_CACHE_VERBOSE` and never fails the
 tool.
@@ -2472,7 +2482,7 @@ Writing the cache costs 25-60% on top of the text load, once per part
 and database change (encoding ~35 ms for xc7a200t, the grid section's
 string table dominates; the source hashing is hidden behind the load).
 
-**Tests.** `src/cache/tests.rs` (20): every field round trips
+**Tests.** `src/cache/tests.rs` (22, plus 1 in `task.rs`): every field round trips
 (`mini-db`, `synthetic-db`, with and without a part, sequential and
 parallel decoding), second open is a hit, `open_cached == open` and the
 same errors (unknown part, unknown device, not a database, missing
@@ -2491,7 +2501,9 @@ match; unwritable cache directory; 8 threads
 opening concurrently (one file, no temporary file left); two copies of a
 database get two files, another spelling of a root the same one; a
 synthetic prjuray-db layout; `build`/`clear`/`cache_files`/
-`family_parts`; the environment; the racy window. `tests/cache_real_db.rs`
+`family_parts`; the environment; the racy window, and no cache file
+written for sources changed within the window (explicit one hour window
+on a fresh copy; then written with old enough timestamps). `tests/cache_real_db.rs`
 (skipped without the databases): xc7a35tcsg324-1, xc7a200tffg1156-1 and
 xczu3eg-sfvc784-1-e round trip and verify. `rust/fasm-cli/tests/db_cache.rs`:
 `fasm2frames` (mini-db: 6 FASM files x 3 flag sets; synthetic-db
@@ -2523,6 +2535,12 @@ rejected. A cache file is trusted like the database it was built from:
 anyone who can write the cache directory can make the tools use other
 tables (the default directory is per user). The loader fingerprint also
 changes on edits that do not change the loader's results (one rebuild).
+On network file systems the stat fast path is only as good as the
+client's attribute cache (NFS may report stale sizes and times for a few
+seconds after another client writes) and inode numbers may not be stable
+across remounts (then files are just re-hashed); use
+`CacheOptions::verify_contents` / `fasm-db-cache verify` where that
+matters.
 
 ## 9. Open questions / risks
 
