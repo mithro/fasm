@@ -31,7 +31,7 @@
 
 #![forbid(unsafe_code)]
 
-use std::io::{Read, Write};
+use std::io::{BufWriter, Read, Write};
 
 use fasm_xilinx::bitstream::{BitstreamReader, Configuration};
 use fasm_xilinx::{Architecture, FrameAddress, Frames};
@@ -179,12 +179,6 @@ impl Selection {
     }
 }
 
-fn write_bytes(out: &mut Vec<u8>, parts: &[&[u8]]) {
-    for p in parts {
-        out.extend_from_slice(p);
-    }
-}
-
 /// The `--aux` file (`PrintHeader`, `PrintFpgaConfigurationLogicData`,
 /// `PrintFrameAddresses`).
 fn aux_text(bytes: &[u8], reader: &BitstreamReader, config: &Configuration<'_>) -> Vec<u8> {
@@ -227,6 +221,13 @@ fn aux_text(bytes: &[u8], reader: &BitstreamReader, config: &Configuration<'_>) 
 /// Runs the tool with `args` (without `argv[0]`), reading the bitstream
 /// from `stdin` when there is not exactly one positional argument; returns
 /// the exit code.
+///
+/// The output is streamed (through a buffer) to `stdout` or the `-o`
+/// file frame by frame, never held in memory as a whole. Like the
+/// reference, whose `std::endl` flushes them, stdout is flushed after the
+/// `Bitstream size`, `Config size` and `Number of configuration frames`
+/// lines and before anything is written to `stderr`, so that the two
+/// streams merged (`2>&1`) come out in the reference's order.
 pub fn run(
     argv0: &[u8],
     args: &[Vec<u8>],
@@ -235,19 +236,33 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
-    let mut out = Vec::new();
-    let code = run_buffered(argv0, args, env, stdin, &mut out, stderr);
-    let _ = stdout.write_all(&out);
-    let _ = stdout.flush();
+    let mut out = BufWriter::with_capacity(1 << 16, stdout);
+    let code = run_streamed(argv0, args, env, stdin, &mut out, stderr);
+    let _ = out.flush();
     code
 }
 
-fn run_buffered(
+/// Writes `message` to `stderr` after flushing `stdout`.
+fn error(stdout: &mut dyn Write, stderr: &mut dyn Write, message: &[&[u8]]) {
+    let _ = stdout.flush();
+    for part in message {
+        let _ = stderr.write_all(part);
+    }
+    let _ = stderr.flush();
+}
+
+/// A line written with `std::endl`: written and flushed.
+fn endl_line(stdout: &mut dyn Write, line: &str) {
+    let _ = stdout.write_all(line.as_bytes());
+    let _ = stdout.flush();
+}
+
+fn run_streamed(
     argv0: &[u8],
     args: &[Vec<u8>],
     env: &Env,
     stdin: &mut dyn Read,
-    stdout: &mut Vec<u8>,
+    stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
     let mut usage = b"Usage: ".to_vec();
@@ -265,8 +280,8 @@ fn run_buffered(
             stdout: out,
             stderr: err,
         } => {
-            stdout.extend_from_slice(&out);
-            let _ = stderr.write_all(&err);
+            let _ = stdout.write_all(&out);
+            error(stdout, stderr, &[&err]);
             return code;
         }
     };
@@ -295,9 +310,11 @@ fn run_buffered(
         match std::fs::read(&path) {
             Ok(bytes) if !path.is_dir() => bytes,
             _ => {
-                let _ = stderr.write_all(b"Can't open input file '");
-                let _ = stderr.write_all(name);
-                let _ = stderr.write_all(b"' for reading!\n");
+                error(
+                    stdout,
+                    stderr,
+                    &[b"Can't open input file '", name, b"' for reading!\n"],
+                );
                 return 1;
             }
         }
@@ -306,51 +323,50 @@ fn run_buffered(
         let _ = stdin.read_to_end(&mut bytes);
         bytes
     };
-    write_bytes(
-        stdout,
-        &[format!("Bitstream size: {} bytes\n", bytes.len()).as_bytes()],
-    );
+    endl_line(stdout, &format!("Bitstream size: {} bytes\n", bytes.len()));
 
     if let Err(message) = architecture("bitread", parsed.string("architecture")) {
-        let _ = stderr.write_all(message.as_bytes());
+        error(stdout, stderr, &[message.as_bytes()]);
         return 1;
     }
     let arch = Architecture::Series7;
     let wpf = arch.words_per_frame();
     let Some(reader) = BitstreamReader::from_bytes(&bytes) else {
-        let _ = stderr.write_all(b"Input doesn't look like a bitstream\n");
+        error(stdout, stderr, &[b"Input doesn't look like a bitstream\n"]);
         return 1;
     };
-    write_bytes(
+    endl_line(
         stdout,
-        &[format!("Config size: {} words\n", reader.words().len()).as_bytes()],
+        &format!("Config size: {} words\n", reader.words().len()),
     );
     let Some(part) = read_part(parsed.string("part_file")) else {
-        let _ = stderr.write_all(b"Part file not found or invalid\n");
+        error(stdout, stderr, &[b"Part file not found or invalid\n"]);
         return 1;
     };
     let Ok(config) = reader.configuration(&part) else {
-        let _ = stderr.write_all(b"Bitstream does not appear to be for this part\n");
+        error(
+            stdout,
+            stderr,
+            &[b"Bitstream does not appear to be for this part\n"],
+        );
         return 1;
     };
-    write_bytes(
+    endl_line(
         stdout,
-        &[format!("Number of configuration frames: {}\n", config.len()).as_bytes()],
+        &format!("Number of configuration frames: {}\n", config.len()),
     );
 
     let o = parsed.string("o").to_vec();
-    let mut file_out: Vec<u8> = Vec::new();
     let mut file = None;
     if o.is_empty() {
-        stdout.push(b'\n');
+        let _ = stdout.write_all(b"\n");
     } else {
         match std::fs::File::create(os_path(&o)) {
-            Ok(f) => file = Some(f),
+            Ok(f) => file = Some(BufWriter::with_capacity(1 << 16, f)),
             Err(_) => {
-                write_bytes(
-                    stdout,
-                    &[b"Can't open output file '", &o, b"' for writing!\n"],
-                );
+                let _ = stdout.write_all(b"Can't open output file '");
+                let _ = stdout.write_all(&o);
+                let _ = stdout.write_all(b"' for writing!\n");
                 return 1;
             }
         }
@@ -360,117 +376,63 @@ fn run_buffered(
         let text = aux_text(&bytes, &reader, &config);
         let written = std::fs::File::create(os_path(aux)).map(|mut f| f.write_all(&text));
         if written.is_err() {
-            write_bytes(
-                stdout,
-                &[b"Can't open aux output file '", aux, b"' for writing!\n"],
-            );
+            let _ = stdout.write_all(b"Can't open aux output file '");
+            let _ = stdout.write_all(aux);
+            let _ = stdout.write_all(b"' for writing!\n");
             return 1;
         }
     }
 
-    // `f` is stdout or the -o file.
+    // `f` is stdout or the -o file; each frame is formatted into `chunk`
+    // and written out.
     let to_stdout = file.is_none();
     let big_c = parsed.bool("C");
     let (x, y, p) = (parsed.bool("x"), parsed.bool("y"), parsed.bool("p"));
-    let mut pgmdata: Vec<Vec<bool>> = Vec::new();
+    let mut pgmdata: Vec<&[u32]> = Vec::new();
     let mut pgmsep: Vec<usize> = Vec::new();
+    let mut chunk: Vec<u8> = Vec::with_capacity(1 << 16);
+    let mut write_failed = false;
     {
-        let f: &mut Vec<u8> = if to_stdout {
-            &mut *stdout
-        } else {
-            &mut file_out
+        let f: &mut dyn Write = match file.as_mut() {
+            Some(file) => file,
+            None => &mut *stdout,
         };
         for (address, words) in config.frames() {
             if !selection.selects(address, words, wpf) {
                 continue;
             }
-            let fields = FrameAddress(address).fields(arch);
-            if to_stdout {
-                f.extend_from_slice(
-                    format!(
-                        "Frame 0x{address:08x} (Type={} Top={} Row={} Column={} Minor={}):\n",
-                        fields.block_type,
-                        u8::from(fields.bottom),
-                        fields.row,
-                        fields.column,
-                        fields.minor
-                    )
-                    .as_bytes(),
-                );
-            }
+            chunk.clear();
+            format_frame(
+                &mut chunk,
+                address,
+                words,
+                FrameFormat {
+                    to_stdout,
+                    big_c,
+                    x,
+                    y,
+                    p,
+                },
+            );
             if p {
-                if fields.minor == 0 && !pgmdata.is_empty() {
+                let minor = FrameAddress(address).minor(arch);
+                if minor == 0 && !pgmdata.is_empty() {
                     pgmsep.push(pgmdata.len());
                 }
-                pgmdata.push(
-                    words
-                        .iter()
-                        .flat_map(|&w| (0..32).map(move |k| w & (1 << k) != 0))
-                        .collect(),
-                );
-            } else if x || y {
-                // `bit_%08x_%03d_%02d` (+ `_t%d_h%d_r%d_c%d_m%d` for -x),
-                // formatted by hand: this is most of bitread's run time.
-                let prefix = format!("bit_{address:08x}_").into_bytes();
-                let suffix = if x {
-                    format!(
-                        "_t{}_h{}_r{}_c{}_m{}\n",
-                        fields.block_type,
-                        u8::from(fields.bottom),
-                        fields.row,
-                        fields.column,
-                        fields.minor
-                    )
-                    .into_bytes()
-                } else {
-                    b"\n".to_vec()
-                };
-                for (i, &word) in words.iter().enumerate() {
-                    let mut bits = word;
-                    if i == 50 && !big_c {
-                        bits &= !0x1FFF;
-                    }
-                    while bits != 0 {
-                        let k = bits.trailing_zeros() as usize;
-                        bits &= bits - 1;
-                        f.extend_from_slice(&prefix);
-                        push_decimal(f, i, 3);
-                        f.push(b'_');
-                        push_decimal(f, k, 2);
-                        f.extend_from_slice(&suffix);
-                    }
-                }
-                if to_stdout {
-                    f.push(b'\n');
-                }
-            } else {
-                if !to_stdout {
-                    f.extend_from_slice(format!(".frame 0x{address:08x}\n").as_bytes());
-                }
-                for (i, &word) in words.iter().enumerate() {
-                    let value = if i != 50 || big_c {
-                        word
-                    } else {
-                        word & 0xFFFF_E000
-                    };
-                    f.extend_from_slice(format!("{value:08x}").as_bytes());
-                    f.extend_from_slice(if i % 6 == 5 { b"\n" } else { b" " });
-                }
-                f.extend_from_slice(b"\n\n");
+                pgmdata.push(words);
             }
+            write_failed |= f.write_all(&chunk).is_err();
         }
         if p {
-            write_pgm(f, &pgmdata, &pgmsep, wpf);
+            write_failed |= write_pgm(f, &pgmdata, &pgmsep, wpf).is_err();
         }
+        write_failed |= f.flush().is_err();
     }
-    if let Some(mut file) = file {
-        if file.write_all(&file_out).is_err() {
-            let _ = stderr.write_all(b"Error writing '");
-            let _ = stderr.write_all(&o);
-            let _ = stderr.write_all(b"'\n");
-            return 1;
-        }
+    if file.is_some() && write_failed {
+        error(stdout, stderr, &[b"Error writing '", &o, b"'\n"]);
+        return 1;
     }
+    drop(file);
 
     let frm_out = parsed.string("frm_out");
     if !frm_out.is_empty() {
@@ -482,24 +444,100 @@ fn run_buffered(
             }
         }
         let written = std::fs::File::create(os_path(frm_out)).and_then(|mut f| {
-            let mut buffered = std::io::BufWriter::new(&mut f);
+            let mut buffered = BufWriter::new(&mut f);
             frames.write_frm(&mut buffered)?;
             buffered.flush()
         });
         if written.is_err() {
-            write_bytes(
-                stdout,
-                &[
-                    b"Can't open .frm output file '",
-                    frm_out,
-                    b"' for writing!\n",
-                ],
-            );
+            let _ = stdout.write_all(b"Can't open .frm output file '");
+            let _ = stdout.write_all(frm_out);
+            let _ = stdout.write_all(b"' for writing!\n");
             return 1;
         }
     }
-    stdout.extend_from_slice(b"DONE\n");
+    let _ = stdout.write_all(b"DONE\n");
     0
+}
+
+/// How [`format_frame`] prints a frame.
+#[derive(Clone, Copy)]
+struct FrameFormat {
+    to_stdout: bool,
+    big_c: bool,
+    x: bool,
+    y: bool,
+    p: bool,
+}
+
+/// The text of one frame (everything but the `-p` image).
+fn format_frame(f: &mut Vec<u8>, address: u32, words: &[u32], format: FrameFormat) {
+    let fields = FrameAddress(address).fields(Architecture::Series7);
+    if format.to_stdout {
+        f.extend_from_slice(
+            format!(
+                "Frame 0x{address:08x} (Type={} Top={} Row={} Column={} Minor={}):\n",
+                fields.block_type,
+                u8::from(fields.bottom),
+                fields.row,
+                fields.column,
+                fields.minor
+            )
+            .as_bytes(),
+        );
+    }
+    if format.p {
+        return;
+    }
+    if format.x || format.y {
+        // `bit_%08x_%03d_%02d` (+ `_t%d_h%d_r%d_c%d_m%d` for -x),
+        // formatted by hand: this is most of bitread's run time.
+        let prefix = format!("bit_{address:08x}_").into_bytes();
+        let suffix = if format.x {
+            format!(
+                "_t{}_h{}_r{}_c{}_m{}\n",
+                fields.block_type,
+                u8::from(fields.bottom),
+                fields.row,
+                fields.column,
+                fields.minor
+            )
+            .into_bytes()
+        } else {
+            b"\n".to_vec()
+        };
+        for (i, &word) in words.iter().enumerate() {
+            let mut bits = word;
+            if i == 50 && !format.big_c {
+                bits &= !0x1FFF;
+            }
+            while bits != 0 {
+                let k = bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                f.extend_from_slice(&prefix);
+                push_decimal(f, i, 3);
+                f.push(b'_');
+                push_decimal(f, k, 2);
+                f.extend_from_slice(&suffix);
+            }
+        }
+        if format.to_stdout {
+            f.push(b'\n');
+        }
+    } else {
+        if !format.to_stdout {
+            f.extend_from_slice(format!(".frame 0x{address:08x}\n").as_bytes());
+        }
+        for (i, &word) in words.iter().enumerate() {
+            let value = if i != 50 || format.big_c {
+                word
+            } else {
+                word & 0xFFFF_E000
+            };
+            f.extend_from_slice(format!("{value:08x}").as_bytes());
+            f.extend_from_slice(if i % 6 == 5 { b"\n" } else { b" " });
+        }
+        f.extend_from_slice(b"\n\n");
+    }
 }
 
 /// Appends `value` as `%0<width>d`.
@@ -521,38 +559,52 @@ fn push_decimal(f: &mut Vec<u8>, value: usize, width: usize) {
     f.extend(digits[..len].iter().rev());
 }
 
-/// The `-p` netpgm image, a literal port.
-fn write_pgm(f: &mut Vec<u8>, pgmdata: &[Vec<bool>], pgmsep: &[usize], wpf: usize) {
+/// The `-p` netpgm image, a literal port, written row by row. A frame's
+/// pixels are the bits of its words, bit `k` of word `i` being pixel
+/// `32 * i + k`.
+fn write_pgm(
+    f: &mut dyn Write,
+    pgmdata: &[&[u32]],
+    pgmsep: &[usize],
+    wpf: usize,
+) -> std::io::Result<()> {
     let word_length = 32usize;
     let width = pgmdata.len() + pgmsep.len();
     let height = wpf * word_length;
-    f.extend_from_slice(format!("P5 {width} {height} 15\n").as_bytes());
+    f.write_all(format!("P5 {width} {height} 15\n").as_bytes())?;
+    let mut row: Vec<u8> = Vec::with_capacity(width + 1);
     let mut y = 0usize;
     let mut bit = height as isize - 1;
     while y < height {
+        row.clear();
         let (mut x, mut frame, mut sep) = (0usize, 0usize, 0usize);
         while x < width {
             if sep < pgmsep.len() && frame == pgmsep[sep] {
-                f.push(8);
+                row.push(8);
                 x += 1;
                 sep += 1;
             }
-            let data = pgmdata.get(frame).map_or(&[][..], Vec::as_slice);
-            if bit < 0 || bit as usize >= data.len() {
-                f.push(0);
-            } else {
-                f.push(if data[bit as usize] { 15 } else { 0 });
-            }
+            let data = pgmdata.get(frame).copied().unwrap_or_default();
+            let set = usize::try_from(bit).ok().and_then(|b| {
+                data.get(b / word_length)
+                    .map(|w| w & (1 << (b % word_length)) != 0)
+            });
+            row.push(match set {
+                Some(true) => 15,
+                _ => 0,
+            });
             x += 1;
             frame += 1;
         }
+        f.write_all(&row)?;
         if bit.rem_euclid(word_length as isize) == 0 && y != 0 {
-            f.extend(std::iter::repeat_n(8u8, width));
+            f.write_all(&vec![8u8; width])?;
             y += 1;
         }
         y += 1;
         bit -= 1;
     }
+    Ok(())
 }
 
 #[cfg(test)]

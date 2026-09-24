@@ -388,3 +388,55 @@ global_clock_regions:
     }
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// Runs the `bitread` binary with stdout and stderr going to the same
+/// file (`2>&1`) and returns what was written.
+fn bitread_merged(args: &[&std::ffi::OsStr], dir: &Path) -> (i32, String) {
+    let path = dir.join("merged.txt");
+    let file = std::fs::File::create(&path).unwrap();
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_bitread"))
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(file.try_clone().unwrap())
+        .stderr(file)
+        .status()
+        .unwrap();
+    (
+        status.code().unwrap_or(-1),
+        std::fs::read_to_string(&path).unwrap(),
+    )
+}
+
+/// With stdout and stderr merged, the lines come in the reference's
+/// order: stdout is flushed after the `Bitstream size`, `Config size` and
+/// `Number of configuration frames` lines (the reference's `std::endl`)
+/// and before any message on stderr.
+#[test]
+fn bitread_merged_output_order() {
+    let dir = scratch("merged");
+    let input = dir.join("hostname");
+    std::fs::write(&input, b"abc").unwrap();
+    let (code, text) = bitread_merged(
+        &["--part_file=/nonexistent".as_ref(), input.as_os_str()],
+        &dir,
+    );
+    assert_eq!(code, 1);
+    assert_eq!(
+        text,
+        "Bitstream size: 3 bytes\nInput doesn't look like a bitstream\n"
+    );
+    let smoke = corpus("smoke_x1y0.bit");
+    let (code, text) = bitread_merged(
+        &["--part_file=/nonexistent".as_ref(), smoke.as_os_str()],
+        &dir,
+    );
+    assert_eq!(code, 1);
+    assert_eq!(
+        text,
+        "Bitstream size: 2192122 bytes\nConfig size: 547990 words\nPart file not found or invalid\n"
+    );
+    let (code, text) = bitread_merged(&["--bogus".as_ref()], &dir);
+    assert_eq!(code, 1);
+    assert_eq!(text, "ERROR: unknown command line flag 'bogus'\n");
+    let _ = std::fs::remove_dir_all(dir);
+}
