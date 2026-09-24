@@ -319,6 +319,25 @@ where C cannot express the Python behaviour exactly:
 | Feature values | unbounded `int` | bit length, `uint64_t` when it fits, bits, little endian bytes or digit strings (`fasm_set_feature_value_*`) |
 | `value_format` | `ValueFormat` or `None` | `fasm_value_format`: the same values 0 to 4, `FASM_VALUE_FORMAT_NONE` (-1) for `None` |
 
+### C++ wrapper (`include/fasm/fasm.hpp`, T4.2)
+
+The C++ wrapper is a thin, 1:1 layer over the C API above (see
+`docs/rewrite/DESIGN-capi.md`, "C++ wrapper" section) and introduces no
+further behavioural differences from Python beyond the C API's own: every
+row of the table above applies unchanged (`fasm::File::merge_and_sort`'s
+`SortKeyFn` is still an `int64_t` key called once per group;
+`fasm::Value` is still exposed as bit length / `uint64_t` / bytes / a
+digit string rather than an unbounded integer; `fasm::ValueFormat` is
+`std::optional<ValueFormat>` rather than a Python `ValueFormat | None`,
+`std::nullopt` standing for `None`). The one C++-specific difference from
+both Python and the plain C API: failures are reported as a thrown
+`fasm::Error` (a `std::runtime_error`) rather than a return value/`None`
+or a status code, and a callback that throws propagates that same
+exception out of `merge_and_sort` / `parse_each` instead of terminating
+the process the way an uncaught exception crossing the Rust `extern "C"`
+boundary otherwise would (see the exception trampoline rule in
+`DESIGN-capi.md`).
+
 ## Python bindings (`fasm.parser.rust`, `rust/fasm-python/`, T3.1)
 
 ### Rule

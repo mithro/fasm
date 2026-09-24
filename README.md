@@ -69,7 +69,13 @@ cargo run -p fasm-cli -- --help
 
 `make rust-build`, `make rust-test`, `make rust-lint` and `make rust-doc`
 wrap the same commands; `make capi-header`, `make capi-header-check` and
-`make capi-test` build and test the C API and its generated header.
+`make capi-test` build and test the C API and its generated header, and
+its header-only C++17 RAII wrapper `include/fasm/fasm.hpp` (`fasm::File`,
+`fasm::Line`, ...; see `docs/rewrite/DESIGN-capi.md`). `make capi-install
+PREFIX=/some/prefix` installs both headers, `libfasm_capi.{so,a}` and a
+`fasm.pc` pkg-config file for either language (`rust/fasm-capi/fasm.pc.in`,
+`rust/fasm-capi/examples/cpp` for a minimal C++ example that builds
+against it with `pkg-config --cflags --libs fasm`).
 
 ## What changed in this rewrite
 

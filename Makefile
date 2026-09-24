@@ -180,5 +180,29 @@ capi-test:
 
 .PHONY: capi-test
 
+# Installs the C header (fasm.h), the header-only C++ wrapper (fasm.hpp),
+# the shared and static libraries (release profile) and a pkg-config file
+# into PREFIX/{include/fasm,lib} (default PREFIX is /usr/local; DESTDIR is
+# honoured for staged installs). `pkg-config --cflags --libs fasm` then
+# gives the flags to build against the installed library (see
+# rust/fasm-capi/fasm.pc.in and rust/fasm-capi/examples/cpp).
+PREFIX ?= /usr/local
+FASM_PC_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' $(TOP_DIR)/Cargo.toml | head -1)
+# The system libraries the Rust staticlib needs (see FASM_NATIVE_LIBS in
+# rust/fasm-capi/tests/c/CMakeLists.txt, derived from `cargo rustc -p
+# fasm-capi -- --print native-static-libs`); Linux only, like that file.
+FASM_PC_LIBS_PRIVATE ?= -lpthread -ldl -lm
+
+capi-install:
+	cargo build --release -p fasm-capi
+	install -d $(DESTDIR)$(PREFIX)/include/fasm $(DESTDIR)$(PREFIX)/lib/pkgconfig
+	install -m 644 $(TOP_DIR)/include/fasm/fasm.h $(DESTDIR)$(PREFIX)/include/fasm/fasm.h
+	install -m 644 $(TOP_DIR)/include/fasm/fasm.hpp $(DESTDIR)$(PREFIX)/include/fasm/fasm.hpp
+	install -m 755 $(CAPI_CARGO_TARGET_DIR)/release/libfasm_capi.so $(DESTDIR)$(PREFIX)/lib/libfasm_capi.so
+	install -m 644 $(CAPI_CARGO_TARGET_DIR)/release/libfasm_capi.a $(DESTDIR)$(PREFIX)/lib/libfasm_capi.a
+	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@VERSION@|$(FASM_PC_VERSION)|g' -e 's|@LIBS_PRIVATE@|$(FASM_PC_LIBS_PRIVATE)|g' $(TOP_DIR)/rust/fasm-capi/fasm.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/fasm.pc
+
+.PHONY: capi-install
+
 # PyPI publishing is done by .github/workflows/python.yml's `publish` job
 # (trusted publishing on `v*` tags); there is no local upload target.
