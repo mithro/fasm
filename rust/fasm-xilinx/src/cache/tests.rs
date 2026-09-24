@@ -532,6 +532,16 @@ fn verify_hashes_every_source() {
     if cfg!(unix) {
         assert!(is_hit(&open_with(&root, MINI_PART, cache.path()).1));
     }
+    // `verify_contents` hashes every source on load too.
+    std::fs::write(&file, &tampered).unwrap();
+    let options = CacheOptions {
+        verify_contents: true,
+        ..CacheOptions::in_directory(cache.path())
+    };
+    let (db, outcome) = open(&root, Some(MINI_PART), &options).unwrap();
+    assert!(rebuild_reason(&outcome).contains("tilegrid.json changed"));
+    assert!(db == Database::open(&root, Some(MINI_PART)).unwrap());
+    assert!(is_hit(&open(&root, Some(MINI_PART), &options).unwrap().1));
 
     // Corruption.
     let mut bad = data.clone();
