@@ -1,0 +1,202 @@
+{
+  "edge-cases/compat/019-underscore-plain-decimal.fasm": {
+    "category": "compat",
+    "class": "rust_relaxes_antlr",
+    "source": "COMPAT.md table: 'Accepted by Rust, rejected by ANTLR'"
+  },
+  "edge-cases/compat/020-underscore-address.fasm": {
+    "category": "compat",
+    "class": "rust_relaxes_antlr",
+    "source": "COMPAT.md table: 'Accepted by Rust, rejected by ANTLR'"
+  },
+  "edge-cases/compat/021-escaped-quote-in-annotation.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/022-declared-width-gt-address-width.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/023-whitespace-around-address.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/024-whitespace-before-comma.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/025-radix-no-digit.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/026-utf8-bom.fasm": {
+    "category": "compat",
+    "class": "rust_follows_antlr_over_textx",
+    "source": "COMPAT.md table: 'Accepted by Rust and ANTLR, rejected by textX'"
+  },
+  "edge-cases/compat/027-decimal-gt-2-31.fasm": {
+    "category": "compat",
+    "class": "rust_relaxes_antlr",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/028-d-value-gt-2-32.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/029-octal-gt-10-digits.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/030-octal-leading-zeros-gt-10-digits.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/031-octal-11-digits.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/032-octal-32-bit-max.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/033-whitespace-after-hex-radix.fasm": {
+    "category": "compat",
+    "class": "antlr_bug_wrong_decode",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/034-whitespace-after-dec-radix.fasm": {
+    "category": "compat",
+    "class": "rust_relaxes_antlr",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/035-whitespace-after-bin-radix.fasm": {
+    "category": "compat",
+    "class": "same_all_three",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/036-huge-decimal-4300-digits.fasm": {
+    "category": "compat",
+    "class": "rust_relaxes_antlr",
+    "source": "COMPAT.md table: 'ANTLR bugs: Rust does the sane thing'"
+  },
+  "edge-cases/compat/037-end-before-start-zero-value.fasm": {
+    "category": "compat",
+    "class": "rust_stricter",
+    "source": "COMPAT.md table: 'Rejected by Rust, accepted by ANTLR'"
+  },
+  "edge-cases/compat/038-non-ascii-comment.fasm": {
+    "category": "compat",
+    "class": "non_ascii_antlr_exception",
+    "source": "COMPAT.md table: 'Non-ASCII input and encodings'"
+  },
+  "edge-cases/compat/039-non-ascii-annotation-value.fasm": {
+    "category": "compat",
+    "class": "non_ascii_antlr_exception",
+    "source": "COMPAT.md table: 'Non-ASCII input and encodings'"
+  },
+  "edge-cases/grammar/000-bare-feature.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/001-implicit-one.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/002-explicit-address.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/003-explicit-range.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/004-explicit-one-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/005-explicit-zero-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst grammar"
+  },
+  "edge-cases/grammar/006-hex-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: VerilogValue"
+  },
+  "edge-cases/grammar/007-bin-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: VerilogValue"
+  },
+  "edge-cases/grammar/008-oct-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: VerilogValue"
+  },
+  "edge-cases/grammar/009-dec-value.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: VerilogValue"
+  },
+  "edge-cases/grammar/010-plain-decimal.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: VerilogValue"
+  },
+  "edge-cases/grammar/011-annotation-single.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst Annotations example"
+  },
+  "edge-cases/grammar/012-annotation-multi.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst Annotations example"
+  },
+  "edge-cases/grammar/013-annotation-only.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst Annotations example"
+  },
+  "edge-cases/grammar/014-feature-annotation-comment.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "docs/specification/syntax.rst Annotations example"
+  },
+  "edge-cases/grammar/015-comment-only.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: Comment"
+  },
+  "edge-cases/grammar/016-bare-hash.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "grammar: Comment"
+  },
+  "edge-cases/grammar/017-crlf-line-ending.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "COMPAT.md, Line endings and positions"
+  },
+  "edge-cases/grammar/018-lone-cr-line-ending.fasm": {
+    "category": "grammar",
+    "class": "same_all_three",
+    "source": "COMPAT.md, Line endings and positions"
+  }
+}
