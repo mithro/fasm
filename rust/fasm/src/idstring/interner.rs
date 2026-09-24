@@ -54,6 +54,11 @@ use super::IdString;
 ///
 /// A handle must only be used with the interner that created it: resolving
 /// a foreign handle panics (unknown entry) or yields an unrelated string.
+///
+/// Handle values are made of entry numbers handed out in first-come order,
+/// so they (and their `Hash`) differ between runs; order handles with
+/// [`Interner::cmp`] (or `Ord` for [`GLOBAL`](super::GLOBAL) handles) for
+/// reproducible output.
 pub struct Interner {
     hasher: OnceLock<RandomState>,
     levels: [Table; LEVELS],
