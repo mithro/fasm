@@ -278,6 +278,15 @@ impl Interner {
     #[cold]
     #[inline(never)]
     fn intern_missing(&self, state: &RandomState, s: &str) -> IdString {
+        // An overflowed string is interned again without taking any lock:
+        // a string in the overflow table can never become hierarchical
+        // (one of its components is missing from a full table forever), so
+        // this handle is final. A miss here (not overflowed, or inserted
+        // concurrently and not visible yet) takes the locked path below,
+        // which decides authoritatively.
+        if let Some(id) = self.find_overflow(state, s.as_bytes()) {
+            return id;
+        }
         let mut pos0 = 0;
         let mut fields = [0u32; LEVELS - 1];
         // The same pieces as `split_levels` (checked by a test), so the
@@ -466,6 +475,50 @@ impl fmt::Debug for Interner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn known_and_overflowed_names_are_interned_without_locking() {
+        let interner = Interner::with_level_limit(2);
+        let names = [
+            "A.B.C", "A.B.D", "A.X.C", "P.B.C", "A", "A.B", "P.X", // hierarchical
+            "A.B.E", "A.Y.C", "Q.B.C", "Q", "A.Y", "Q.B.C.D", "", // overflowed
+        ];
+        let ids: Vec<IdString> = names.iter().map(|s| interner.intern(s)).collect();
+        let overflowed = ids
+            .iter()
+            .filter(|id| matches!(decode(id.raw()), Repr::Overflow(_)))
+            .count();
+        assert_eq!(overflowed, 7);
+        // With every writer lock held by this thread, interning known
+        // names (hierarchical or overflowed) must still complete.
+        let guards: Vec<_> = self::tables(&interner).map(Table::lock_writers).collect();
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let (interner, names) = (&interner, &names);
+            scope.spawn(move || {
+                let again: Vec<IdString> = names.iter().map(|s| interner.intern(s)).collect();
+                let bytes: Vec<IdString> = names
+                    .iter()
+                    .filter_map(|s| interner.intern_bytes(s.as_bytes()).ok())
+                    .collect();
+                let found: Vec<Option<IdString>> = names.iter().map(|s| interner.get(s)).collect();
+                // The receiver may have given up already.
+                let _ = tx.send((again, bytes, found));
+            });
+            let result = rx.recv_timeout(Duration::from_secs(60));
+            drop(guards);
+            let (again, bytes, found) = result.expect("interning a known name took a lock");
+            assert_eq!(again, ids);
+            assert_eq!(bytes, ids);
+            assert_eq!(found, ids.iter().copied().map(Some).collect::<Vec<_>>());
+        });
+    }
+
+    fn tables(interner: &Interner) -> impl Iterator<Item = &Table> {
+        interner.levels.iter().chain([&interner.overflow])
+    }
 
     #[test]
     fn find_dot_matches_position() {

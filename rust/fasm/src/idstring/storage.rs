@@ -448,6 +448,16 @@ impl Table {
         Some(pos)
     }
 
+    /// Holds the writer lock of every shard until the result is dropped
+    /// (for tests that check that a path takes no lock).
+    #[cfg(test)]
+    pub(crate) fn lock_writers(&self) -> impl Sized + '_ {
+        self.shards
+            .iter()
+            .map(|shard| shard.writer.lock().unwrap_or_else(PoisonError::into_inner))
+            .collect::<Vec<_>>()
+    }
+
     /// Reserves the next entry number, or `None` if the table is full.
     fn reserve(&self) -> Option<u32> {
         let limit = self.limit;
