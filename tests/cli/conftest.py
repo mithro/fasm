@@ -17,8 +17,30 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 """Prints how often each documented difference of test_cli_compat.py's
-`normalise()` was applied."""
+`normalise()` was applied, and gives the Rust tools a private binary
+database cache."""
+import os
 import sys
+
+import pytest
+
+
+@pytest.fixture(scope='session', autouse=True)
+def xdb_cache(tmp_path_factory):
+    """`FASM_XDB_CACHE` (the Rust fasm2frames/xcfasm database cache, see
+    docs/rewrite/DESIGN-xilinx-db.md §8.8) in a temporary directory of
+    this run unless it is set: the cached path stays covered (written by
+    the first runs, loaded by the others) without writing into
+    ~/.cache."""
+    if 'FASM_XDB_CACHE' in os.environ:
+        yield os.environ['FASM_XDB_CACHE']
+        return
+    path = str(tmp_path_factory.mktemp('xdb-cache'))
+    os.environ['FASM_XDB_CACHE'] = path
+    try:
+        yield path
+    finally:
+        os.environ.pop('FASM_XDB_CACHE', None)
 
 
 def pytest_terminal_summary(terminalreporter):

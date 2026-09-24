@@ -163,9 +163,9 @@ difftest:
 # bitread output and xcfasm results). Needs tests/oracle/setup-xilinx.sh; set ORACLE_DIR
 # to use another checkout's oracle. DIFFTEST_XILINX_ARGS can add e.g.
 # `--jobs N`, `--filter GLOB` or `-v`. The Rust tools use the binary
-# database cache of $FASM_XDB_CACHE (default ~/.cache/fasm/db; set
-# FASM_XDB_CACHE=0 to run them without it, see
-# docs/rewrite/DESIGN-xilinx-db.md §8.8).
+# database cache (docs/rewrite/DESIGN-xilinx-db.md §8.8) in a temporary
+# directory of the run (this target and cli-difftest's tests/cli) unless
+# FASM_XDB_CACHE is set (FASM_XDB_CACHE=0: without the cache).
 xilinx-difftest: DIFFTEST_XILINX_ARGS ?=
 xilinx-difftest:
 	cargo build --release -p fasm-cli

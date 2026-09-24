@@ -92,11 +92,13 @@ Exit status: 0 if every run matches, 1 if any differs, 3 if a tool is
 missing. `make xilinx-difftest` builds the Rust tools and runs this.
 """
 import argparse
+import atexit
 import calendar
 import concurrent.futures
 import fnmatch
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -569,6 +571,15 @@ def main():
     parser.add_argument('--jobs', type=int, default=os.cpu_count() or 1)
     parser.add_argument('-v', '--verbose', action='store_true')
     args = parser.parse_args()
+
+    # The Rust tools' binary database cache (FASM_XDB_CACHE, see
+    # docs/rewrite/DESIGN-xilinx-db.md §8.8): a temporary directory of
+    # this run unless set, so that the cached path is covered (written by
+    # the first runs, loaded by the others) without writing into ~/.cache.
+    if 'FASM_XDB_CACHE' not in os.environ:
+        cache_dir = tempfile.mkdtemp(prefix='fasm-xdb-cache-')
+        atexit.register(shutil.rmtree, cache_dir, True)
+        os.environ['FASM_XDB_CACHE'] = cache_dir
 
     for tool in (args.oracle, args.rust):
         if not os.access(tool, os.X_OK):
