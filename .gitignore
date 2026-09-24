@@ -123,3 +123,8 @@ dmypy.json
 /fasm/parser/tags.py
 /fasm/parser/antlr_to_tuple.c
 /fasm/version.py
+
+# Rust rewrite: Python oracle (tests/oracle/setup.sh); never committed, each
+# machine builds its own.
+tests/oracle/venv/
+tests/oracle/build/
