@@ -17,14 +17,24 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 """Self tests for the oracle (tests/oracle). Run with the oracle venv's
-pytest, e.g.:
+*installed pytest entry point*, not `python -m pytest`:
 
-    tests/oracle/venv/bin/python -m pytest tests/oracle/test_oracle.py -v
+    tests/oracle/venv/bin/pytest tests/oracle/test_oracle.py -v
+
+Use the entry point script, not `tests/oracle/venv/bin/python -m pytest`:
+`python -m X` (like `python -c ...`) prepends the *current directory* to
+sys.path, so running it with the repository root as the current directory
+would shadow the pinned oracle install with this worktree's live fasm/
+package -- silently testing the wrong thing. The installed `pytest` script
+does not have this problem (its own directory, tests/oracle/venv/bin, is
+what gets prepended instead). See test_fasm_module_is_the_pinned_oracle
+below, which fails loudly if this is ever invoked the unsafe way anyway.
 
 These are sanity checks on the oracle setup itself (that every parser it
-reports as available actually parses the shared example corpus, and that
-`dump.py`'s output does not depend on which parser produced it), not tests
-of the Rust rewrite.
+reports as available actually parses the shared example corpus, that
+`dump.py`'s output does not depend on which parser produced it, and that
+`fasm` really was imported from the pinned oracle install and not the live
+repository), not tests of the Rust rewrite.
 """
 import json
 import subprocess
@@ -33,12 +43,16 @@ from pathlib import Path
 
 import pytest
 
+import fasm
 import fasm.parser
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
 MANY_FASM = REPO_ROOT / 'examples' / 'many.fasm'
 DUMP_PY = HERE / 'dump.py'
+VENV_DIR = HERE / 'venv'
+PRISTINE_SRC = HERE / 'build' / 'pristine-src'
+LIVE_FASM_PACKAGE_DIR = REPO_ROOT / 'fasm'
 
 AVAILABLE_PARSERS = sorted(fasm.parser.available)
 
@@ -56,6 +70,37 @@ def run_dump(parser_name, fasm_file=MANY_FASM):
     )
     assert result.stderr == '', result.stderr
     return result.stdout
+
+
+def test_fasm_module_is_the_pinned_oracle_not_the_live_repo():
+    """ tests/oracle/setup.sh deliberately does NOT do an editable install
+    of this worktree's live fasm/ directory (Phase 3 of the rewrite
+    replaces its contents, which would silently turn the "golden
+    reference" into the very code it needs to be diffed against). It
+    installs a pinned, immutable commit instead: a copy in the venv's
+    site-packages (the normal case), or, if that non-editable install ever
+    has to fall back, an editable install of the pinned git worktree at
+    tests/oracle/build/pristine-src. Either way, `fasm.__file__` must never
+    resolve to this repository's own fasm/ directory. """
+    fasm_file = Path(fasm.__file__).resolve()
+    live_fasm_dir = LIVE_FASM_PACKAGE_DIR.resolve()
+
+    assert live_fasm_dir not in fasm_file.parents, (
+        "fasm was imported from the live repository ({}) instead of the "
+        "pinned oracle build. If you ran this with `python -m pytest` "
+        "(or `python -c ...`) from the repository root: that prepends the "
+        "current directory to sys.path and shadows the installed package "
+        "-- use tests/oracle/venv/bin/pytest instead. Otherwise this is a "
+        "real bug in tests/oracle/setup.sh.".format(fasm_file))
+
+    venv_dir = VENV_DIR.resolve()
+    pristine_src = PRISTINE_SRC.resolve()
+    assert venv_dir in fasm_file.parents or pristine_src in fasm_file.parents, (
+        "fasm was imported from an unexpected location ({}); expected it "
+        "under tests/oracle/venv (a non-editable install) or "
+        "tests/oracle/build/pristine-src (the editable-install fallback, "
+        "still a pinned immutable git worktree, just not the live "
+        "repository)".format(fasm_file))
 
 
 def test_at_least_one_parser_available():
