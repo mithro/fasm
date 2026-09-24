@@ -19,8 +19,9 @@
 //! This crate is the Rust rewrite of the `fasm` Python package: it will
 //! provide (see `docs/rewrite/PLAN.md` for the full architecture)
 //!
-//! * an `idstring` module: a `Copy`, 8-byte interned handle for hierarchical
-//!   dotted feature names (following <https://github.com/mithro/idstring>);
+//! * the [`idstring`] module: a `Copy`, 8-byte interned handle for
+//!   hierarchical dotted feature names (following
+//!   <https://github.com/mithro/idstring>);
 //! * a `model` module: `ValueFormat`, `FeatureValue`, `SetFasmFeature`,
 //!   `Annotation` and `FasmLine`, mirroring the Python namedtuples;
 //! * a `parser` module: a hand written, byte oriented, zero-copy line
@@ -28,8 +29,8 @@
 //! * an `output` module: string formatting, canonicalisation and
 //!   `merge_features` / `merge_and_sort` (`MergeModel`) equivalents.
 //!
-//! None of the above modules exist yet; this crate currently only exposes
-//! its own version for the workspace skeleton (task T0.3).
+//! Only [`idstring`] exists so far; the other modules follow in later tasks
+//! of `docs/rewrite/TASKS.md`.
 
 pub mod idstring;
 

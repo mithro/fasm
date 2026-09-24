@@ -38,9 +38,9 @@ use super::IdString;
 /// [`GLOBAL`](super::GLOBAL); a separate `Interner` is useful for tests and
 /// for isolating unrelated data.
 ///
-/// All methods take `&self` and are thread safe. Resolving a handle takes no
-/// lock; interning takes a read lock on one of 16 shards per level (a write
-/// lock when the text is new).
+/// All methods take `&self` and are thread safe. Resolving a handle and
+/// looking up known text take no lock; only inserting new text takes the
+/// writer lock of one of 16 shards of the table concerned.
 ///
 /// When a level table is full, strings that need a new entry in it are
 /// interned whole in a separate overflow table instead (the canonical

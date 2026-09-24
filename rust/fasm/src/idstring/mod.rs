@@ -127,8 +127,8 @@ impl IdString {
         self.resolved().into_string()
     }
 
-    /// Calls `f` with the string, without heap allocation when the string
-    /// is at most 256 bytes long (see [`Resolved::with_str`]).
+    /// Calls `f` with the string, without heap allocation in steady state
+    /// for strings up to 1024 bytes (see [`Resolved::with_str`]).
     pub fn with_str<R>(self, f: impl FnOnce(&str) -> R) -> R {
         self.resolved().with_str(f)
     }
