@@ -305,3 +305,9 @@ what happened, branch/commit references, open issues.
   8 thread reads, byte identical output vs the CLI on all 70 corpus files.
   Reviewer also found a core hazard: canonical output of `W[4294967295:1]`
   loops ~4G times: recorded as T1.4b. Fixes in progress.
+* T4.1 done: 8 fix commits (Miri clean tests, sort key cached once per
+  group with (i64, IdString) keys, UB wording, COMPAT.md C API section,
+  layout tests, CARGO_TARGET_DIR support). Merged with --no-ff; 279 Rust
+  tests pass, `make capi-test` 4/4 incl. valgrind, header freshness test
+  passes; worktree removed.
+* T5.2 (fasm-xilinx database loader) started.

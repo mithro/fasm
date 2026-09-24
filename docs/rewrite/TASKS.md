@@ -85,7 +85,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 4: C and C++ wrappers
 
-- [r] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
+- [x] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
       formatting, canonicalisation; `include/fasm/fasm.h` via cbindgen;
       C test program built with CMake (after T1.4).
 - [ ] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
@@ -99,7 +99,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       formats, part.yaml, tilegrid.json bits blocks, ROI, required
       features, and how `fasm_assembler.py` + `fasm2frames.py` +
       `xc7frames2bit` behave (after T0.3).
-- [ ] T5.2 `fasm-xilinx`: database loader (tilegrid, segbits, ppips, part
+- [~] T5.2 `fasm-xilinx`: database loader (tilegrid, segbits, ppips, part
       yaml/json, package pins) with tests on a checked in miniature database
       (from f4pga-xc-fasm test data) (after T5.1).
 - [ ] T5.3 Binary cache for a loaded part database (versioned, content
