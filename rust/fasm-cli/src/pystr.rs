@@ -260,12 +260,19 @@ pub fn is_space(c: u32) -> bool {
     WHITESPACE.binary_search(&c).is_ok()
 }
 
+/// Python's default limit on the number of digits `int()` converts
+/// (`sys.int_max_str_digits`).
+pub const INT_MAX_STR_DIGITS: usize = 4300;
+
 /// Python's `int(s)` (base 10) for a `str`, saturated to the `i64` range;
 /// `None` where Python raises `ValueError`.
 ///
 /// Leading and trailing whitespace is skipped, an optional sign is
 /// accepted, digits may be any Unicode decimal digits and may be separated
-/// by single underscores.
+/// by single underscores. More than [`INT_MAX_STR_DIGITS`] digits (leading
+/// zeros included; underscores, whitespace and the sign excluded) is an
+/// error, like with Python's default limit (`PYTHONINTMAXSTRDIGITS` and
+/// `-X int_max_str_digits` are not honoured).
 #[must_use]
 pub fn py_int(s: &PyStr) -> Option<i64> {
     let chars = &s.0;
@@ -288,6 +295,7 @@ pub fn py_int(s: &PyStr) -> Option<i64> {
     }
     let mut value: i64 = 0;
     let mut previous_was_digit = false;
+    let mut digits = 0;
     for &c in body {
         if c == u32::from('_') {
             if !previous_was_digit {
@@ -296,11 +304,12 @@ pub fn py_int(s: &PyStr) -> Option<i64> {
             previous_was_digit = false;
         } else {
             let digit = decimal_value(c)?;
+            digits += 1;
             value = value.saturating_mul(10).saturating_add(i64::from(digit));
             previous_was_digit = true;
         }
     }
-    if !previous_was_digit {
+    if !previous_was_digit || digits > INT_MAX_STR_DIGITS {
         return None;
     }
     Some(if negative { -value } else { value })
@@ -376,5 +385,16 @@ mod tests {
             assert_eq!(py_int(&s(bad)), None, "{bad:?}");
         }
         assert_eq!(py_int(&PyStr::from_bytes_surrogateescape(b"8\xff")), None);
+        // `sys.int_max_str_digits`: at most 4300 digits, leading zeros
+        // included, underscores, whitespace and the sign excluded.
+        let digits = |prefix: &str, n: usize, suffix: &str| {
+            py_int(&s(&format!("{prefix}{}{suffix}", "1".repeat(n))))
+        };
+        assert_eq!(digits("", 4300, ""), Some(i64::MAX));
+        assert_eq!(digits(" -", 4300, " "), Some(-i64::MAX));
+        assert_eq!(digits("", 4301, ""), None);
+        assert_eq!(py_int(&s(&format!("{}50", "0".repeat(4299)))), None);
+        assert_eq!(py_int(&s(&format!("{}50", "0".repeat(4298)))), Some(50));
+        assert_eq!(py_int(&s(&format!("{}1", "1_".repeat(4299)))), Some(i64::MAX));
     }
 }

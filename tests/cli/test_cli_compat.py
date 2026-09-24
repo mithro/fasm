@@ -205,8 +205,18 @@ GLOBAL_CASES = [
 
 # The widths help and usage messages are checked at.
 HELP_COLUMNS = [str(c) for c in range(1, 101)] + [
-    '120', '200', '0', '-5', 'abc', ' 70 ', '+70', '7_0', '٧٠', ''
+    '120', '200', '0', '-5', 'abc', ' 70 ', '+70', '7_0', '٧٠', '',
+    # `int()` converts at most `sys.int_max_str_digits` (4300) digits,
+    # leading zeros included: more is a ValueError (so 80 columns).
+    '0' * 4298 + '50', '0' * 4299 + '50', '1' * 4300, '1' * 4301,
+    '9' * 5000, ' -' + '1' * 4300, '1_' * 4299 + '1'
 ]
+
+
+def columns_id(columns):
+    if len(columns) <= 20:
+        return repr(columns)
+    return '{!r}...({} chars)'.format(columns[:8], len(columns))
 
 
 def run(tool, argv, columns=None):
@@ -300,7 +310,8 @@ def test_command_line(argv, parser):
     check(argv, parser)
 
 
-@pytest.mark.parametrize('columns', HELP_COLUMNS)
+@pytest.mark.parametrize(
+    'columns', HELP_COLUMNS, ids=[columns_id(c) for c in HELP_COLUMNS])
 @pytest.mark.parametrize('argv', [['--help'], [], ['--bogus', BLANK]])
 def test_terminal_width(argv, columns):
     check(argv, 'antlr', columns)
