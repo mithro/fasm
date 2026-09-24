@@ -146,3 +146,15 @@ what happened, branch/commit references, open issues.
   and 4 minutes on this 4 core / 15 GiB machine (killed); xc7a100t not
   measured. `nextpnr-xilinx --test` fails an internal assert on the built
   chipdb but the real flow works. Sent for review.
+* T1.3 implemented on branch `worktree-agent-ab081dee5b7bd884f` (5 commits):
+  hand written parser (`parser/{mod,error,line,number}.rs`), streaming
+  `parse_lines` iterator, `parse_line`, whole file APIs; 169 case edge table
+  checked against the oracle with 0 mismatches for the "Same" cases; golden
+  ANTLR parse trees of examples/*.fasm in tests/corpus/oracle/*.json;
+  204-285 MB/s on a 100 MB synthetic file (interning is ~40% of the time);
+  docs/rewrite/COMPAT.md created with all divergences (notably: `_` in plain
+  decimals accepted; ANTLR bugs fixed: 31 bit plain values, `'d` > 2^32
+  truncation, octal > 32 bit, whitespace after `'h` decoded as a digit,
+  address truncation; Rust rejects `a[0:1] = 0` which both originals
+  accept; BOM skipped like ANTLR). Sent for Opus review with an adversarial
+  differential corpus.
