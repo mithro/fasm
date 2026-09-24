@@ -205,6 +205,38 @@ difftest:
 
 .PHONY: difftest
 
+# C API (rust/fasm-capi, include/fasm/fasm.h; see docs/rewrite/DESIGN-capi.md).
+# ------------------------------------------------------------------------
+
+# cbindgen (`cargo install cbindgen --locked`): from PATH, else from the
+# default cargo bin directory.
+CBINDGEN ?= $(shell command -v cbindgen 2>/dev/null || echo $${CARGO_HOME:-$$HOME/.cargo}/bin/cbindgen)
+CAPI_BUILD_DIR ?= $(TOP_DIR)/target/capi-tests
+
+# Regenerate the checked in C header from the fasm-capi sources.
+capi-header:
+	cd $(TOP_DIR) && $(CBINDGEN) --config rust/fasm-capi/cbindgen.toml --crate fasm-capi --output include/fasm/fasm.h
+
+.PHONY: capi-header
+
+# Fail if include/fasm/fasm.h is not what cbindgen generates (also run,
+# without requiring cbindgen, by `cargo test --workspace`).
+capi-header-check:
+	CBINDGEN=$(CBINDGEN) FASM_REQUIRE_CBINDGEN=1 cargo test -p fasm-capi --test header
+
+.PHONY: capi-header-check
+
+# Build libfasm_capi, build the C test program against the shared and the
+# static library with CMake, and run both (and under valgrind, when
+# installed, failing on memory errors and leaks).
+capi-test:
+	cargo build -p fasm-capi
+	cmake -S $(TOP_DIR)/rust/fasm-capi/tests/c -B $(CAPI_BUILD_DIR) -DFASM_CARGO_PROFILE=debug
+	cmake --build $(CAPI_BUILD_DIR)
+	cd $(CAPI_BUILD_DIR) && ctest --output-on-failure
+
+.PHONY: capi-test
+
 
 # Upload to PyPI servers
 # ------------------------------------------------------------------------
