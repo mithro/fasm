@@ -23,42 +23,25 @@ from warnings import warn
 available = []
 """ List of parser submodules available. Strings should match module names.
 
-In order of preference: 'rust' (the fasm._fasm_rs extension module), 'antlr'
-(only present in an installation built with the legacy setup.py ANTLR
-build) and 'textx' (pure Python, always available). The first one is the
-default implementation exported by this module.
+In order of preference: 'rust' (the fasm._fasm_rs extension module, the
+default) and 'textx' (pure Python, always available).
 """
 
-_import_errors = {}
-for _name in ('rust', 'antlr'):
-    try:
-        importlib.import_module('fasm.parser.' + _name)
-        available.append(_name)
-    except ImportError as e:
-        _import_errors[_name] = e
+try:
+    importlib.import_module('fasm.parser.rust')
+    available.append('rust')
+except ImportError as _rust_import_error:
+    pass
 
 if 'rust' in available:
     from fasm.parser.rust import \
         parse_fasm_filename, parse_fasm_string, implementation
-elif 'antlr' in available:
-    from fasm.parser.antlr import \
-        parse_fasm_filename, parse_fasm_string, implementation
 else:
     warn(
-        """Unable to import fast Antlr4 parser implementation.
-  ImportError: {}
-
-  Falling back to the much slower pure Python textX based parser
-  implementation.
-
-  Getting the faster antlr parser can normally be done by installing the
-  required dependencies and then reinstalling the fasm package with:
-    pip uninstall
-    pip install -v fasm
-
-  The Rust parser extension (fasm._fasm_rs) is not available either.
-  ImportError: {}
-""".format(_import_errors['antlr'], _import_errors['rust']), RuntimeWarning)
+        "Unable to import the fasm._fasm_rs Rust parser extension "
+        "(ImportError: {}); falling back to the much slower pure Python "
+        "textX based parser implementation.".format(_rust_import_error),
+        RuntimeWarning)
     from fasm.parser.textx import \
         parse_fasm_filename, parse_fasm_string, implementation
 
