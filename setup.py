@@ -17,6 +17,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# LEGACY: this is the old setuptools + CMake + Cython build of the ANTLR
+# based parser. The package is now built with maturin from pyproject.toml
+# (`pip install .`), with the Rust parser (fasm._fasm_rs, rust/fasm-python).
+# pip no longer runs this file; it is kept until the ANTLR build is removed
+# (task T3.2 in docs/rewrite/TASKS.md).
+
 import os
 import re
 import setuptools
