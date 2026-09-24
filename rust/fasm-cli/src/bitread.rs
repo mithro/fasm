@@ -407,27 +407,35 @@ fn run_buffered(
                         .collect(),
                 );
             } else if x || y {
+                // `bit_%08x_%03d_%02d` (+ `_t%d_h%d_r%d_c%d_m%d` for -x),
+                // formatted by hand: this is most of bitread's run time.
+                let prefix = format!("bit_{address:08x}_").into_bytes();
+                let suffix = if x {
+                    format!(
+                        "_t{}_h{}_r{}_c{}_m{}\n",
+                        fields.block_type,
+                        u8::from(fields.bottom),
+                        fields.row,
+                        fields.column,
+                        fields.minor
+                    )
+                    .into_bytes()
+                } else {
+                    b"\n".to_vec()
+                };
                 for (i, &word) in words.iter().enumerate() {
-                    for k in 0..32 {
-                        if (i != 50 || k > 12 || big_c) && word & (1 << k) != 0 {
-                            if x {
-                                f.extend_from_slice(
-                                    format!(
-                                        "bit_{address:08x}_{i:03}_{k:02}_t{}_h{}_r{}_c{}_m{}\n",
-                                        fields.block_type,
-                                        u8::from(fields.bottom),
-                                        fields.row,
-                                        fields.column,
-                                        fields.minor
-                                    )
-                                    .as_bytes(),
-                                );
-                            } else {
-                                f.extend_from_slice(
-                                    format!("bit_{address:08x}_{i:03}_{k:02}\n").as_bytes(),
-                                );
-                            }
-                        }
+                    let mut bits = word;
+                    if i == 50 && !big_c {
+                        bits &= !0x1FFF;
+                    }
+                    while bits != 0 {
+                        let k = bits.trailing_zeros() as usize;
+                        bits &= bits - 1;
+                        f.extend_from_slice(&prefix);
+                        push_decimal(f, i, 3);
+                        f.push(b'_');
+                        push_decimal(f, k, 2);
+                        f.extend_from_slice(&suffix);
                     }
                 }
                 if to_stdout {
@@ -490,6 +498,25 @@ fn run_buffered(
     }
     stdout.extend_from_slice(b"DONE\n");
     0
+}
+
+/// Appends `value` as `%0<width>d`.
+fn push_decimal(f: &mut Vec<u8>, value: usize, width: usize) {
+    let mut digits = [0u8; 20];
+    let mut n = value;
+    let mut len = 0;
+    loop {
+        digits[len] = b'0' + (n % 10) as u8;
+        len += 1;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    for _ in len..width {
+        f.push(b'0');
+    }
+    f.extend(digits[..len].iter().rev());
 }
 
 /// The `-p` netpgm image, a literal port.
