@@ -22,19 +22,21 @@
 //! * the [`idstring`] module: a `Copy`, 8-byte interned handle for
 //!   hierarchical dotted feature names (following
 //!   <https://github.com/mithro/idstring>);
-//! * a `model` module: `ValueFormat`, `FeatureValue`, `SetFasmFeature`,
+//! * the [`model`] module: `ValueFormat`, `FeatureValue`, `SetFasmFeature`,
 //!   `Annotation` and `FasmLine`, mirroring the Python namedtuples;
-//! * a `parser` module: a hand written, byte oriented, zero-copy line
-//!   parser matching the ANTLR and textX reference grammars;
+//! * the [`parser`] module: a hand written, byte oriented, zero-copy line
+//!   parser compatible with the ANTLR and textX reference parsers (see
+//!   `docs/rewrite/COMPAT.md`);
 //! * an `output` module: string formatting, canonicalisation and
 //!   `merge_features` / `merge_and_sort` (`MergeModel`) equivalents.
 //!
-//! [`idstring`], `model` and `output` exist so far; the `parser` module
-//! follows in a later task of `docs/rewrite/TASKS.md`.
+//! [`idstring`], [`model`], [`parser`] and [`output`] are implemented; see
+//! `docs/rewrite/TASKS.md` for what follows.
 
 pub mod idstring;
 pub mod model;
 pub mod output;
+pub mod parser;
 
 pub use model::{
     Annotation, FasmLine, FeatureValue, ModelError, SetFasmFeature, ValueFormat, ValueParseError,
@@ -43,6 +45,10 @@ pub use output::{
     canonical_features, fasm_line_to_string, fasm_tuple_to_string, fasm_value_to_str,
     merge_and_sort, merge_and_sort_by_key, merge_features, set_feature_to_str,
     try_canonical_features, write_fasm_value, write_set_feature, MergeModel, OutputError,
+};
+pub use parser::{
+    parse_fasm_bytes, parse_fasm_filename, parse_fasm_string, parse_line, parse_lines, Lines,
+    ParseError, ParseErrorKind,
 };
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.

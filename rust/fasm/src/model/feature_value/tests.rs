@@ -38,6 +38,33 @@ fn from_bool() {
 }
 
 #[test]
+fn from_le_limbs_matches_from_digits() {
+    assert_eq!(FeatureValue::from_le_limbs(&[]), FeatureValue::zero());
+    assert_eq!(
+        FeatureValue::from_le_limbs(&[0, 0, 0]),
+        FeatureValue::zero()
+    );
+    assert_eq!(
+        FeatureValue::from_le_limbs(&[5, 0]),
+        FeatureValue::from_u64(5)
+    );
+    assert_eq!(
+        FeatureValue::from_le_limbs(&[1, 2]),
+        FeatureValue::from_u128((2u128 << 64) | 1)
+    );
+    // Exactly INLINE_BITS, and one limb beyond it (heap), with zero
+    // padding above: both must equal the canonical from_digits value.
+    let four = FeatureValue::from_le_limbs(&[u64::MAX; 4]);
+    assert_eq!(four, FeatureValue::from_hex_str(&"f".repeat(64)).unwrap());
+    let five = FeatureValue::from_le_limbs(&[0, 0, 0, 0, 1, 0, 0]);
+    assert_eq!(
+        five,
+        FeatureValue::from_hex_str(&format!("1{}", "0".repeat(64))).unwrap()
+    );
+    assert_eq!(five.bit_len(), 257);
+}
+
+#[test]
 fn from_u128_basic() {
     let v = FeatureValue::from_u128(u128::MAX);
     assert_eq!(v.bit_len(), 128);
