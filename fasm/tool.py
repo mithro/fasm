@@ -35,6 +35,10 @@ def get_fasm_parser(name=None):
         module_name = 'fasm.parser'
     elif name in fasm.parser.available:
         module_name = 'fasm.parser.' + name
+    elif name == 'antlr' and 'rust' in fasm.parser.available:
+        # The Rust parser replaces the ANTLR parser (which is only built by
+        # the legacy setup.py build); keep --parser antlr working.
+        module_name = 'fasm.parser.rust'
     else:
         raise Exception("Parser '{}' is not available.".format(name))
     return importlib.import_module(module_name)
