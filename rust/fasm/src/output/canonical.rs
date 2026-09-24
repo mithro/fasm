@@ -80,13 +80,27 @@ pub fn try_canonical_features(
             if end < start {
                 return Err(OutputError::EndBeforeStart { start, end });
             }
-            for address in start..=end {
-                if set_feature.value.bit(address - start) {
-                    if address == 0 {
-                        out.push(bare_feature(set_feature));
-                    } else {
-                        out.push(single_bit_feature(set_feature, address));
-                    }
+            // The highest bit index that maps to an address within
+            // `[start, end]` (`end - start`; safe, `end >= start` was just
+            // checked). `iter_set_bits` yields ascending, so once a bit
+            // exceeds this every later one does too and we can stop: this
+            // mirrors Python's `for address in range(start, end + 1):
+            // ... (value >> (address - start)) & 1`, which never looks past
+            // `end`, without walking every address in between. Only a
+            // `set_feature` built with `new_unchecked` from a value wider
+            // than the range can have such bits (`SetFasmFeature::new`
+            // rejects them); they are silently ignored here exactly as the
+            // bounded Python loop ignores them.
+            let max_bit = end - start;
+            for bit in set_feature.value.iter_set_bits() {
+                if bit > max_bit {
+                    break;
+                }
+                let address = start + bit;
+                if address == 0 {
+                    out.push(bare_feature(set_feature));
+                } else {
+                    out.push(single_bit_feature(set_feature, address));
                 }
             }
         }
@@ -134,8 +148,11 @@ fn single_bit_feature(set_feature: &SetFasmFeature, address: u32) -> SetFasmFeat
 /// FASM feature is at most a few hundred bits wide (256 for the widest
 /// known case, a BRAM `INIT`), so this is a small, bounded allocation in
 /// practice; a `set_feature` with a deliberately huge range (up to
-/// `u32::MAX` bits, which nothing in the grammar forbids) would allocate
-/// and iterate proportionally to its width.
+/// `u32::MAX` bits, which nothing in the grammar forbids) now costs
+/// allocation and iteration proportional to the number of *set* bits in
+/// the value, not the width of the range (T1.4b): `W[4294967295:1] = 1`
+/// yields one `SetFasmFeature` in microseconds rather than walking
+/// 4 billion addresses.
 ///
 /// # Panics
 ///
