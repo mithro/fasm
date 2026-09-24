@@ -82,6 +82,7 @@ use crate::yaml;
 
 mod format;
 mod sources;
+mod task;
 #[cfg(test)]
 mod tests;
 
@@ -607,13 +608,14 @@ fn load(key: &CacheKey, db_root: &Path, full: bool) -> Result<Loaded, String> {
         (hash, check_sources(), decode())
     } else {
         std::thread::scope(|scope| {
-            let hash = scope.spawn(|| timed(&check_hash));
-            let freshness = scope.spawn(check_sources);
+            let hash = task::spawn(scope, || timed(&check_hash));
+            let freshness = task::spawn(scope, check_sources);
             let decoded = decode();
-            let join_error = || "cache check panicked".to_owned();
             (
                 hash.join().unwrap_or((false, 0.0)),
-                freshness.join().unwrap_or_else(|_| Err(join_error())),
+                freshness
+                    .join()
+                    .unwrap_or_else(|| Err("cache check panicked".to_owned())),
                 decoded,
             )
         })
@@ -670,7 +672,7 @@ fn build_from_text(
     });
     let (db, hashes) = std::thread::scope(|scope| {
         let hashes = before.as_ref().ok().map(|(_, stats)| {
-            scope.spawn(move || -> io::Result<Vec<Option<Hash>>> {
+            task::spawn(scope, move || -> io::Result<Vec<Option<Hash>>> {
                 stats
                     .iter()
                     .map(|s| match s.kind {
@@ -685,7 +687,7 @@ fn build_from_text(
         let db = Database::open(db_root, Some(&key.part));
         let hashes = hashes.map(|h| {
             h.join()
-                .unwrap_or_else(|_| Err(io::Error::other("hashing thread panicked")))
+                .unwrap_or_else(|| Err(io::Error::other("hashing thread panicked")))
         });
         (db, hashes)
     });
@@ -737,7 +739,7 @@ fn build_from_text(
             payload_len: 0,
             file_len: 0,
         };
-        let payload = format::encode_payload(&db);
+        let payload = format::encode_payload(&db).ok_or_else(|| "encoding failed".to_owned())?;
         let header = encode_header(&info);
         let prefix = prefix_and_header(&header, &payload);
         write_atomic(&key.file, &[&prefix, &payload])
@@ -765,17 +767,17 @@ fn read_file(path: &Path) -> io::Result<Vec<u8>> {
             let threads = std::thread::available_parallelism().map_or(1, |n| n.get().min(4));
             let chunk = len.div_ceil(threads);
             std::thread::scope(|scope| {
-                let handles: Vec<_> = data
+                let tasks: Vec<_> = data
                     .chunks_mut(chunk)
                     .enumerate()
                     .map(|(i, buf)| {
                         let file = &file;
-                        scope.spawn(move || file.read_exact_at(buf, (i * chunk) as u64))
+                        task::spawn(scope, move || file.read_exact_at(buf, (i * chunk) as u64))
                     })
                     .collect();
-                handles.into_iter().try_for_each(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(io::Error::other("reader thread panicked")))
+                tasks.into_iter().try_for_each(|t| {
+                    t.join()
+                        .unwrap_or_else(|| Err(io::Error::other("reader thread panicked")))
                 })
             })?;
             return Ok(data);

@@ -52,6 +52,8 @@ use crate::part::{BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};
 use crate::segbits::{PpipType, SegBit, SegbitsEntry, TileSegbits};
 use crate::tilegrid::{BitAlias, BitsBlock, ClockRegion, Grid, Span, Tile};
 
+use super::task;
+
 /// The first 8 bytes of every cache file.
 pub const MAGIC: [u8; 8] = *b"FASMXDB1";
 
@@ -317,33 +319,36 @@ const TYPE_GROUPS: usize = 4;
 /// architecture, which are in the header, and the derived indexes, which
 /// are rebuilt).
 ///
-/// The sections are encoded on scoped threads.
-pub(crate) fn encode_payload(db: &Database) -> Vec<u8> {
+/// The sections are encoded on scoped threads; `None` if one of them
+/// panicked.
+pub(crate) fn encode_payload(db: &Database) -> Option<Vec<u8>> {
     let sections: Vec<(u8, Vec<u8>)> = std::thread::scope(|scope| {
-        let mut handles = Vec::new();
+        let mut tasks = Vec::new();
         for group in type_groups(&db.tile_types) {
-            handles.push((
+            tasks.push((
                 SECTION_TYPES,
-                scope.spawn(move || {
+                task::spawn(scope, move || {
                     encode_section(|w, [strings, _]| encode_types(w, strings, group))
                 }),
             ));
         }
-        handles.push((
+        tasks.push((
             SECTION_GRID,
-            scope.spawn(|| encode_section(|w, tables| encode_grid(w, tables, db.grid.as_ref()))),
+            task::spawn(scope, || {
+                encode_section(|w, tables| encode_grid(w, tables, db.grid.as_ref()))
+            }),
         ));
-        handles.push((
+        tasks.push((
             SECTION_PART,
-            scope.spawn(|| {
+            task::spawn(scope, || {
                 encode_section(|w, [strings, _]| encode_part(w, strings, db.part.as_ref()))
             }),
         ));
-        handles
+        tasks
             .into_iter()
-            .map(|(kind, h)| (kind, h.join().expect("section encoder panicked")))
-            .collect()
-    });
+            .map(|(kind, task)| Some((kind, task.join()?)))
+            .collect::<Option<_>>()
+    })?;
     let mut out = Writer::default();
     out.len(sections.len());
     for (kind, bytes) in &sections {
@@ -353,7 +358,7 @@ pub(crate) fn encode_payload(db: &Database) -> Vec<u8> {
     for (_, bytes) in &sections {
         out.buf.extend_from_slice(bytes);
     }
-    out.buf
+    Some(out.buf)
 }
 
 /// Splits the tile types into up to [`TYPE_GROUPS`] runs of about the same
@@ -840,15 +845,17 @@ fn decode_grid(
 
     let ((tiles, by_name), by_loc, arrays) = if parallel {
         std::thread::scope(|scope| {
-            let by_loc = scope.spawn(|| tiles_by_loc(tile_records));
-            let tile_ids = tile_strings.intern()?;
-            let indexed = scope.spawn(move || decode_indexed_tiles(tile_records, &tile_ids));
+            let by_loc = task::spawn(scope, || tiles_by_loc(tile_records));
+            let tile_ids = tile_strings.intern();
+            let indexed = task::spawn(scope, move || {
+                decode_indexed_tiles(tile_records, &tile_ids?)
+            });
             let arrays = strings
                 .intern()
                 .and_then(|ids| decode_grid_arrays(bits, aliases, pairs, names, &ids));
             let panicked = || "grid decoder panicked".to_owned();
-            let indexed = indexed.join().unwrap_or_else(|_| Err(panicked()))?;
-            let by_loc = by_loc.join().map_err(|_| panicked())?;
+            let indexed = indexed.join().unwrap_or_else(|| Err(panicked()))?;
+            let by_loc = by_loc.join().ok_or_else(panicked)?;
             Ok::<_, Corrupt>((indexed, by_loc, arrays?))
         })?
     } else {
@@ -1049,24 +1056,24 @@ pub(crate) fn decode_payload(
             let largest = (0..sections.len())
                 .max_by_key(|&i| sections[i].1.len())
                 .unwrap_or(0);
-            let handles: Vec<_> = sections
+            let tasks: Vec<_> = sections
                 .iter()
                 .enumerate()
                 .map(|(i, &(kind, bytes))| {
-                    (i != largest)
-                        .then(|| scope.spawn(move || decode_section(kind, bytes, root, true)))
+                    (i != largest).then(|| {
+                        task::spawn(scope, move || decode_section(kind, bytes, root, true))
+                    })
                 })
                 .collect();
             let mut own = sections
                 .get(largest)
                 .map(|&(kind, bytes)| decode_section(kind, bytes, root, true));
-            handles
+            let panicked = || Err("section decoder panicked".to_owned());
+            tasks
                 .into_iter()
-                .map(|h| match h {
-                    Some(h) => h
-                        .join()
-                        .unwrap_or_else(|_| Err("section decoder panicked".to_owned())),
-                    None => own.take().expect("the largest section"),
+                .map(|task| match task {
+                    Some(task) => task.join().unwrap_or_else(panicked),
+                    None => own.take().unwrap_or_else(panicked),
                 })
                 .collect()
         })

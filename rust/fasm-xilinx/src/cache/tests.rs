@@ -148,7 +148,7 @@ fn round_trip_of_every_field() {
     for (name, part) in [("mini-db", MINI_PART), ("synthetic-db", SYNTHETIC_PART)] {
         let root = testdata(name);
         let db = Database::open(&root, Some(part)).unwrap();
-        let payload = format::encode_payload(&db);
+        let payload = format::encode_payload(&db).unwrap();
         for parallel in [false, true] {
             let decoded =
                 format::decode_payload(&payload, &root, db.layout, db.architecture, parallel)
@@ -157,7 +157,7 @@ fn round_trip_of_every_field() {
         }
         // Without a part.
         let db = Database::open(&root, None).unwrap();
-        let payload = format::encode_payload(&db);
+        let payload = format::encode_payload(&db).unwrap();
         let decoded =
             format::decode_payload(&payload, &root, db.layout, db.architecture, true).unwrap();
         assert_databases_equal(&decoded, &db);
@@ -324,7 +324,7 @@ fn with_header(data: &[u8], edit: impl FnOnce(&mut CacheInfo)) -> Vec<u8> {
 fn corrupt_payload_with_valid_hashes_is_an_error_not_a_panic() {
     let root = testdata("synthetic-db");
     let db = Database::open(&root, Some(SYNTHETIC_PART)).unwrap();
-    let payload = format::encode_payload(&db);
+    let payload = format::encode_payload(&db).unwrap();
     let decode =
         |p: &[u8], parallel| format::decode_payload(p, &root, db.layout, db.architecture, parallel);
     assert!(decode(&payload, false).unwrap() == db);
