@@ -345,6 +345,12 @@ and compares the `.frm` files, stdout, exit codes and stderr modulo the
 normalisation rules below; `tests/cli/test_fasm2frames_compat.py` covers
 the command line (help at many widths, argparse errors, the `XRAY_*`
 variables, error cases).
+`make xilinx-difftest-all` (T5.9) runs the same comparison, and the
+bitstream tools and `xcfasm`, for every part of the artix7, kintex7,
+spartan7 and zynq7 databases on a generated corpus that sets every
+segbits feature and pseudo PIP of the part (`tools/gen-xilinx-corpus.py`,
+`DESIGN-xilinx-db.md` §8.9); `tests/cli/test_xilinx_corpus.py` checks
+one part against golden reference results.
 
 ### Differences
 
