@@ -197,3 +197,11 @@ what happened, branch/commit references, open issues.
   Orchestrator re-ran the reviewer's harness: all 11 suites 0 mismatches.
   Merged with --no-ff; 205 tests pass, fmt/clippy clean; worktree removed.
 * T0.5 (CI workflow) started.
+* T1.3 fixes landed (6 commits): linear time huge values with a 4300
+  significant digit decimal cap, short error messages, ANTLR annotation
+  mode lookahead error positions reproduced (35 more edge cases, 210 total,
+  0 mismatches vs oracle), Lines::line_number, blank line fast path,
+  allocation test, pip heavy bench, COMPAT.md corrections. Reviewer harness
+  re-run by implementer: 0 unexplained of 5092. Pip heavy input parses at
+  150-164 MB/s (below the 200 target; interning dominates) recorded under
+  T8.2. Sent back to the reviewer for re-review.

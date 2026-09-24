@@ -152,7 +152,10 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [ ] T8.1 Benchmarks (`cargo bench`) and `docs/rewrite/BENCHMARKS.md` with
       comparison against Python textX/ANTLR and fasm2frames.py.
 - [ ] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
-      cache, frame assembly).
+      cache, frame assembly). Known: on pip heavy FASM the parser runs at
+      150-164 MB/s (target 200) with ~48% of instructions in idstring
+      interning and ~9% in UTF-8 validation of names; speed up the interner
+      hit path and validate names byte-wise (they are ASCII by grammar).
 - [ ] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
 - [ ] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
