@@ -447,6 +447,35 @@ fn edge_cases() -> Vec<Case> {
         // --- Value width checks -------------------------------------------
         case("a = 2", "ERR 1:4 ValueExceedsAddressWidth", NoPos),
         case(
+            format!("a[20000:0] = {}", "9".repeat(4300)),
+            format!(
+                "a[20000:0]={}/PLAIN",
+                FeatureValue::from_digits("9".repeat(4300).as_bytes(), 10).unwrap()
+            ),
+            Differs("plain values above 2^31 - 1: 'Could not decode decimal number.'"),
+        ),
+        case(
+            format!("a[20000:0] = {}", "9".repeat(4301)),
+            "ERR 1:13 DecimalValueTooLong",
+            Same,
+        ),
+        case(
+            format!("a[20000:0] = 'd{}", "9".repeat(4301)),
+            "ERR 1:13 DecimalValueTooLong",
+            Same,
+        ),
+        case(
+            format!("a = 'd{}1", "0".repeat(4301)),
+            "a=1/VERILOG_DECIMAL",
+            Same,
+        ),
+        case(format!("a = {}1", "0".repeat(4301)), "a=1/PLAIN", Same),
+        case(
+            format!("a[20000:0] = 'd{}1", "0_".repeat(4299)),
+            "a[20000:0]=1/VERILOG_DECIMAL",
+            Same,
+        ),
+        case(
             "a[3:0] = 'b10000",
             "ERR 1:9 ValueExceedsAddressWidth",
             NoPos,
@@ -690,6 +719,86 @@ fn lines_iterator_is_lazy() {
     // Lines before an error are returned before the error is seen.
     let first: Vec<_> = parse_lines(b"a\nb\n= bad").take(2).collect();
     assert!(first.iter().all(Result::is_ok));
+}
+
+/// Huge values are handled in time linear in their length, whether they
+/// are accepted, rejected by a width check or rejected by the decimal
+/// digit limit, and error messages stay short.
+#[test]
+fn huge_values_are_fast_and_errors_short() {
+    let mb = 1 << 20;
+    let cases: Vec<(String, Option<ParseErrorKind>)> = vec![
+        // Decimal values: over the digit limit, or too wide.
+        (
+            format!("a = {}", "9".repeat(mb)),
+            Some(ParseErrorKind::DecimalValueTooLong),
+        ),
+        (
+            format!("a[4294967294:0] = 'd{}", "7_".repeat(mb)),
+            Some(ParseErrorKind::DecimalValueTooLong),
+        ),
+        (
+            format!("a = {}", "9".repeat(4300)),
+            Some(ParseErrorKind::ValueExceedsAddressWidth),
+        ),
+        (
+            format!("a[3:0] = 4'd{}", "9".repeat(4000)),
+            Some(ParseErrorKind::ValueExceedsDeclaredWidth),
+        ),
+        // Leading zeros are not significant.
+        (format!("a = {}1", "0".repeat(mb)), None),
+        // Power of two radixes: accepted, and rejected before or after
+        // conversion.
+        (format!("a[{}:0] = 'h{}", 4 * mb, "F".repeat(mb)), None),
+        (
+            format!("a[3:0] = 4'h{}", "F".repeat(mb)),
+            Some(ParseErrorKind::ValueExceedsDeclaredWidth),
+        ),
+        (
+            format!("a[3:0] = 'b{}", "1".repeat(mb)),
+            Some(ParseErrorKind::ValueExceedsAddressWidth),
+        ),
+        // The exact bit length (260) exceeds the address width (258) but
+        // the digit count bound (257) does not.
+        (
+            format!("a[257:0] = 'hF{}", "0".repeat(64)),
+            Some(ParseErrorKind::ValueExceedsAddressWidth),
+        ),
+        (
+            format!("a[{}]", "9".repeat(mb)),
+            Some(ParseErrorKind::AddressOutOfRange),
+        ),
+    ];
+    for (input, expected) in cases {
+        let start = std::time::Instant::now();
+        let result = parse_fasm_string(&input);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_millis(500),
+            "{elapsed:?} for {}...",
+            &input[..40.min(input.len())]
+        );
+        match (result, expected) {
+            (Ok(_), None) => {}
+            (Err(e), Some(kind)) => {
+                assert_eq!(e.kind, kind, "{e}");
+                assert!(e.message.len() < 200, "message too long: {}", e.message);
+            }
+            (r, _) => panic!("unexpected {:?} for {}...", r.map(|_| ()), &input[..40]),
+        }
+    }
+
+    let e = parse_fasm_string(&format!("a[257:0] = 'hF{}", "0".repeat(64))).unwrap_err();
+    assert_eq!(
+        e.message,
+        "260 bit value 0xf000000000000000... does not fit in the 258 bit(s) addressed by the \
+         feature"
+    );
+    let e = parse_fasm_string("a[3:0] = 4'h1F").unwrap_err();
+    assert_eq!(
+        e.message,
+        "value 31 does not fit in the declared width of 4 bit(s)"
+    );
 }
 
 #[test]

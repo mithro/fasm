@@ -139,6 +139,30 @@ pub(super) fn parse_logical_line(buf: &[u8], start: usize) -> Result<LineOutcome
     })
 }
 
+/// A value as found in the input, before conversion.
+struct RawValue<'a> {
+    /// The digits (`_` separators included).
+    digits: &'a [u8],
+    /// Bits per digit (1, 3 or 4), or 0 for decimal.
+    bits: u32,
+    format: ValueFormat,
+    /// The declared width of a Verilog value (saturated to `u64::MAX`).
+    declared_width: Option<u64>,
+}
+
+/// Text for a value in an error message: the decimal value, or its bit
+/// length and leading hexadecimal digits when it is wider than 256 bits
+/// (a message must stay short, and decimal rendering is quadratic).
+fn value_text(value: &FeatureValue) -> String {
+    let bits = value.bit_len();
+    if bits <= 256 {
+        format!("value {value}")
+    } else {
+        let top = value.shr(bits - 64).to_u64().unwrap_or(0);
+        format!("{bits} bit value 0x{top:x}...")
+    }
+}
+
 /// What was parsed so far on a line; selects the "expected ..." text of
 /// an error at the end of the line.
 #[derive(Clone, Copy)]
@@ -351,14 +375,17 @@ impl<'a> Scanner<'a> {
             self.pos += 1;
             self.skip_ws();
             let value_pos = self.pos;
-            let (v, format, declared_width) = self.value()?;
+            let raw = self.value()?;
             self.skip_ws();
 
+            // With an error already pending the line is rejected anyway:
+            // the value is not needed.
             if self.pending.is_none() {
-                self.check_value_width(&v, value_pos, declared_width, start, end);
+                if let Some(v) = self.convert_value(&raw, value_pos, start, end) {
+                    value = v;
+                }
             }
-            value = v;
-            value_format = Some(format);
+            value_format = Some(raw.format);
         }
 
         Ok((
@@ -367,44 +394,114 @@ impl<'a> Scanner<'a> {
         ))
     }
 
-    /// Checks, like the ANTLR decoder, that the value found at `value_pos`
-    /// fits in its declared width (when it has one other than 0: `if
-    /// width:` in `antlr_to_tuple.pyx`) and in the address width (1 bit
-    /// without an address or with a single bit address). Errors are
-    /// deferred to the end of the line.
-    fn check_value_width(
+    /// Converts the value found at `value_pos` and checks, like the ANTLR
+    /// decoder, that it fits in its declared width (when it has one other
+    /// than 0: `if width:` in `antlr_to_tuple.pyx`) and in the address
+    /// width (1 bit without an address or with a single bit address).
+    ///
+    /// Errors are deferred to the end of the line (and `None` returned).
+    /// The cost is linear in the number of digits: decimal values are
+    /// limited to [`number::MAX_DECIMAL_DIGITS`] digits, and a value whose
+    /// digit count alone shows it is too wide is not converted at all.
+    fn convert_value(
         &mut self,
-        value: &FeatureValue,
+        raw: &RawValue<'a>,
         value_pos: usize,
-        declared_width: Option<u64>,
         start: Option<u32>,
         end: Option<u32>,
-    ) {
-        let bit_len = u64::from(value.bit_len());
-        if let Some(width) = declared_width.filter(|&w| w > 0) {
-            if bit_len > width {
-                self.defer(self.error(
-                    value_pos,
-                    ParseErrorKind::ValueExceedsDeclaredWidth,
-                    format!("value {value} does not fit in the declared width of {width} bit(s)"),
-                ));
-                return;
-            }
-        }
+    ) -> Option<FeatureValue> {
+        let declared = raw.declared_width.filter(|&w| w > 0);
         let address_width = match (start, end) {
             (Some(s), Some(e)) => u64::from(e).saturating_sub(u64::from(s)) + 1,
             _ => 1,
         };
-        if bit_len > address_width {
+
+        let significant = raw
+            .digits
+            .iter()
+            .filter(|&&b| b != b'_')
+            .skip_while(|&&b| b == b'0')
+            .count() as u64;
+        if raw.bits == 0 && significant > number::MAX_DECIMAL_DIGITS as u64 {
             self.defer(self.error(
                 value_pos,
-                ParseErrorKind::ValueExceedsAddressWidth,
+                ParseErrorKind::DecimalValueTooLong,
                 format!(
-                    "value {value} does not fit in the {address_width} bit(s) addressed by the \
-                     feature"
+                    "decimal value has {significant} significant digits, more than the limit \
+                     of {}",
+                    number::MAX_DECIMAL_DIGITS
                 ),
             ));
+            return None;
         }
+
+        // Lower bound of the bit length from the digit count: a value with
+        // n significant digits is at least radix^(n-1).
+        let min_bits = match (significant, raw.bits) {
+            (0, _) => 0,
+            // 3.321928 < log2(10).
+            (n, 0) => (n - 1).saturating_mul(3_321_928) / 1_000_000 + 1,
+            (n, bits) => (n - 1).saturating_mul(u64::from(bits)) + 1,
+        };
+        // Upper bound of the bit length.
+        let max_bits = match raw.bits {
+            // log2(10) < 3.33.
+            0 => significant.saturating_mul(333) / 100 + 1,
+            bits => significant.saturating_mul(u64::from(bits)),
+        };
+        let too_wide = |bits: u64| {
+            if declared.is_some_and(|w| bits > w) {
+                Some(ParseErrorKind::ValueExceedsDeclaredWidth)
+            } else if bits > address_width {
+                Some(ParseErrorKind::ValueExceedsAddressWidth)
+            } else {
+                None
+            }
+        };
+        let limit_text = |kind| match (kind, declared) {
+            (ParseErrorKind::ValueExceedsDeclaredWidth, Some(w)) => {
+                format!("the declared width of {w} bit(s)")
+            }
+            _ => format!("the {address_width} bit(s) addressed by the feature"),
+        };
+
+        // For values wider than 256 bits (short ones are cheap to convert,
+        // and then get an exact message), report from the bounds when the
+        // exact bit length would give the same error (the declared width
+        // is checked first).
+        let early = match too_wide(min_bits).filter(|_| min_bits > 256) {
+            Some(ParseErrorKind::ValueExceedsAddressWidth)
+                if declared.is_some_and(|w| max_bits > w) =>
+            {
+                None
+            }
+            kind => kind,
+        };
+        if let Some(kind) = early {
+            let text = format!(
+                "value with {significant} significant digit(s) (at least {min_bits} bits) does \
+                 not fit in {}",
+                limit_text(kind)
+            );
+            self.defer(self.error(value_pos, kind, text));
+            return None;
+        }
+
+        let value = if raw.bits == 0 {
+            number::decimal(raw.digits)
+        } else {
+            number::power_of_two(raw.digits, raw.bits)
+        };
+        if let Some(kind) = too_wide(u64::from(value.bit_len())) {
+            let text = format!(
+                "{} does not fit in {}",
+                value_text(&value),
+                limit_text(kind)
+            );
+            self.defer(self.error(value_pos, kind, text));
+            return None;
+        }
+        Some(value)
     }
 
     /// `'[' S* ADDR S* (':' S* ADDR S*)? ']'`; returns `(start, end)`.
@@ -425,11 +522,12 @@ impl<'a> Scanner<'a> {
             None
         };
         if self.peek() != Some(b']') {
-            return Err(self.unexpected(if second.is_some() {
+            let expected = if second.is_some() {
                 "']'"
             } else {
                 "':' or ']'"
-            }));
+            };
+            return Err(self.unexpected(expected));
         }
         self.pos += 1;
 
@@ -479,23 +577,22 @@ impl<'a> Scanner<'a> {
         match u32::try_from(v) {
             Ok(v) => Ok(v),
             Err(_) => {
+                // Keep the message short for absurdly long numbers.
+                let text = self.slice(start, self.pos);
+                let shown = String::from_utf8_lossy(text.get(..24).unwrap_or(text));
+                let more = if text.len() > 24 { "..." } else { "" };
                 self.defer(self.error(
                     start,
                     ParseErrorKind::AddressOutOfRange,
-                    format!(
-                        "feature address {} is larger than {}",
-                        String::from_utf8_lossy(self.slice(start, self.pos)),
-                        u32::MAX
-                    ),
+                    format!("feature address {shown}{more} is larger than {}", u32::MAX),
                 ));
                 Ok(u32::MAX)
             }
         }
     }
 
-    /// A value after `=`: returns the value, its format and the declared
-    /// width (saturated to `u64::MAX`) of a Verilog value.
-    fn value(&mut self) -> Result<(FeatureValue, ValueFormat, Option<u64>), RawError> {
+    /// A value after `=`, not converted yet (see [`Scanner::convert_value`]).
+    fn value(&mut self) -> Result<RawValue<'a>, RawError> {
         match self.peek() {
             Some(b'0'..=b'9') => {
                 let digits_start = self.pos;
@@ -524,23 +621,24 @@ impl<'a> Scanner<'a> {
                         w.saturating_mul(10)
                             .saturating_add(u64::from(b.wrapping_sub(b'0')))
                     });
-                    let (value, format) = self.verilog_value()?;
-                    Ok((value, format, Some(width)))
+                    self.verilog_value(Some(width))
                 } else {
                     self.pos = digits_end;
-                    Ok((number::decimal(digits), ValueFormat::Plain, None))
+                    Ok(RawValue {
+                        digits,
+                        bits: 0,
+                        format: ValueFormat::Plain,
+                        declared_width: None,
+                    })
                 }
             }
-            Some(b'\'') => {
-                let (value, format) = self.verilog_value()?;
-                Ok((value, format, None))
-            }
+            Some(b'\'') => self.verilog_value(None),
             _ => Err(self.unexpected("a value")),
         }
     }
 
     /// `"'" base S* DIGITS`; the current byte is `'`.
-    fn verilog_value(&mut self) -> Result<(FeatureValue, ValueFormat), RawError> {
+    fn verilog_value(&mut self, declared_width: Option<u64>) -> Result<RawValue<'a>, RawError> {
         let quote = self.pos;
         let (mask, format, bits, name) = match self.peek_at(quote + 1) {
             Some(b'h') => (HEX, ValueFormat::VerilogHex, 4, "hexadecimal"),
@@ -573,13 +671,12 @@ impl<'a> Scanner<'a> {
                 ),
             ));
         }
-        let digits = self.slice(digits_start, self.pos);
-        let value = if bits == 0 {
-            number::decimal(digits)
-        } else {
-            number::power_of_two(digits, bits)
-        };
-        Ok((value, format))
+        Ok(RawValue {
+            digits: self.slice(digits_start, self.pos),
+            bits,
+            format,
+            declared_width,
+        })
     }
 
     /// `'{' S* ann (S* ',' S* ann)* S* '}'`; the current byte is `{`.

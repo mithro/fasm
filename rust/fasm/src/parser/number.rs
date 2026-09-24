@@ -35,43 +35,75 @@ fn digit_value(b: u8) -> u64 {
     }
 }
 
+/// Maximum number of significant digits (`_` and leading zeros not
+/// counted) of a decimal value: Python's default
+/// `sys.get_int_max_str_digits()`, which the textX parser runs into
+/// (`ValueError: Exceeds the limit (4300 digits)`; Python also counts
+/// leading zeros, the ANTLR parser does not). The ANTLR parser's limits
+/// are much lower (2^31 - 1 for plain values, 2^64 - 1 for `'d` values).
+pub(super) const MAX_DECIMAL_DIGITS: usize = 4300;
+
+/// `10^i` for `i` in `0..=19`.
+const POW10: [u64; 20] = {
+    let mut t = [1u64; 20];
+    let mut i = 1;
+    while i < 20 {
+        t[i] = t[i - 1] * 10;
+        i += 1;
+    }
+    t
+};
+
 /// Parses decimal `digits` (`_` separators ignored). No `_`-free digit at
 /// all gives `0` (like the ANTLR parser does for `'d_`).
+///
+/// Converts 19 digits per step. Allocation free up to 256 bits; the
+/// caller bounds the digit count ([`MAX_DECIMAL_DIGITS`]), which bounds
+/// the (quadratic) cost of wider values.
 pub(super) fn decimal(digits: &[u8]) -> FeatureValue {
-    let mut v: u64 = 0;
-    for &b in digits {
-        if b == b'_' {
-            continue;
-        }
-        match v
-            .checked_mul(10)
-            .and_then(|x| x.checked_add(digit_value(b)))
-        {
-            Some(x) => v = x,
-            None => return decimal_wide(digits),
-        }
+    let mut stack = [0u64; INLINE_LIMBS];
+    if decimal_into(digits, &mut stack) {
+        return FeatureValue::from_le_limbs(&stack);
     }
-    FeatureValue::from_u64(v)
+    // log2(10) < 10 / 3: every 3 digits need at most 10 bits.
+    let bits = digits.len().div_ceil(3).saturating_mul(10);
+    let mut heap = vec![0u64; bits / 64 + 1];
+    decimal_into(digits, &mut heap);
+    FeatureValue::from_le_limbs(&heap)
 }
 
-/// Slow path of [`decimal`] for values that do not fit in a `u64`.
-fn decimal_wide(digits: &[u8]) -> FeatureValue {
-    let mut limbs: Vec<u64> = Vec::with_capacity(INLINE_LIMBS);
+/// Accumulates decimal `digits` into `limbs` (little endian, zeroed by the
+/// caller), 19 digits at a time; `false` if the value does not fit.
+fn decimal_into(digits: &[u8], limbs: &mut [u64]) -> bool {
+    let mut chunk = 0u64;
+    let mut len = 0usize;
     for &b in digits {
         if b == b'_' {
             continue;
         }
-        let mut carry = u128::from(digit_value(b));
-        for limb in &mut limbs {
-            let x = u128::from(*limb) * 10 + carry;
-            *limb = x as u64;
-            carry = x >> 64;
-        }
-        if carry != 0 {
-            limbs.push(carry as u64);
+        // At most 19 digits: below 10^19 < 2^64.
+        chunk = chunk * 10 + digit_value(b);
+        len += 1;
+        if len == 19 {
+            if !mul_add(limbs, POW10[19], chunk) {
+                return false;
+            }
+            chunk = 0;
+            len = 0;
         }
     }
-    FeatureValue::from_le_limbs(&limbs)
+    len == 0 || mul_add(limbs, POW10[len], chunk)
+}
+
+/// `limbs = limbs * mul + add`; `false` if the result does not fit.
+fn mul_add(limbs: &mut [u64], mul: u64, add: u64) -> bool {
+    let mut carry = u128::from(add);
+    for limb in limbs.iter_mut() {
+        let x = u128::from(*limb) * u128::from(mul) + carry;
+        *limb = x as u64;
+        carry = x >> 64;
+    }
+    carry == 0
 }
 
 /// Parses `digits` of a power of two radix, `bits` bits per digit (1 for
@@ -81,6 +113,12 @@ fn decimal_wide(digits: &[u8]) -> FeatureValue {
 /// Works from the least significant end, 8 digits at a time when a chunk
 /// holds no `_` (see [`chunk_value`]), one digit at a time otherwise.
 pub(super) fn power_of_two(digits: &[u8], bits: u32) -> FeatureValue {
+    // Leading zeros (and `_`) do not count towards the size.
+    let first = digits
+        .iter()
+        .position(|&b| b != b'0' && b != b'_')
+        .unwrap_or(digits.len());
+    let digits = digits.get(first..).unwrap_or_default();
     // Upper bound of the bit length (`_` take no bits).
     let max_bits = digits.len().saturating_mul(bits as usize);
     let nlimbs = max_bits.div_ceil(64);

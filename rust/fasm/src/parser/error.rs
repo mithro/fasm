@@ -38,6 +38,9 @@ pub enum ParseErrorKind {
     /// without an address or with a single bit address, `end - start + 1`
     /// bits for a range).
     ValueExceedsAddressWidth,
+    /// A decimal value (plain or `'d`) has more than 4300 digits (the
+    /// limit of Python's `int()`, which the textX parser uses).
+    DecimalValueTooLong,
     /// A comment or an annotation value is not valid UTF-8.
     InvalidUtf8,
     /// The input file could not be read (only from
