@@ -100,6 +100,7 @@ original parser (`if width:`); the Rust parser does the same.
 | `a[20000:0] = 9…9` (4300 significant digits) | exact value | `Could not decode decimal number.` (above 2^31 - 1) | exact value |
 | `a[20000:0] = 9…9` (4301 significant digits, plain or `'d`) | `ValueError: Exceeds the limit (4300 digits) for integer string conversion` | `Parse error at 1:13 - Could not decode decimal number.` | `DecimalValueTooLong` error at 1:13 |
 | `a = 0…01` (4301 leading zeros, plain or `'d`) | `ValueError` (Python counts leading zeros) | value 1 | value 1 |
+| `a[20000:0] = 0…09…9` (100 leading zeros, then 4300 nines; plain or `'d`) | `ValueError: … value has 4400 digits` | `Could not decode decimal number.` | exact value: the limit counts significant digits (so rejected by both originals, accepted by Rust) |
 
 The ANTLR octal decoder shifts its 64 bit accumulator right instead of
 masking it once a 32 bit word is emitted, so every `'o` value written with
@@ -108,9 +109,14 @@ its magnitude.
 
 Decimal values (plain and `'d`) are limited to 4300 significant digits
 (Python's default `int()` limit, which textX hits; ANTLR's limits are far
-lower): converting a decimal string is quadratic, and the limit keeps a
-malicious line cheap. Values in the power of two radixes have no limit
-(their conversion is linear), like in both original parsers.
+lower): converting a decimal string is quadratic in its significant
+digits, and the limit keeps a malicious line cheap. Leading zeros and `_`
+are skipped in linear time and take no part in the conversion (10 MB of
+leading zeros in front of 4300 nines on a `[4294967294:0]` address parse
+in a few milliseconds; `rust/fasm/src/parser/tests.rs`,
+`huge_values_are_fast_and_errors_short`). Values in the power of two
+radixes have no limit (their conversion is linear), like in both original
+parsers.
 
 Addresses are limited to `u32` (`SetFasmFeature::start`/`end` are `u32`,
 see `DESIGN-model.md`); larger addresses are an error rather than being
