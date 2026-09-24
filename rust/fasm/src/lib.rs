@@ -41,7 +41,8 @@ pub use model::{
 };
 pub use output::{
     canonical_features, fasm_line_to_string, fasm_tuple_to_string, fasm_value_to_str,
-    set_feature_to_str, try_canonical_features, write_fasm_value, write_set_feature, OutputError,
+    merge_and_sort, merge_and_sort_by_key, merge_features, set_feature_to_str,
+    try_canonical_features, write_fasm_value, write_set_feature, MergeModel, OutputError,
 };
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.

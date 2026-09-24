@@ -22,10 +22,11 @@
 //! `fasm_line_to_string`/`fasm_tuple_to_string` functions) and
 //! `fasm/output.py` (`merge_features`, `MergeModel`, `merge_and_sort`).
 //!
-//! `merge_features`/`MergeModel`/`merge_and_sort` are added in a later
-//! commit of this same task (T1.4); this one adds
-//! `fasm_line_to_string`/`fasm_tuple_to_string` on top of
-//! `fasm_value_to_str`/`set_feature_to_str`/`canonical_features`.
+//! See `docs/rewrite/DESIGN-output.md` for the design decisions behind this
+//! module, in particular the deliberately reproduced `MergeModel` grouping
+//! quirk (a duplicated group of lines in one specific situation) and why
+//! several functions here return `Result` where the Python originals
+//! `assert`.
 
 #![forbid(unsafe_code)]
 
@@ -33,8 +34,10 @@ mod canonical;
 mod error;
 mod format;
 mod line;
+mod merge;
 
 pub use canonical::{canonical_features, try_canonical_features};
 pub use error::OutputError;
 pub use format::{fasm_value_to_str, set_feature_to_str, write_fasm_value, write_set_feature};
 pub use line::{fasm_line_to_string, fasm_tuple_to_string};
+pub use merge::{merge_and_sort, merge_and_sort_by_key, merge_features, MergeModel};
