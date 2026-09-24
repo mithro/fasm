@@ -29,6 +29,10 @@
 //!   path for `fasm.fasm_tuple_to_string` that returns `None` for any
 //!   input it does not handle exactly like the Python function (see
 //!   `src/output.rs`);
+//! * `merge_and_sort(model, zero_function=None, sort_key=None) -> list |
+//!   None`, a fast path for `fasm.output.merge_and_sort` that returns
+//!   `None` for any input it does not handle exactly like the Python
+//!   function (see `src/merge.rs`);
 //! * `FasmParseError`, the exception raised for parse and I/O errors,
 //!   whose `str()` is `Parse error at L:C - message` (the format of the
 //!   original ANTLR based parser's exception), with `line` and `column`
@@ -49,6 +53,7 @@ use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::PyList;
 
 mod convert;
+mod merge;
 mod output;
 
 create_exception!(
@@ -155,6 +160,35 @@ fn fasm_tuple_to_string(
         .ok())
 }
 
+/// Returns the merged and sorted lines of `model`, exactly like
+/// ``fasm.output.merge_and_sort(model, zero_function, sort_key)`` (except
+/// this returns a materialised ``list`` rather than a lazy generator: the
+/// ``fasm.output`` wrapper wraps it in ``iter()``), or ``None`` when
+/// ``model`` is outside of what this fast path handles.
+///
+/// Handled: the same ``model`` shapes as ``fasm_tuple_to_string`` (a
+/// ``list``/``tuple`` of exact ``fasm.model.FasmLine``, see its doc
+/// comment), with any ``zero_function``/``sort_key`` callable. Declined
+/// (``None``) exactly like ``fasm_tuple_to_string`` for the model itself,
+/// and additionally whenever the merge hits one of the ``AssertionError``s
+/// Python's ``fasm.output.merge_features`` raises for a malformed model
+/// (the caller's Python fallback then raises the same error).
+///
+/// Once ``zero_function``/``sort_key`` has been called at least once, this
+/// function no longer declines: any exception either raises propagates
+/// directly (falling back to Python at that point would call the same
+/// callable again and duplicate any side effect it has).
+#[pyfunction]
+#[pyo3(signature = (model, zero_function=None, sort_key=None))]
+fn merge_and_sort<'py>(
+    py: Python<'py>,
+    model: &Bound<'py, PyAny>,
+    zero_function: Option<Bound<'py, PyAny>>,
+    sort_key: Option<Bound<'py, PyAny>>,
+) -> PyResult<Option<Bound<'py, PyList>>> {
+    merge::merge_and_sort_from_py(py, model, zero_function.as_ref(), sort_key.as_ref())
+}
+
 /// The `fasm._fasm_rs` extension module.
 #[pymodule]
 fn _fasm_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -162,6 +196,7 @@ fn _fasm_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_fasm_bytes, m)?)?;
     m.add_function(wrap_pyfunction!(parse_fasm_filename, m)?)?;
     m.add_function(wrap_pyfunction!(fasm_tuple_to_string, m)?)?;
+    m.add_function(wrap_pyfunction!(merge_and_sort, m)?)?;
     m.add("FasmParseError", m.py().get_type::<FasmParseError>())?;
     m.add("__version__", fasm::VERSION)?;
     Ok(())
