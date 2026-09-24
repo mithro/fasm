@@ -37,8 +37,23 @@ tools/e2e/install-fpgas-online-corpus.sh pmod-pin-id netv2
   (`tests/oracle/fasm2frames-oracle`, `tests/oracle/xc7frames2bit-oracle`,
   `tests/oracle/bitread-oracle` -- f4pga-xc-fasm + prjxray C++, built by
   `tests/oracle/setup-xilinx.sh`), **not** openXC7's own bundled copies of
-  the same tools, so this is directly comparable with the rest of the Rust
-  rewrite's differential tests.
+  the same tools -- but run against the **openXC7 snap's own bundled
+  prjxray-db** (`tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db`), the same database
+  nextpnr-xilinx's chipdb and the whole LiteX openxc7 flow are built
+  against for this design, **not** the independently pinned
+  `f4pga/prjxray-db` that `tests/oracle/setup-xilinx.sh`'s own
+  `tools/fetch-db.sh` fetches for the rest of this repo's Xilinx
+  differential tests. openXC7 snap `0.8.2`
+  (sha256 `6b2e07ce99ef33d3a4e41e2fd2eb916f26bb0ece34a97216ed840a0032e98587`); its bundled prjxray-db's own
+  `Info.md` records "Created using Project X-Ray version
+  [4c157493](https://github.com/SymbiFlow/prjxray/commit/4c157493ec9f13caea4ad3f0c02f8f318f198846),
+  last updated Tue Dec 14 07:31:38 PM UTC 2021" (an earlier draft of
+  tools/e2e/README.md claimed this database "carries no version marker
+  the way `tools/fetch-db.sh` pins prjxray-db for the oracle" --
+  corrected after T7.2 review: `Info.md` does record one, it is simply a
+  different, independent pin from `tools/fetch-db.sh`'s). See
+  tools/e2e/README.md ("A note on prjxray-db provenance") for the exact,
+  verified tile/segbits/ppips differences against the pinned db
 
 ## Commands (as run by tools/e2e/run-fpgas-online.sh)
 
@@ -46,16 +61,17 @@ tools/e2e/install-fpgas-online-corpus.sh pmod-pin-id netv2
 # LiteX build (yosys synth_xilinx -> nextpnr-xilinx -> FASM; the exact
 # commands are in the generated designs/pmod-pin-id/build/netv2/build_top.sh
 # or */gateware/build_*.sh, which is not committed):
-CHIPDB=<chipdb overlay dir> PRJXRAY_DB_DIR=<prjxray-db root> \
+CHIPDB=tools/e2e/build/chipdb-overlay PRJXRAY_DB_DIR=tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db \
   tools/e2e/build/litex-venv/bin/python \
   tools/e2e/build/fpgas.online-test-designs/designs/pmod-pin-id/gateware/pmod_pin_id_netv2.py \
   --toolchain openxc7 --build --variant a7-35
 
-# Reference frames + bitstream (from the FASM above):
-tests/oracle/fasm2frames-oracle --db-root <prjxray-db>/artix7 --part xc7a35tfgg484-2 top.fasm top.frm
-tests/oracle/fasm2frames-oracle --db-root <prjxray-db>/artix7 --part xc7a35tfgg484-2 --sparse top.fasm top.sparse.frm
+# Reference frames + bitstream (from the FASM above; --db-root is the
+# snap's bundled prjxray-db -- see "Source provenance" above):
+tests/oracle/fasm2frames-oracle --db-root tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db/artix7 --part xc7a35tfgg484-2 top.fasm top.frm
+tests/oracle/fasm2frames-oracle --db-root tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db/artix7 --part xc7a35tfgg484-2 --sparse top.fasm top.sparse.frm
 tests/oracle/xc7frames2bit-oracle -frm_file top.frm -output_file top.bit \
-  -part_name xc7a35tfgg484-2 -part_file <prjxray-db>/artix7/xc7a35tfgg484-2/part.yaml
+  -part_name xc7a35tfgg484-2 -part_file tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db/artix7/xc7a35tfgg484-2/part.yaml
 ```
 
 ## Output checksums (this run; `.bit` is NOT committed)
@@ -79,3 +95,7 @@ top.bit: 2192219 bytes (not committed; regenerate to verify)
 * xc7frames2bit: 0s
 
 Generated 2026-09-24.
+
+SPDX-License-Identifier: Apache-2.0 (fpgas.online-test-designs sources,
+this README) -- the openXC7 snap's bundled prjxray-db used to regenerate
+`.frm`/`.bit` above is CC0-1.0 (see its own `README.md`/`COPYING`).
