@@ -33,25 +33,29 @@
 # oracle tools cannot do (they only convert FASM <-> frames <-> bitstream).
 #
 # Usage:
-#   tools/e2e/setup-openxc7.sh [--force] [--parts DEVICE[,DEVICE...]]
+#   tools/e2e/setup-openxc7.sh [--force [--force]] [--parts DEVICE[,DEVICE...]]
 #
-#   --force            Delete tools/e2e/build/openxc7 and
-#                       tools/e2e/build/oss-cad-suite and rebuild from
-#                       scratch (same pins). Downloaded archives in
-#                       tools/e2e/build/downloads are kept and reused if
-#                       their sha256 still matches (pass --force twice, or
-#                       rm -rf tools/e2e/build/downloads, to also redo the
-#                       downloads).
-#                       Without --force the script is a fast no-op once
-#                       set up successfully for the requested pins/parts.
-#   --parts DEVICE,...  Also build a nextpnr-xilinx chip database for each
-#                       given prjxray-db device name (e.g.
-#                       xc7a100tcsg324-1). The chip database for
-#                       xc7a35tcsg324-1 (needed by run-counter.sh) is
-#                       always built. Building the chipdb for larger parts
-#                       is CPU/RAM heavy -- see tools/e2e/README.md
-#                       ("Chip database sizes and timings") before
-#                       requesting xc7a200t*/xc7a100t* on a small machine.
+#   --force                 Delete tools/e2e/build/openxc7 and
+#                            tools/e2e/build/oss-cad-suite and rebuild from
+#                            scratch (same pins). Downloaded archives in
+#                            tools/e2e/build/downloads are kept and reused
+#                            if their sha256 still matches. Pass --force
+#                            twice (or rm -rf tools/e2e/build/downloads) to
+#                            also delete and redo the downloads.
+#                            Without --force the script is a fast no-op
+#                            once set up successfully for the requested
+#                            pins/parts.
+#   --parts DEVICE[,...]     Also build a nextpnr-xilinx chip database for
+#   --parts=DEVICE[,...]     each given prjxray-db device name (e.g.
+#                            xc7a100tcsg324-1; either "--parts X" or
+#                            "--parts=X" works, comma separated for more
+#                            than one device). The chip database for
+#                            xc7a35tcsg324-1 (needed by run-counter.sh) is
+#                            always built. Building the chipdb for larger
+#                            parts is CPU/RAM heavy -- see
+#                            tools/e2e/README.md ("Chip database sizes and
+#                            timings") before requesting xc7a200t*/
+#                            xc7a100t* on a small machine.
 #
 # Everything this script creates lives under the gitignored
 # tools/e2e/build/ -- nothing here is committed to git.
@@ -79,25 +83,32 @@ set -euo pipefail
 
 FORCE=0
 EXTRA_PARTS=()
-for arg in "$@"; do
-  case "$arg" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --force)
-      FORCE=1
-      ;;
-    --parts)
-      echo "setup-openxc7.sh: --parts requires an argument (e.g. --parts xc7a100tcsg324-1)" >&2
-      exit 2
+      FORCE=$((FORCE + 1))
+      shift
       ;;
     --parts=*)
-      IFS=',' read -r -a _p <<<"${arg#--parts=}"
+      IFS=',' read -r -a _p <<<"${1#--parts=}"
       EXTRA_PARTS+=("${_p[@]}")
+      shift
+      ;;
+    --parts)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "setup-openxc7.sh: --parts requires an argument (e.g. --parts xc7a100tcsg324-1)" >&2
+        exit 2
+      fi
+      IFS=',' read -r -a _p <<<"$2"
+      EXTRA_PARTS+=("${_p[@]}")
+      shift 2
       ;;
     -h | --help)
-      sed -n '2,55p;58,76p' "$0" | sed -e 's/^# \{0,1\}//'
+      sed -n '2,80p' "$0" | sed -e 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
-      echo "setup-openxc7.sh: unknown argument: $arg" >&2
+      echo "setup-openxc7.sh: unknown argument: $1" >&2
       echo "usage: $0 [--force] [--parts DEVICE[,DEVICE...]]" >&2
       exit 2
       ;;
@@ -179,6 +190,10 @@ download() {
 # script keeps working even if oss-cad-suite-build's release retention
 # ever drops 2026-09-21 (api.github.com, which would otherwise answer
 # "latest", is not reachable from this machine -- see header comment).
+# NOTE: the probed-date fallback path has no sha256 pin to verify
+# against -- whatever it downloads from a github.com release URL over
+# HTTPS is trusted as-is (its sha256 is only recorded after the fact, for
+# status.json/reproducibility, not checked against a known-good value).
 find_oss_cad_suite_url() {
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -I -L "$OSS_CAD_SUITE_URL" || true)"
@@ -235,8 +250,11 @@ except Exception:
   log "requested parts ($WANTED_PARTS) are not all built yet; building the missing ones"
 fi
 
-if [[ "$FORCE" -eq 1 ]]; then
-  log "--force: removing $OPENXC7_DIR and $OSS_DIR (keeping $DL_DIR cache)"
+if [[ "$FORCE" -ge 2 ]]; then
+  log "--force --force: removing $OPENXC7_DIR, $OSS_DIR and $DL_DIR (downloads will be redone)"
+  rm -rf "$OPENXC7_DIR" "$OSS_DIR" "$DL_DIR"
+elif [[ "$FORCE" -ge 1 ]]; then
+  log "--force: removing $OPENXC7_DIR and $OSS_DIR (keeping $DL_DIR cache; pass --force twice to also redo the downloads)"
   rm -rf "$OPENXC7_DIR" "$OSS_DIR"
 fi
 
