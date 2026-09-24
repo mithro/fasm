@@ -429,3 +429,12 @@ what happened, branch/commit references, open issues.
   1011 passed on the merged tree; worktree removed. Phase 3 complete.
 * T7.2 (fpgas.online-test-designs Xilinx designs via LiteX + openXC7)
   started.
+* T5.4/T5.5 review (Opus): 974k generated feature lines in 132 runs, 108
+  hand written edge case runs, 130 ROI runs, 410 fuzz runs, 1M line
+  xc7a200t file (Rust 3.1 s / 412 MiB vs oracle 285 s / 1815 MiB): all
+  .frm identical except two items: fasm2frames does not emulate ANTLR's
+  parse error precedence (the fasm binary does), and ROI required_features
+  given as a JSON object are joined in sorted instead of insertion order.
+  Fixes requested; also COMPAT/difftest notes (STEPDOWN KeyError tile is
+  PYTHONHASHSEED dependent in Python; parser level differences; explicit
+  value range rule in difftest-xilinx.py; hot path allocation numbers).
