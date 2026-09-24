@@ -40,6 +40,25 @@ candidate real bug. A summary table is printed; full detail (every
 mismatch, every command run) is written to a report file (`--report`,
 default a temp file, path always printed).
 
+One further class applies outside the `CLASSES`/manifest mechanism, to a
+single directory rather than a per-file manifest entry:
+`xilinx_error_corpus` (see `_class_xilinx_error_corpus`/
+`_in_xilinx_error_corpus` below). `tests/corpus/xilinx/**/synthetic/errors/`
+is T5.4's fasm2frames error-path corpus: files there are deliberately
+invalid FASM whose job is to exercise `fasm2frames`' *own* error
+reporting, not parser parity, and the ANTLR oracle's error handling for
+several of them is itself broken (it raises an internal Python exception,
+e.g. `'NoneType' object is not iterable`, instead of a clean parse error).
+For a file under that directory whose parse trees differ, this class
+applies -- and the difference is `xilinx_error_corpus`, not
+`unexplained` -- only when Rust reports a parse error *and* the ANTLR
+oracle reports an error of some form (its message is not compared) *and*
+textX either errors too or its result exactly matches Rust's. Anything
+else in that directory (including a file all three parsers actually
+agree on, e.g. a valid-FASM fixture that is only an error case for
+`fasm2frames`' own lookup, not for parsing) is compared exactly as any
+other "plain" corpus file -- this directory is never blanket-skipped.
+
 Requires the oracle venv (`tests/oracle/setup.sh`, or point `--oracle-python`
 at another one, e.g. the main checkout's) and the `fasm-dump` example binary
 (`cargo build --release --example dump -p fasm`, or `--rust-dump`).
@@ -118,6 +137,34 @@ def _class_rust_stricter(rust, antlr, textx):
 def _class_non_ascii_antlr_exception(rust, antlr, textx):
     return _err(antlr) and not _err(rust) and not _err(textx) \
         and rust == textx
+
+
+# `tests/corpus/xilinx/**/synthetic/errors/`: T5.4's fasm2frames error-path
+# corpus (see the module docstring). Not manifest driven like `CLASSES`
+# above -- there is no `manifest.json` entry per file here -- so these two
+# helpers are applied directly by `process_plain`, gated on the directory,
+# rather than looked up through `CLASSES`.
+_XILINX_ERROR_CORPUS_PREFIX = "tests/corpus/xilinx/"
+_XILINX_ERROR_CORPUS_INFIX = "/synthetic/errors/"
+
+
+def _in_xilinx_error_corpus(rel):
+    """True for `tests/corpus/xilinx/**/synthetic/errors/*.fasm` (`rel` is
+    repo-root relative, `/` separated, as `discover_corpus` produces)."""
+    return rel.startswith(_XILINX_ERROR_CORPUS_PREFIX) \
+        and _XILINX_ERROR_CORPUS_INFIX in rel
+
+
+def _class_xilinx_error_corpus(rust, antlr, textx):
+    """See the module docstring's `xilinx_error_corpus` paragraph: Rust
+    must actually report a parse error; the ANTLR oracle just needs to
+    have failed too, in any form (message not compared -- dump.py's ANTLR
+    parser wraps some errors in this corpus as unhelpful Python
+    exceptions rather than a clean parse error); textX must likewise have
+    errored, or (in principle; not observed in practice, since Rust
+    erroring makes an exact match here vanishingly unlikely) produced
+    exactly the same result as Rust."""
+    return _err(rust) and _err(antlr) and (_err(textx) or textx == rust)
 
 
 CLASSES = {
@@ -370,6 +417,18 @@ def process_plain(rel, path, rust_dump, oracle_python, result):
         return result
 
     if not (rust == antlr == textx):
+        if _in_xilinx_error_corpus(rel) and _class_xilinx_error_corpus(
+                rust, antlr, textx):
+            result.status = "xilinx_error_corpus"
+            result.note(
+                "{}: parse tree differs, but matches the "
+                "xilinx_error_corpus class (T5.4 fasm2frames error-path "
+                "corpus; Rust and the ANTLR oracle both report a parse "
+                "error, message not compared -- see the module "
+                "docstring)\n"
+                "  rust:  {}\n  antlr: {}\n  textx: {}".format(
+                    rel, rust, antlr, textx))
+            return result
         result.status = "unexplained"
         result.note(
             "{}: parse tree differs (expected identical: this is plain, "
