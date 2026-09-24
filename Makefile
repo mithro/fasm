@@ -176,6 +176,30 @@ xilinx-difftest:
 
 .PHONY: xilinx-difftest
 
+# The same comparison over every part of the four prjxray-db families
+# (T5.9, docs/rewrite/DESIGN-xilinx-db.md 8.9): a synthetic corpus per part
+# from tools/gen-xilinx-corpus.py (every segbits feature and pseudo PIP of
+# every tile type, plus an error corpus), missing families fetched with
+# tools/fetch-db.sh. Generated files, the cached reference results and the
+# run directories go to $(XILINX_DIFFTEST_WORK); a rerun only runs the Rust
+# tools. XILINX_DIFFTEST_ALL_ARGS can add e.g. `--parts 'xc7a35t*'`,
+# `--tiles first` or `--no-result-cache`.
+XILINX_DIFFTEST_WORK ?= $(TOP_DIR)/tests/oracle/build/difftest-xilinx
+XILINX_DIFFTEST_FAMILIES ?= artix7,kintex7,spartan7,zynq7
+XILINX_DIFFTEST_JOBS ?= 4
+xilinx-difftest-all: XILINX_DIFFTEST_ALL_ARGS ?=
+xilinx-difftest-all:
+	cargo build --release -p fasm-cli
+	python3 tools/difftest-xilinx.py --oracle $(ORACLE_DIR)/fasm2frames-oracle \
+		--frames2bit-oracle $(ORACLE_DIR)/xc7frames2bit-oracle \
+		--bitread-oracle $(ORACLE_DIR)/bitread-oracle \
+		--xcfasm-oracle $(ORACLE_DIR)/xcfasm-oracle \
+		--families $(XILINX_DIFFTEST_FAMILIES) --all-parts \
+		--jobs $(XILINX_DIFFTEST_JOBS) --work-dir $(XILINX_DIFFTEST_WORK) \
+		$(XILINX_DIFFTEST_ALL_ARGS)
+
+.PHONY: xilinx-difftest-all
+
 # Fuzzing (T1.6, rust/fasm/fuzz/; see its README.md). Needs `cargo-fuzz`
 # (`cargo install cargo-fuzz`) and a nightly toolchain (`rustup toolchain
 # install nightly`); rust/fasm/fuzz is excluded from the main workspace
