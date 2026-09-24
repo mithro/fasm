@@ -27,6 +27,17 @@ members = [
     "rust/fasm-capi",
     "rust/fasm-python",
 ]
+# Built by a bare `cargo build` / `cargo test` (without `--workspace`):
+# everything except rust/fasm-python, whose pyo3 build script needs a
+# Python >= 3.9 interpreter and its shared library. CI and the
+# verification commands in docs/rewrite/ use `--workspace`, which builds
+# fasm-python too (docs/rewrite/DESIGN-python.md).
+default-members = [
+    "rust/fasm",
+    "rust/fasm-cli",
+    "rust/fasm-xilinx",
+    "rust/fasm-capi",
+]
 
 [workspace.package]
 version = "0.1.0"

@@ -89,6 +89,20 @@ did for any non-ASCII input. `parse_fasm_filename` accepts `str`, `bytes`
 and `os.PathLike`: the argument goes through `os.fsdecode` and back to a
 `PathBuf` (lossless on Unix: surrogateescape).
 
+### Interned feature names
+
+The parser interns every feature name into the `fasm` crate's global
+`IdString` interner (`fasm::idstring::GLOBAL`), and so does the
+`fasm_tuple_to_string` fast path for every name it converts back into the
+Rust model. That interner never frees anything: a long running process
+that parses or formats many *distinct* feature names keeps growing, by
+the size of every new per-level text (the `.` separated components are
+interned per level and shared between names, see `DESIGN-idstring.md`),
+without bound. Real FASM files of one device reuse a bounded set of names
+(the device's tiles, sites and features), so this only matters for a
+process that goes through arbitrary or generated names; there is no way to
+reset the interner from Python yet.
+
 ## GIL and garbage collector
 
 Reading the file, parsing (`fasm::parse_fasm_*`) and formatting
@@ -152,12 +166,21 @@ covered by abi3 wheels (they would need version specific builds).
 * pyo3 0.29's `extension-module` feature is deprecated: maturin (>= 1.9.4,
   required in `[build-system]`) sets `PYO3_BUILD_EXTENSION_MODULE` so the
   wheel does not link libpython. The crate therefore does not enable the
-  feature, and `cargo build` / `cargo test` / `cargo clippy` on the
-  workspace work like for any pyo3 program: they link libpython, so they
-  need a Python >= 3.9 interpreter (and its shared library) on `PATH` or
-  named by `PYO3_PYTHON`. GitHub's runners have one; without any
-  interpreter the `fasm-python` build script fails
-  (`no Python 3.x interpreter found`).
+  feature, and `cargo build` / `cargo test` / `cargo clippy` of
+  `fasm-python` work like for any pyo3 program: they link libpython, so
+  they need a Python >= 3.9 interpreter (and its shared library) on `PATH`
+  or named by `PYO3_PYTHON`; without any interpreter the `fasm-python`
+  build script fails (`no Python 3.x interpreter found`).
+* The workspace's `default-members` (root `Cargo.toml`) leave
+  `rust/fasm-python` out, so a bare `cargo build` / `cargo test` (without
+  `--workspace` or `-p fasm-python`) needs no Python at all. CI and the
+  verification commands keep `--workspace`, which builds and tests
+  `fasm-python` too (GitHub's runners have a Python).
+* `pip install` from source (an sdist, a checkout, a `git archive`
+  tarball) needs a Rust toolchain. Without one, maturin's build backend
+  downloads a Rust toolchain through `puccinialin` (about 676 MB, measured
+  in the T3.1 review; needs network access) into a cache and builds with
+  it. Wheels need no toolchain.
 * The crate's unit tests cover only pure Rust helpers (they never start an
   interpreter); the module is tested from Python: `maturin develop` (or
   `pip install .`) into a venv, then
