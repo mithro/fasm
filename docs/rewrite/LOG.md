@@ -311,3 +311,11 @@ what happened, branch/commit references, open issues.
   tests pass, `make capi-test` 4/4 incl. valgrind, header freshness test
   passes; worktree removed.
 * T5.2 (fasm-xilinx database loader) started.
+* T3.1 review (Opus): 9,644 file differential vs oracle and vs the Rust CLI,
+  100k model fast path fuzz, leak/thread/GC pause checks: all clean (every
+  divergence documented). REQUEST CHANGES for two packaging items: stale
+  tracked `fasm/version.py` gets packaged from tarball builds; the new
+  tests need `maturin develop` (cwd=ROOT shadowing). Also asked to add
+  `default-members` so bare `cargo build` stays Python free. Fixes in
+  progress. Note for T3.2: legacy wheel.yml/tox.ini/ANTLR files are now
+  stale and must be removed/rewritten.
