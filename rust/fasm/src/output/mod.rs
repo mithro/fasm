@@ -22,15 +22,17 @@
 //! `fasm_line_to_string`/`fasm_tuple_to_string` functions) and
 //! `fasm/output.py` (`merge_features`, `MergeModel`, `merge_and_sort`).
 //!
-//! `canonical_features`, `fasm_line_to_string`/`fasm_tuple_to_string` and
+//! `fasm_line_to_string`/`fasm_tuple_to_string` and
 //! `merge_features`/`MergeModel`/`merge_and_sort` are added in later
-//! commits of this same task (T1.4); this one has `fasm_value_to_str` and
-//! `set_feature_to_str`.
+//! commits of this same task (T1.4); this one adds `canonical_features` on
+//! top of `fasm_value_to_str`/`set_feature_to_str`.
 
 #![forbid(unsafe_code)]
 
+mod canonical;
 mod error;
 mod format;
 
+pub use canonical::{canonical_features, try_canonical_features};
 pub use error::OutputError;
 pub use format::{fasm_value_to_str, set_feature_to_str, write_fasm_value, write_set_feature};
