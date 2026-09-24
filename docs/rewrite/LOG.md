@@ -134,3 +134,15 @@ what happened, branch/commit references, open issues.
   (escaped quotes in annotation values, declared width wider than the
   address width, `_` in plain decimals) except where ANTLR is plainly buggy
   (32 bit truncation of addresses/plain values), and document every case.
+* T7.1 implemented on branch `worktree-agent-ab7be3a18223e07a8` (4 commits):
+  openXC7 snap 0.8.2 (nextpnr-xilinx, bbasm, prjxray tools + bundled
+  prjxray-db for artix7/kintex7/spartan7/zynq7) made runnable without snapd
+  by patchelf-ing the interpreter and sed-fixing the python wrappers; yosys
+  from OSS CAD Suite 2026-09-21; ~4.7 GiB total. Chipdb for xc7a35tcsg324-1
+  built in ~12 s. First end-to-end design (f4pga-examples counter_test on
+  Arty 35T) runs in 5.4 s and produced a deterministic 781 line FASM, now in
+  tests/corpus/xilinx/artix7/designs/f4pga-examples/counter_test/arty_35/.
+  Blocker for large parts: `bbaexport.py` for xc7a200t exceeded 8 GiB RAM
+  and 4 minutes on this 4 core / 15 GiB machine (killed); xc7a100t not
+  measured. `nextpnr-xilinx --test` fails an internal assert on the built
+  chipdb but the real flow works. Sent for review.
