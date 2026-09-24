@@ -215,3 +215,4 @@ what happened, branch/commit references, open issues.
   doc` warns about the output filename collision between the `fasm` binary
   and the `fasm` lib (cargo bug 6313); harmless, consider renaming the doc
   target later.
+* T1.1b (idstring follow ups + hit path speed) started.

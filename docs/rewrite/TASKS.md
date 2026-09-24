@@ -34,7 +34,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 - [x] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
-- [ ] T1.1b idstring follow ups from review (optional items): strengthen
+- [~] T1.1b idstring follow ups from review (optional items): strengthen
       `concurrent_lookups_while_tables_grow` into a positive publication test;
       fast path for repeat interning of overflowed names (check overflow table
       before locking); `# Panics` docs on `Ord`/`Display`/`PartialEq<str>`
