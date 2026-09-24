@@ -450,7 +450,7 @@ decoder supports (prjxray's `lib/test_data/configuration_test.yaml`).
 and ROI run of the artix7 corpus into a `.bit` with both
 `xc7frames2bit`s (identical files; the Rust tool gets the reference's
 header time through `SOURCE_DATE_EPOCH`) and reads it with both
-`bitread`s and six flag sets; it also runs both `bitread`s on the golden
+`bitread`s and eleven flag sets; it also runs both `bitread`s on the golden
 `smoke_x1y0.bit` and prjxray's reference bitstreams
 (`lib/test_data/configuration_test{,.debug,.perframecrc}.bit`, the
 Series7 `design.bit` and `bram.bit` of `ToolsTestData.tar.gz`, Vivado

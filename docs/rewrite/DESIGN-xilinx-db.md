@@ -2265,11 +2265,15 @@ bit -> frm -> bit, the counter design's dense, sparse and PUDC `.frm`
 identical to the reference `xc7frames2bit` (run when built), dense =
 sparse bitstreams, prjxray's `configuration_test` bitstreams (normal,
 debug, per frame CRC) read to equal configurations, `xcfasm` on the smoke
-FASM. Differential: `make xilinx-difftest` (87 fasm2frames runs + 154
+FASM. Differential: `make xilinx-difftest` (87 fasm2frames runs + 264
 xc7frames2bit/bitread runs on their `.frm` files, 45 xcfasm runs, 6
-reference bitstreams x 6 bitread flag sets: all identical), and the CLI
-tests `tests/cli/test_{xc7frames2bit,bitread,xcfasm}_compat.py` (60 + 55
-+ 56 cases).
+reference bitstreams x 11 bitread flag sets: all identical), and the CLI
+tests `tests/cli/test_{xc7frames2bit,bitread,xcfasm}_compat.py` (63 + 57
++ 57 cases). After review: `bitread` streams its output (peak RSS 22
+MiB for `-x -o` on a dense random xc7a200t bitstream, 340 MiB of text;
+the reference 68 MiB) and flushes stdout where the reference's
+`std::endl` does; size-0 inputs, unseekable `.bit` outputs and
+directory part files behave like the reference (COMPAT.md).
 
 **Measurements** (release, this machine; best of 3 runs of the binary,
 including reading the `.frm` text; `cargo bench -p fasm-xilinx --bench
