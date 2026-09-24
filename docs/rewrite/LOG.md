@@ -93,3 +93,14 @@ what happened, branch/commit references, open issues.
   data loss or user reachable panic found. Merged with --no-ff; 44 tests
   pass, fmt/clippy clean. Optional suggestions recorded as T1.1b.
 * T1.2 (model module) started.
+* T5.8 implemented on branch `worktree-agent-a494eff241535ec3f` (4 commits):
+  setup-xilinx.sh builds prjxray AND prjuray-tools C++ tools (all targets),
+  venv-xilinx with pinned original fasm + prjxray + xc-fasm + prjuray,
+  wrappers, tools/fetch-db.sh (artix7 181 MiB in ~6 s, zynqusp 217 MiB),
+  smoke corpus tests/corpus/xilinx/artix7/smoke_x1y0.* with golden .frm/.bit.
+  Pins: prjxray c9f02d8, f4pga-xc-fasm 25dc605, prjuray c550b03,
+  prjuray-tools f53f07b, prjxray-db 0a0adde, prjuray-db affbc5e. Note:
+  `.bit` headers embed build time and the frm path, so bit files are not
+  byte reproducible; tests compare `.frm` and bitread output. Sent for
+  review. Implementer reported the base oracle ANTLR build is flaky across
+  runs: recorded as T0.4b.
