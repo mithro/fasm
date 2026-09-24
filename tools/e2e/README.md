@@ -182,13 +182,22 @@ reproducible without an f4pga-examples checkout.
   `xc7a35t` chip database built here (see "How the snap was made
   runnable"); this did not block the actual PnR flow and was not
   investigated further.
-* The prjxray-db copy bundled inside the openXC7 snap is not independently
-  version-pinned the way `tools/fetch-db.sh` pins prjxray-db for the
-  oracle -- it is whatever commit the snap 0.8.2 build shipped with (its
-  own `README.md`/`Info.md` carry no version marker). `PRJXRAY_DB_DIR`
-  (from `openxc7-env.sh`) points at this copy; T7.2/T7.3 should decide
-  whether that is acceptable or whether they need `tools/fetch-db.sh`'s
-  independently pinned copy instead for their comparisons.
+* The prjxray-db copy bundled inside the openXC7 snap is not pinned to
+  the same commit as `tools/fetch-db.sh`'s independently fetched
+  prjxray-db for the oracle -- it is whatever commit the snap 0.8.2 build
+  shipped with. **Correction (T7.2 review):** an earlier version of this
+  bullet claimed its own `README.md`/`Info.md` "carry no version marker
+  either" -- that is wrong: `Info.md` does record one (`Info.md`: "Created
+  using Project X-Ray version 4c157493, last updated Tue Dec 14 07:31:38
+  PM UTC 2021"; full commit `4c157493ec9f13caea4ad3f0c02f8f318f198846`).
+  It is simply a *different, independent* pin from `tools/fetch-db.sh`'s.
+  `PRJXRAY_DB_DIR` (from `openxc7-env.sh`) points at this copy; T7.2 does
+  use it (deliberately -- it is the database nextpnr-xilinx's own chipdb
+  and the whole LiteX openxc7 flow are built against, so it is the
+  correct database for reproducing what openXC7 itself did) -- see
+  "A note on prjxray-db provenance" in the T7.2 section below for the
+  exact, verified differences against the pinned copy and why they
+  matter for some designs' FASM.
 * UltraScale/UltraScale+ (prjuray) are out of scope for this task and for
   the openXC7 snap (it only covers Xilinx 7 series: Spartan7, Artix7,
   Kintex7, Zynq7).
@@ -248,6 +257,74 @@ tools/e2e/run-fpgas-online.sh DESIGN BOARD         # build one (output under too
 tools/e2e/install-fpgas-online-corpus.sh DESIGN BOARD   # copy the result into the corpus + write its README.md
 ```
 
+### A note on prjxray-db provenance
+
+**Fixed after T7.2 review; read this before comparing any `.frm` here
+against a different prjxray-db.** Every `.frm`/`.bit` in this corpus was
+regenerated with the oracle tools (`tests/oracle/{fasm2frames,
+xc7frames2bit,bitread}-oracle`) run against `$PRJXRAY_DB_DIR` from
+`tools/e2e/openxc7-env.sh` -- i.e.
+`tools/e2e/build/openxc7/root/opt/nextpnr-xilinx/external/prjxray-db`,
+**the openXC7 snap's own bundled copy**. This is deliberate, not an
+oversight: it is the exact database nextpnr-xilinx's chipdb and the whole
+LiteX openxc7 flow are built against for these designs, so it is the
+database that reproduces what openXC7 itself actually did, bit for bit.
+
+It is **not** the independently pinned `f4pga/prjxray-db` that
+`tests/oracle/setup-xilinx.sh`'s own `tools/fetch-db.sh` fetches for the
+rest of this repository's Xilinx differential tests (`tests/oracle/build/db/prjxray-db`,
+what `tests/oracle/xilinx-env.sh`'s `PRJXRAY_DB_ROOT` points at). The two
+are different, independently maintained pins of the same underlying
+Project X-Ray reverse-engineering project and are **not always
+identical**.
+
+**Provenance of the snap's copy:** openXC7 snap `0.8.2`
+(sha256 `6b2e07ce99ef33d3a4e41e2fd2eb916f26bb0ece34a97216ed840a0032e98587`,
+same as pinned in `tools/e2e/setup-openxc7.sh`). Its bundled
+`prjxray-db/Info.md` records: *"Created using Project X-Ray version
+[4c157493](https://github.com/SymbiFlow/prjxray/commit/4c157493ec9f13caea4ad3f0c02f8f318f198846),
+last updated Tue Dec 14 07:31:38 PM UTC 2021"* -- this **does** carry a
+version marker (an earlier draft of this README's "Known limitations"
+section, written for T7.1, incorrectly claimed it did not; corrected
+above).
+
+**Verified differences (artix7 family), diffed directly against
+`tests/oracle/build/db/prjxray-db/artix7` on this machine:**
+
+| File | Difference |
+|---|---|
+| `segbits_cfg_center_mid.db` (+ its `.origin_info.db` companion) | snap has an extra line: `CFG_CENTER_MID.STARTUP.USRCCLKO_CONNECTED 26_2196 27_2197 27_2198` (also a harmless line-order difference on `ICAP_WIDTH_X16`, not a content difference) |
+| `segbits_gtp_common.db` | snap has an extra line: `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED 28_1438 28_1439 29_1438` |
+| `segbits_lioi3.db`, `segbits_lioi3_tbytesrc.db`, `segbits_rioi3_tbytesrc.db` | snap has extra `IOI_OCLKM_0`/`IOI_OCLKM_1` entries |
+| `ppips_cfg_center_bot.db`, `ppips_cfg_center_mid.db`, `ppips_cfg_center_top.db` | present **only** in the snap db (the pinned db has no `ppips_cfg_center_*.db` files at all) -- the `CFG_CENTER_STARTUP_*` pseudo-PIPs |
+
+(Spot-checked directly for `segbits_cfg_center_mid.db`, `segbits_gtp_common.db`
+and the three `ppips_cfg_center_*.db` files this session; the
+`segbits_lioi3*`/`rioi3_tbytesrc` entries are as reported by the T7.2
+review and not independently re-diffed here.)
+
+**Which designs this actually affects:** `spi-flash-id` (all four boards
+-- arty/netv2/litefury/acorn) routes its SPI clock through `STARTUPE2`'s
+`USRCCLKO` pin (see `designs/spi-flash-id/gateware/*.py`'s own
+docstring: *"Clock routed via STARTUPE2"*), which sets
+`CFG_CENTER_MID.STARTUP.USRCCLKO_CONNECTED` -- the exact tag only present
+in the snap db above. A differential test that assembles `spi-flash-id`'s
+FASM against the *pinned* db instead will therefore legitimately fail to
+find that tag (`FasmLookupError` or equivalent), not because of a bug in
+the Rust rewrite. Every other design in this corpus does not exercise
+`STARTUPE2`/`GTP`/the `CFG_CENTER` ppips and was independently verified
+identical against the Rust `fasm2frames` with *both* databases where
+applicable, and with the snap db everywhere (18/18 designs; see "Tests"
+below).
+
+**Recommendation for later tasks** (tracked by the orchestrator, not
+implemented here): `tools/fetch-db.sh` gaining an `openxc7` source that
+exposes the snap's bundled db at a stable, independent cache path (e.g.
+alongside its `prjxray`/`prjuray` sources) would let this corpus's
+differential tests select the right database by name instead of relying
+on `tools/e2e/build/openxc7`'s specific layout, and would let a
+future differential run pin *both* databases explicitly per FASM file.
+
 ### A LiteX chipdb-naming quirk (Arty a7-35)
 
 `litex/build/xilinx/yosys_nextpnr.py`'s `finalize()` derives the chipdb
@@ -286,18 +363,27 @@ leaves stray RTLIL "buffer normal form" `$buf` pass-through cells behind
 that nextpnr-xilinx has no Bel type for. Unlike `$scopeinfo` (debug
 annotations, safe to `delete`), a `$buf` cell's output wire would be left
 undriven by a bare `delete` -- instead, `techmap -map +/techmap.v t:$buf`
-(inserted into the same local copy of
-`designs/_shared/yosys_workarounds.py` used to add the `$scopeinfo`
-strip, right before it) resolves each `$buf` into a plain connection.
-This is a **local, uncommitted patch** to the pinned checkout under
-`tools/e2e/build/` (gitignored) -- it is not part of
-fpgas.online-test-designs upstream. To reproduce a fresh checkout that
-still needs it, add this one line to that file's
-`YOSYS_TEMPLATE_STRIP_SCOPEINFO` construction, right before the
-`$scopeinfo` delete:
+(inserted into `designs/_shared/yosys_workarounds.py`, right before the
+existing `$scopeinfo` delete) resolves each `$buf` into a plain
+connection.
 
-```python
-YOSYS_TEMPLATE_STRIP_SCOPEINFO.insert(_i, "techmap -map +/techmap.v t:$buf")
+This fix is a **committed patch file**,
+`tools/e2e/patches/fpgas-online-yosys-workarounds-buf.patch` (a standard
+unified diff against `designs/_shared/yosys_workarounds.py` at the pinned
+commit) -- it is not part of fpgas.online-test-designs upstream, so it is
+kept here rather than edited into the pinned (gitignored, never
+committed) checkout by hand. `tools/e2e/run-fpgas-online.sh` applies it
+**automatically**, every run, to `tools/e2e/build/fpgas.online-test-designs`:
+it checks the target file's own content for the patch's marker comment
+first (not `patch`'s exit status -- GNU patch's `--forward` exits 1, not
+0, for a hunk it skips as already applied, which would otherwise abort
+this script under `set -e` after the first run) and only invokes
+`patch -p1 --forward` when the marker is absent, so it is a safe,
+idempotent no-op on every run after the first. Apply it by hand with:
+
+```
+patch -p1 -d tools/e2e/build/fpgas.online-test-designs --forward -r - \
+  < tools/e2e/patches/fpgas-online-yosys-workarounds-buf.patch
 ```
 
 The pure-gateware designs (`pmod-loopback`, `pmod-pin-id`) never hit this
@@ -437,19 +523,35 @@ the corpus, its FASM parses cleanly (tries `target/release/fasm`, then an
 installed `fasm` Python package, then the pristine oracle -- whichever is
 available) and is a substantial number of lines (not empty/truncated).
 Two further checks are written to activate automatically once their
-prerequisites land in this checkout, skipping cleanly until then:
+prerequisites land in this checkout, skipping cleanly until then, and
+**always** against the openXC7 snap's own bundled prjxray-db specifically
+(see "A note on prjxray-db provenance" above) -- never the differently
+pinned `tests/oracle` db:
 
 * a byte-for-byte comparison of `target/release/fasm2frames`'s output
-  against each committed reference `.frm` -- skipped everywhere right
-  now, since the Rust `fasm-xilinx` frame assembler / `fasm2frames` CLI
-  (T5.4/T5.5) is `[r]` in `docs/rewrite/TASKS.md` (in review, not yet
-  merged into this branch);
+  against each committed reference `.frm`;
 * running `tools/difftest-xilinx.py` (T5.9's frames differential test
-  driver) over the whole corpus -- also not present in this checkout yet
-  (same reason), so also skipped, per this task's brief.
+  driver, `--db-cache` pointed at the snap db) over the one subset of
+  this corpus its own hardcoded single-part-per-family table can validly
+  cover (the arty-board, plain-text FASM files -- see the module
+  docstring in `tests/e2e/test_fpgas_online.py` for why).
 
-30 passed / 16 skipped, ~76s (`pytest tests/e2e/test_fpgas_online.py -v`)
-against the 18 built design/board pairs above.
+Neither `target/release/fasm2frames` nor `tools/difftest-xilinx.py`
+exists in *this* checkout as committed (T5.4/T5.5, the Rust `fasm-xilinx`
+frame assembler / `fasm2frames` CLI, is `[r]` in `docs/rewrite/TASKS.md`
+-- in review, not yet merged into this branch), so both skip cleanly by
+default: **36 passed / 19 skipped**, ~93s
+(`pytest tests/e2e/test_fpgas_online.py -v`).
+
+Verified once with `target/release/{fasm,fasm2frames}` symlinked in from
+an already-built main-tree checkout (`ln -s /home/user/fasm/target/release/{fasm,fasm2frames} target/release/`,
+not committed -- `target/` is gitignored): **54 passed / 1 skipped**
+(only `test_difftest_xilinx_over_corpus` still skips, since
+`tools/difftest-xilinx.py` genuinely is not present in this checkout).
+All **18/18** `test_corpus_frames_match_rust_fasm2frames` cases passed --
+the Rust `fasm2frames`, run against the snap db, reproduces every
+committed dense `.frm` byte for byte, for every design/board in this
+corpus, confirming the T7.2 review's own finding.
 
 ### Corpus summary
 
