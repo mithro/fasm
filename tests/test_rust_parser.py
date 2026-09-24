@@ -157,10 +157,38 @@ SNIPPETS = [
 ]
 
 
+def rust_stricter_than_textx(path):
+    """ True for corpus files that textX accepts but the Rust (and ANTLR)
+    parser rejects: everything under tests/corpus/synthetic/invalid/ and
+    the edge cases classified ``rust_stricter`` in the corpus manifest
+    (see docs/rewrite/COMPAT.md and tools/gen-corpus.py). """
+    rel = os.path.relpath(path, os.path.join(ROOT, 'tests', 'corpus'))
+    if rel.startswith(os.path.join('synthetic', 'invalid') + os.sep):
+        return True
+    manifest = os.path.join(ROOT, 'tests', 'corpus', 'synthetic',
+                            'edge-cases', 'manifest.json')
+    if rel.startswith('synthetic' + os.sep) and os.path.exists(manifest):
+        with open(manifest) as f:
+            entries = json.load(f)
+        key = rel[len('synthetic' + os.sep):]
+        entry = entries.get(key)
+        return entry is not None and entry.get('class') == 'rust_stricter'
+    return False
+
+
+def rust_parse_or_skip(path):
+    try:
+        return rust.parse_fasm_filename(path)
+    except rust.FasmParseError as e:
+        if rust_stricter_than_textx(path):
+            pytest.skip('documented divergence, Rust rejects: {}'.format(e))
+        raise
+
+
 @pytest.mark.parametrize('path', corpus_files(), ids=corpus_id)
 def test_corpus_parity_with_textx(path):
     expected = normalise(textx_or_skip(textx.parse_fasm_filename, path))
-    assert rust.parse_fasm_filename(path) == expected
+    assert rust_parse_or_skip(path) == expected
 
 
 @pytest.mark.parametrize('text', SNIPPETS)
@@ -326,7 +354,7 @@ def test_filename_types(tmp_path):
             comment=None)
     ]
     assert rust.parse_fasm_filename(str(path)) == expected
-    assert rust.parse_fasm_filename(path) == expected
+    assert rust_parse_or_skip(path) == expected
     assert rust.parse_fasm_filename(os.fsencode(str(path))) == expected
     assert rust.parse_fasm_filename(pathlib.PurePath(str(path))) == expected
     with pytest.raises(TypeError):
@@ -445,8 +473,24 @@ def test_fasm_tuple_to_string_corpus(path, canonical):
             model = list(parser.parse_fasm_filename(path))
         except Exception:
             continue
-        expected = fasm.fasm_tuple_to_string(model, canonical)
-        assert _fasm_rs.fasm_tuple_to_string(model, canonical) == expected
+        try:
+            expected = fasm.fasm_tuple_to_string(model, canonical)
+        except AssertionError:
+            # The pure Python implementation asserts on models that only
+            # textX produces (e.g. `a[0:1] = 0`, end before start); the fast
+            # path must decline them so the caller sees the same exception.
+            assert rust_stricter_than_textx(path), path
+            assert _fasm_rs.fasm_tuple_to_string(model, canonical) is None
+            continue
+        fast = _fasm_rs.fasm_tuple_to_string(model, canonical)
+        if fast is None:
+            # The fast path declines models it cannot represent exactly
+            # (e.g. addresses above 2**32 - 1 that only textX accepts) and
+            # the caller falls back to the Python implementation.  That may
+            # only happen for the synthetic divergence corpus.
+            assert rust_stricter_than_textx(path), path
+            continue
+        assert fast == expected
         assert _fasm_rs.fasm_tuple_to_string(tuple(model),
                                              canonical) == expected
 
