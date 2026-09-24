@@ -21,13 +21,26 @@ through the oracle (`tests/oracle/dump.py --parser antlr|textx`).
 2. Additionally accepted: inputs that the textX parser **and** the
    specification (`docs/specification/syntax.rst`) accept but ANTLR
    rejects (`_` separators in plain decimals and addresses).
-3. Everything both original parsers reject is rejected. Inputs that only
-   textX accepts and that the specification does not allow are rejected
-   (see "textX only" below).
+3. Everything both original parsers reject is rejected, **modulo the
+   documented relaxations above**: an input can combine a relaxation that
+   only textX has (rule 2) with one that only ANTLR has, or with an ANTLR
+   bug that Rust fixes (so each original parser rejects it for a different
+   reason), and Rust then accepts it. Examples, all rejected by both
+   originals and accepted by Rust:
+   `a[1_0] = 'h_` (`_` in an address: ANTLR rejects; `'h_`: textX
+   rejects), `a [ 3 : 0 ] = 4 'h F` (whitespace around `[`: textX rejects;
+   whitespace after `'h`: ANTLR decodes a garbage value and fails its
+   width assert), `A.B=2'h\t0` (a tab after `'h`: ANTLR decodes a garbage value;
+   a declared width of 2 on a 1 bit feature: textX rejects). Inputs that only textX accepts
+   and that the specification does not allow are rejected (see "textX
+   only" below).
 4. Line and column of syntax errors are those ANTLR reports (verified for
    every syntax error case of the edge case table,
-   `rust/fasm/src/parser/tests.rs`). Error message texts are the Rust
-   parser's own (see "Errors").
+   `rust/fasm/src/parser/tests.rs`, and over the review corpus of 5092
+   generated files), including where ANTLR's error recovery moves the
+   error to a later lexer error (see "Error positions inside annotation
+   blocks"). Error message texts are the Rust parser's own (see
+   "Errors").
 
 The edge case table in `rust/fasm/src/parser/tests.rs` marks each case as
 `Same` (identical to ANTLR), `NoPos` (both reject; ANTLR without a
@@ -59,7 +72,8 @@ too.
 | `a = 'h_`, `'d_`, `'o__` (no digit, only `_`) | `ValueError` | value 0 | value 0 |
 | `﻿a` (UTF-8 byte order mark at the start of the file) | syntax error | accepted (the ANTLR input stream drops it) | accepted |
 | `  \t` (whitespace only line) | yields a `FasmLine(None, None, None)` | no line | no line |
-| `{ a = "x\r\ny" }` (CR LF inside an annotation value) | value `x\ny` (text mode file read) | value `x\r\ny` | value `x\r\ny` |
+| `{ a = "x\r\ny" }` (CR LF inside an annotation value) | value `x\ny` (text mode file read: universal newlines) | value `x\r\ny` | value `x\r\ny` |
+| `{ a = "x\ry" }` (lone CR inside an annotation value) | value `x\ny` (universal newlines) | value `x\ry` | value `x\ry` |
 
 A declared width of 0 (`a[3:0] = 0'hF`) is not checked by either
 original parser (`if width:`); the Rust parser does the same.
@@ -72,6 +86,9 @@ original parser (`if width:`); the Rust parser does the same.
 | `a[63:0] = 'd4294967296` (`'d` value > 2^32 - 1) | 4294967296 | 0 (truncated to 32 bits) | 4294967296 |
 | `a[1023:0] = 'd<2^1023 in decimal>` (`'d` value > 2^64 - 1) | exact | `Could not decode decimal number.` | exact |
 | `a[63:0] = 'o1234567012345670123` (octal > 32 bits) | 23528931761549395 | 23528930687807571 (wrong) | 23528931761549395 |
+| `a[30:0] = 'o00_017777777777` (more than 10 octal digits, leading zeros included, even when the value fits 32 bits) | 2147483647 | 1073741823 (wrong) | 2147483647 |
+| `a[32:0] = 31'o14404165671` (11 digits) | 1678830521 | 605088697 (wrong) | 1678830521 |
+| `a[31:0] = 'o37777777777` | 4294967295 | 1073741823 (wrong) | 4294967295 |
 | `a[63:0] = 'h F` (whitespace after `'h`, allowed by the ANTLR lexer and the spec) | 15 | 4294967295 (the space is decoded as the digit -1) | 15 |
 | `a[3:0] = 4'h F` | 15 | `AssertionError` (garbage value) | 15 |
 | `a[7:0] = 'd 5` | 5 | `Could not decode decimal number.` | 5 |
@@ -80,6 +97,20 @@ original parser (`if width:`); the Rust parser does the same.
 | `a[4294967296] = 0` (address > 2^32 - 1) | start 4294967296 | start 0 (truncated to 32 bits) | `AddressOutOfRange` error |
 | `a[18446744073709551616] = 0` (address > 2^64 - 1) | start 18446744073709551616 | process aborts (`std::out_of_range` from `stoul`) | `AddressOutOfRange` error |
 | `a[3:0] = 99999999999'h1` (width > 2^31 - 1) | runs out of memory computing `2**width` | process aborts (`std::out_of_range` from `stoi`) | value 1 (a width of 2^32 or more never limits the value) |
+| `a[20000:0] = 9…9` (4300 significant digits) | exact value | `Could not decode decimal number.` (above 2^31 - 1) | exact value |
+| `a[20000:0] = 9…9` (4301 significant digits, plain or `'d`) | `ValueError: Exceeds the limit (4300 digits) for integer string conversion` | `Parse error at 1:13 - Could not decode decimal number.` | `DecimalValueTooLong` error at 1:13 |
+| `a = 0…01` (4301 leading zeros, plain or `'d`) | `ValueError` (Python counts leading zeros) | value 1 | value 1 |
+
+The ANTLR octal decoder shifts its 64 bit accumulator right instead of
+masking it once a 32 bit word is emitted, so every `'o` value written with
+more than 10 digits (leading zeros and all) is decoded wrongly, whatever
+its magnitude.
+
+Decimal values (plain and `'d`) are limited to 4300 significant digits
+(Python's default `int()` limit, which textX hits; ANTLR's limits are far
+lower): converting a decimal string is quadratic, and the limit keeps a
+malicious line cheap. Values in the power of two radixes have no limit
+(their conversion is linear), like in both original parsers.
 
 Addresses are limited to `u32` (`SetFasmFeature::start`/`end` are `u32`,
 see `DESIGN-model.md`); larger addresses are an error rather than being
@@ -106,6 +137,38 @@ fails); only the value 0 slips through.
 | `a b`, `{ a = "x" } b`, `{ a = "b" } { c = "d" }` | several `FasmLine`s from one line (its `FasmFile` rule does not need a newline between lines) | `Parse error at 1:2` / `1:12` / `1:12` | syntax error, same position as ANTLR |
 | `{ a = "x\q" }` (`\` not followed by `\` or `"`) | value `x\q` | `Parse error at 1:6 - token recognition error` | syntax error at 1:6 |
 
+### Error positions inside annotation blocks
+
+When the ANTLR parser meets an unexpected token T it tries "single token
+deletion": it lexes the token after T to see whether dropping T would
+help, before reporting anything. Inside `{ ... }` the lexer is in
+annotation mode, where many characters (digits, `#`, `\n`, `{`, ...)
+start no token; lexing the token after T then fails, and that lexer error
+is what gets reported, at the later position. The Rust parser emulates
+this (`Scanner::unexpected_la` in `rust/fasm/src/parser/line.rs`):
+
+| Example | ANTLR | Rust |
+|---|---|---|
+| `{ a = "b" c` + newline | 1:11 (`\n` after `c`) | 1:11 |
+| `{ "x" 1 }` | 1:6 | 1:6 |
+| `{ a = b 1 }` | 1:8 | 1:8 |
+| `{ a = = 1` | 1:8 | 1:8 |
+| `{ a = "b" "c" 1` | 1:14 | 1:14 |
+| `{ a = "b" c #` | 1:12 | 1:12 |
+| `{ a = "b" c "x\q"` (the token after T is a bad annotation value) | 1:12 | 1:12 |
+| `{ a = "b" c = "d" }` (the token after T lexes) | 1:10 (at T) | 1:10 |
+| `{ a } 1` (T is `}`: the next token is lexed in default mode) | 1:4 (at T) | 1:4 |
+| `a = {1` (T is a `{` where a value is expected: the next token is lexed in annotation mode) | 1:5 | 1:5 |
+
+ANTLR only does this where its error strategy calls single token deletion:
+at every token match and at the entry of a `( ... )*` loop, but not at
+the loop back. So after the second annotation of a block
+(`{ a="1", b="2" c 1 }`: 1:15, at `c`) and at the end of every line but
+the first (`x\n{ a="b" } {1`: 2:10, at `{`; the same on the first line,
+`{ a="b" } {1`, gives 1:11) there is no lookahead; Rust does the same.
+All cases of the review corpus (5092 files) and 112 targeted probes give
+the ANTLR position; no residual difference is known.
+
 ### Line endings and positions
 
 * `\n` and `\r` both end a line (ANTLR's `NEWLINE : [\n\r]`), so `\r\n` and
@@ -130,7 +193,7 @@ fails); only the value 0 slips through.
 | `é` (outside comments/annotation values) | syntax error | fails as above (the error message is not ASCII) | syntax error at 1:0 |
 | `# \xff` (invalid UTF-8) | `UnicodeDecodeError` | process aborts (`std::range_error` from `wstring_convert`) | `InvalidUtf8` error at the offending byte (1:2) |
 | `a \xff` | `UnicodeDecodeError` | process aborts | syntax error at 1:2 |
-| `a # c\0d` (NUL in a comment) | comment ` c\0d` | comment ` c\0d` from a file; `parse_fasm_string` stops at the first NUL (the C++ side takes a C string; from the code, not run) | comment ` c\0d` |
+| `a # c\0d` (NUL in a comment) | comment ` c\0d` | comment ` c\0d` from a file (`parse_fasm_filename`, the CLI); `parse_fasm_string` passes a C string, so everything from the NUL on is silently dropped: `parse_fasm_string('a # c\x00d\nb c\n')` returns one line with comment ` c` and no error, hiding the syntax error on line 2 | comment ` c\0d` (and `parse_fasm_string` sees the whole input: the error at 2:2 is reported) |
 
 Input is processed as bytes; only comments and annotation values (the only
 places where non-ASCII characters are allowed) must be valid UTF-8 and end
@@ -160,6 +223,11 @@ up as `Box<str>`.
   the first error in file order (1:4 for that example). Within one line,
   a syntax error takes precedence over a range error, like ANTLR
   (`a = 2 { x = "y" } z` is a syntax error at 1:18 in both).
+* Messages never embed long input: values wider than 256 bits are shown
+  as their bit length and leading hex digits
+  (`260 bit value 0xf000000000000000... does not fit in the 258 bit(s)
+  addressed by the feature`), a value whose digit count alone shows it is
+  too wide is described by that count, and long addresses are truncated.
 * A file that cannot be read gives a `ParseErrorKind::Io` error at 0:0
   (`Parse error at 0:0 - Couldn't open file <path>: <OS error>`); ANTLR
   gives `Parse error at 0:0 - Couldn't open file`, textX a
