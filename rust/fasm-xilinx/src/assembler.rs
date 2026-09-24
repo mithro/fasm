@@ -289,6 +289,16 @@ fn unpack_key(key: u64) -> (u32, i64, u32) {
 ///   (dense) or only the frames in use (sparse), plus the frame of every
 ///   bit that was written, zero filled, with the set bits applied.
 pub struct FasmAssembler<'db> {
+    core: Core<'db>,
+    /// Every line given to the assembler, for error messages: bits refer
+    /// to their line by index.
+    lines: Vec<FasmLine>,
+    callback: Option<FeatureCallback<'db>>,
+}
+
+/// The state of [`FasmAssembler`] other than the lines and the callback
+/// (so that a line of `lines` can be processed while the state changes).
+struct Core<'db> {
     db: &'db Database,
     grid: &'db Grid,
     architecture: Architecture,
@@ -298,20 +308,46 @@ pub struct FasmAssembler<'db> {
     /// `(base_address, frames)` of the bus blocks in use.
     in_use: HashSet<(u32, u32)>,
     last_in_use: Option<(u32, u32)>,
-    /// Every line given to `add_fasm_line`, for error messages.
-    lines: Vec<FasmLine>,
-    callback: Option<FeatureCallback<'db>>,
     warnings: Vec<String>,
 }
 
 impl fmt::Debug for FasmAssembler<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FasmAssembler")
-            .field("architecture", &self.architecture)
-            .field("bits", &self.bits.len())
+            .field("architecture", &self.core.architecture)
+            .field("bits", &self.core.bits.len())
             .field("lines", &self.lines.len())
             .finish_non_exhaustive()
     }
+}
+
+/// The text of line `index` (`fasm.fasm_line_to_string(line)`).
+fn line_str(lines: &[FasmLine], index: usize) -> String {
+    lines
+        .get(index)
+        .and_then(|line| fasm::fasm_line_to_string(line, false).ok())
+        .and_then(|mut v| v.pop())
+        .unwrap_or_default()
+}
+
+fn assertion_error() -> AssemblerError {
+    AssemblerError::Python {
+        exception: "AssertionError",
+        message: String::new(),
+    }
+}
+
+/// Splits a FASM feature at the first `.` into the tile and the feature
+/// within the tile, like `FasmAssembler.add_fasm_line`.
+fn split_feature(feature: IdString) -> (IdString, IdString) {
+    feature.with_str(|s| {
+        let (tile, rest) = s.split_once('.').unwrap_or((s, ""));
+        // A name the interner does not know is in no table; interning it
+        // keeps the error precedence (tile, type, feature).
+        let tile = IdString::lookup(tile).unwrap_or_else(|| IdString::new(tile));
+        let rest = IdString::lookup(rest).unwrap_or_else(|| IdString::new(rest));
+        (tile, rest)
+    })
 }
 
 impl<'db> FasmAssembler<'db> {
@@ -328,22 +364,24 @@ impl<'db> FasmAssembler<'db> {
         })?;
         let architecture = db.architecture();
         Ok(FasmAssembler {
-            db,
-            grid,
-            architecture,
-            words_per_frame: architecture.words_per_frame(),
-            bits: HashMap::new(),
-            in_use: HashSet::new(),
-            last_in_use: None,
+            core: Core {
+                db,
+                grid,
+                architecture,
+                words_per_frame: architecture.words_per_frame(),
+                bits: HashMap::new(),
+                in_use: HashSet::new(),
+                last_in_use: None,
+                warnings: Vec::new(),
+            },
             lines: Vec::new(),
             callback: None,
-            warnings: Vec::new(),
         })
     }
 
     /// The database.
     pub fn database(&self) -> &'db Database {
-        self.db
+        self.core.db
     }
 
     /// Sets the callback run on every feature
@@ -356,15 +394,15 @@ impl<'db> FasmAssembler<'db> {
     /// The warnings printed so far by the reference (dropped bits beyond
     /// the end of a frame), in order.
     pub fn warnings(&self) -> &[String] {
-        &self.warnings
+        &self.core.warnings
     }
 
     /// Removes and returns the warnings.
     pub fn take_warnings(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.warnings)
+        std::mem::take(&mut self.core.warnings)
     }
 
-    /// Every line given to [`FasmAssembler::add_fasm_line`] so far (the
+    /// Every line given to the assembler so far, in order (the
     /// reference's `set_features` are their `set_feature`s).
     pub fn lines(&self) -> &[FasmLine] {
         &self.lines
@@ -403,11 +441,18 @@ impl<'db> FasmAssembler<'db> {
         data: &[u8],
         extra_features: Vec<FasmLine>,
     ) -> Result<(), AssemblerError> {
-        let lines = fasm::parse_fasm_bytes(data)?;
+        let mut lines = fasm::parse_fasm_bytes(data)?;
+        lines.extend(extra_features);
+        let first = self.lines.len();
+        if self.lines.is_empty() {
+            self.lines = lines;
+        } else {
+            self.lines.append(&mut lines);
+        }
+        self.core.bits.reserve(self.lines.len() - first);
         let mut missing = Vec::new();
-        self.lines.reserve(lines.len() + extra_features.len());
-        for line in lines.into_iter().chain(extra_features) {
-            self.add_fasm_line(line, &mut missing)?;
+        for index in first..self.lines.len() {
+            self.process_line(index, &mut missing)?;
         }
         if missing.is_empty() {
             Ok(())
@@ -419,7 +464,7 @@ impl<'db> FasmAssembler<'db> {
     /// `FasmAssembler.add_fasm_line`: runs the feature callback and
     /// enables every set bit of the line's feature. The message of a
     /// feature (or `feature[address]`) that is not in the database is
-    /// appended to `missing_features` (the line is still recorded).
+    /// appended to `missing_features`.
     ///
     /// # Errors
     ///
@@ -433,181 +478,69 @@ impl<'db> FasmAssembler<'db> {
         line: FasmLine,
         missing_features: &mut Vec<String>,
     ) -> Result<(), AssemblerError> {
-        let Some(set_feature) = &line.set_feature else {
+        self.lines.push(line);
+        self.process_line(self.lines.len() - 1, missing_features)
+    }
+
+    /// `add_fasm_line` for `self.lines[index]`.
+    fn process_line(
+        &mut self,
+        index: usize,
+        missing_features: &mut Vec<String>,
+    ) -> Result<(), AssemblerError> {
+        let Some(set_feature) = &self.lines[index].set_feature else {
             return Ok(());
         };
         if let Some(callback) = &mut self.callback {
             callback(set_feature)?;
         }
-        let feature = set_feature.feature;
         // `canonical_features`: the addresses of the set bits (a value of
         // 0 yields nothing; without a range the value must be 1).
-        let assertion = || AssemblerError::Python {
-            exception: "AssertionError",
-            message: String::new(),
-        };
-        let mut addresses: Vec<u32> = Vec::new();
         let value = &set_feature.value;
-        if !value.is_zero() {
-            match (set_feature.start, set_feature.end) {
-                (None, Some(_)) => return Err(assertion()),
-                (start, None) => {
-                    if !value.is_one() {
-                        return Err(assertion());
-                    }
-                    addresses.push(start.unwrap_or(0));
-                }
-                (Some(start), Some(end)) => {
-                    let span = end.checked_sub(start).ok_or_else(assertion)?;
-                    addresses.extend(
-                        value
-                            .iter_set_bits()
-                            .take_while(|&i| i <= span)
-                            .map(|i| start + i),
-                    );
-                }
-            }
-        }
-        let line_index = self.lines.len();
-        self.lines.push(line);
-        if addresses.is_empty() {
+        if value.is_zero() {
             return Ok(());
         }
-        let (tile, rest) = feature.with_str(|s| {
-            let (tile, rest) = s.split_once('.').unwrap_or((s, ""));
-            // A name the interner does not know is in no table; interning
-            // it keeps the error precedence (tile, type, feature).
-            let tile = IdString::lookup(tile).unwrap_or_else(|| IdString::new(tile));
-            let rest = IdString::lookup(rest).unwrap_or_else(|| IdString::new(rest));
-            (tile, rest)
-        });
-        for address in addresses {
-            match self.enable_feature(tile, rest, address, line_index) {
-                Ok(()) => {}
-                Err(AssemblerError::Lookup(mut messages)) => missing_features.append(&mut messages),
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-
-    /// The text of line `index` (`fasm.fasm_line_to_string(line)`).
-    fn line_str(&self, index: usize) -> String {
-        fasm::fasm_line_to_string(&self.lines[index], false)
-            .ok()
-            .and_then(|mut v| v.pop())
-            .unwrap_or_default()
-    }
-
-    /// `FasmAssembler.enable_feature` for one bit address of a line.
-    fn enable_feature(
-        &mut self,
-        tile: IdString,
-        feature: IdString,
-        address: u32,
-        line_index: usize,
-    ) -> Result<(), AssemblerError> {
-        let bits = match self.db.lookup_feature(tile, feature, address) {
-            Ok(FeatureLookup::PseudoPip(_)) => return Ok(()),
-            Ok(FeatureLookup::Bits(bits)) => bits,
-            Err(LookupError::UnknownTile { tile }) => {
-                return Err(AssemblerError::KeyError(tile.to_string()))
-            }
-            Err(LookupError::UnknownTileType { tile_type, .. }) => {
-                return Err(AssemblerError::KeyError(
-                    tile_type.to_string().to_ascii_uppercase(),
-                ))
-            }
-            Err(LookupError::UnknownFeature { .. } | LookupError::MissingBitsBlock { .. }) => {
-                let tile_type = self
-                    .grid
-                    .tile(tile)
-                    .map_or_else(String::new, |t| t.tile_type.to_string());
-                return Err(AssemblerError::Lookup(vec![format!(
-                    "Segment DB {tile_type}, key {tile_type}.{feature} not found from line '{}'",
-                    self.line_str(line_index)
-                )]));
-            }
-            Err(e @ (LookupError::InconsistentAlias { .. } | LookupError::NoGrid)) => {
-                return Err(AssemblerError::Python {
-                    exception: "AssertionError",
-                    message: e.to_string(),
-                })
+        let (tile, feature) = split_feature(set_feature.feature);
+        let lines = &self.lines;
+        let mut enable = |address: u32| -> Result<(), AssemblerError> {
+            match self
+                .core
+                .enable_feature(lines, tile, feature, address, index)
+            {
+                Err(AssemblerError::Lookup(mut messages)) => {
+                    missing_features.append(&mut messages);
+                    Ok(())
+                }
+                other => other,
             }
         };
-        let base = bits.block.base_address;
-        let frames = bits.block.frames;
-        let offset = bits.offset;
-        let words_per_frame = self.words_per_frame as i64;
-        let mut any_bits = false;
-        for &segbit in bits.bits {
-            any_bits = true;
-            let frame = base.checked_add(segbit.word_column).ok_or_else(|| {
-                AssemblerError::FrameAddressOverflow {
-                    tile,
-                    feature: feature.to_string(),
-                }
-            })?;
-            let absolute = self.architecture.segbit_absolute_bit(offset, segbit);
-            let word = absolute.div_euclid(32);
-            let bit = absolute.rem_euclid(32) as u32;
-            if word >= words_per_frame {
-                let function = if segbit.is_set {
-                    "frame_set"
+        match (set_feature.start, set_feature.end) {
+            (None, Some(_)) => Err(assertion_error()),
+            (start, None) => {
+                if value.is_one() {
+                    enable(start.unwrap_or(0))
                 } else {
-                    "frame_clear"
-                };
-                let warning = format!(
-                    "{function}: invalid word address {word} in line: {}",
-                    self.line_str(line_index)
-                );
-                self.warnings.push(warning);
-                continue;
-            }
-            let state = ((line_index as u32) << 1) | u32::from(segbit.is_set);
-            match self.bits.entry(pack_key(frame, word, bit)) {
-                Entry::Vacant(e) => {
-                    e.insert(state);
-                }
-                Entry::Occupied(e) => {
-                    let previous = *e.get();
-                    if previous & 1 != state & 1 {
-                        let (wanted, was) = if segbit.is_set {
-                            ("set", "cleared")
-                        } else {
-                            ("clear", "set")
-                        };
-                        return Err(AssemblerError::InconsistentBits(format!(
-                            "FASM line \"{}\" wanted to {wanted} bit ({frame}, {word}, {bit}) \
-                             but was {was} by FASM line \"{}\"",
-                            self.line_str(line_index),
-                            self.line_str((previous >> 1) as usize)
-                        )));
-                    }
+                    Err(assertion_error())
                 }
             }
-        }
-        if any_bits {
-            self.mark_in_use(base, frames);
-        }
-        Ok(())
-    }
-
-    fn mark_in_use(&mut self, base: u32, frames: u32) {
-        if self.last_in_use != Some((base, frames)) {
-            self.in_use.insert((base, frames));
-            self.last_in_use = Some((base, frames));
+            (Some(start), Some(end)) => {
+                let span = end.checked_sub(start).ok_or_else(assertion_error)?;
+                for bit in value.iter_set_bits().take_while(|&i| i <= span) {
+                    enable(start + bit)?;
+                }
+                Ok(())
+            }
         }
     }
 
     /// `FasmAssembler.mark_roi_frames`: marks every frame of every bus of
     /// the tiles inside `roi` in use.
     pub fn mark_roi_frames(&mut self, roi: &Roi) {
-        let grid = self.grid;
+        let grid = self.core.grid;
         for tile in grid.tiles() {
             if roi.contains(tile.grid_x, tile.grid_y) {
                 for block in grid.bits(tile) {
-                    self.mark_in_use(block.base_address, block.frames);
+                    self.core.mark_in_use(block.base_address, block.frames);
                 }
             }
         }
@@ -621,24 +554,35 @@ impl<'db> FasmAssembler<'db> {
     /// is before the start of the frame even after the Python style
     /// wrap-around (impossible with a valid database).
     pub fn get_frames(&self, sparse: bool) -> Result<Frames, AssemblerError> {
-        let blocks: Vec<(u32, u32)> = if sparse {
-            self.in_use.iter().copied().collect()
+        let core = &self.core;
+        let blocks: HashSet<(u32, u32)> = if sparse {
+            core.in_use.clone()
         } else {
-            let unique: HashSet<(u32, u32)> = self
-                .grid
+            core.grid
                 .iter_bits()
                 .map(|(_, b)| (b.base_address, b.frames))
-                .collect();
-            unique.into_iter().collect()
+                .collect()
         };
         let mut addresses: Vec<u32> = Vec::new();
         for (base, count) in blocks {
             addresses.extend(base..base.saturating_add(count));
         }
-        addresses.extend(self.bits.keys().map(|&key| unpack_key(key).0));
-        let mut frames = Frames::zeroed(self.words_per_frame, addresses);
-        let words_per_frame = self.words_per_frame as i64;
-        for (&key, &state) in &self.bits {
+        addresses.sort_unstable();
+        addresses.dedup();
+        // Frames of bits outside of the blocks (a segbit beyond its
+        // tile's frames): `init_frame_at_address` in the bit loop.
+        let mut extra: Vec<u32> = core
+            .bits
+            .keys()
+            .map(|&key| unpack_key(key).0)
+            .filter(|frame| addresses.binary_search(frame).is_err())
+            .collect();
+        if !extra.is_empty() {
+            addresses.append(&mut extra);
+        }
+        let mut frames = Frames::zeroed(core.words_per_frame, addresses);
+        let words_per_frame = core.words_per_frame as i64;
+        for (&key, &state) in &core.bits {
             if state & 1 == 0 {
                 continue;
             }
@@ -660,6 +604,115 @@ impl<'db> FasmAssembler<'db> {
             }
         }
         Ok(frames)
+    }
+}
+
+impl Core<'_> {
+    /// `FasmAssembler.enable_feature` for one bit address of line
+    /// `index` of `lines`.
+    fn enable_feature(
+        &mut self,
+        lines: &[FasmLine],
+        tile: IdString,
+        feature: IdString,
+        address: u32,
+        index: usize,
+    ) -> Result<(), AssemblerError> {
+        let bits = match self.db.lookup_feature(tile, feature, address) {
+            Ok(FeatureLookup::PseudoPip(_)) => return Ok(()),
+            Ok(FeatureLookup::Bits(bits)) => bits,
+            Err(LookupError::UnknownTile { tile }) => {
+                return Err(AssemblerError::KeyError(tile.to_string()))
+            }
+            Err(LookupError::UnknownTileType { tile_type, .. }) => {
+                return Err(AssemblerError::KeyError(
+                    tile_type.to_string().to_ascii_uppercase(),
+                ))
+            }
+            Err(LookupError::UnknownFeature { .. } | LookupError::MissingBitsBlock { .. }) => {
+                let tile_type = self
+                    .grid
+                    .tile(tile)
+                    .map_or_else(String::new, |t| t.tile_type.to_string());
+                return Err(AssemblerError::Lookup(vec![format!(
+                    "Segment DB {tile_type}, key {tile_type}.{feature} not found from line '{}'",
+                    line_str(lines, index)
+                )]));
+            }
+            Err(e @ (LookupError::InconsistentAlias { .. } | LookupError::NoGrid)) => {
+                return Err(AssemblerError::Python {
+                    exception: "AssertionError",
+                    message: e.to_string(),
+                })
+            }
+        };
+        let base = bits.block.base_address;
+        let frames = bits.block.frames;
+        let offset = bits.offset;
+        let words_per_frame = self.words_per_frame as i64;
+        let state_of_line = u32::try_from(index)
+            .ok()
+            .and_then(|i| i.checked_mul(2))
+            .unwrap_or(!1);
+        for &segbit in bits.bits {
+            let frame = base.checked_add(segbit.word_column).ok_or_else(|| {
+                AssemblerError::FrameAddressOverflow {
+                    tile,
+                    feature: feature.to_string(),
+                }
+            })?;
+            let absolute = self.architecture.segbit_absolute_bit(offset, segbit);
+            let word = absolute.div_euclid(32);
+            let bit = absolute.rem_euclid(32) as u32;
+            if word >= words_per_frame {
+                let function = if segbit.is_set {
+                    "frame_set"
+                } else {
+                    "frame_clear"
+                };
+                let warning = format!(
+                    "{function}: invalid word address {word} in line: {}",
+                    line_str(lines, index)
+                );
+                self.warnings.push(warning);
+                continue;
+            }
+            let state = state_of_line | u32::from(segbit.is_set);
+            match self.bits.entry(pack_key(frame, word, bit)) {
+                Entry::Vacant(e) => {
+                    e.insert(state);
+                }
+                Entry::Occupied(e) => {
+                    let previous = *e.get();
+                    if previous & 1 != state & 1 {
+                        let (wanted, was) = if segbit.is_set {
+                            ("set", "cleared")
+                        } else {
+                            ("clear", "set")
+                        };
+                        return Err(AssemblerError::InconsistentBits(format!(
+                            "FASM line \"{}\" wanted to {wanted} bit ({frame}, {word}, {bit}) \
+                             but was {was} by FASM line \"{}\"",
+                            line_str(lines, index),
+                            line_str(lines, (previous >> 1) as usize)
+                        )));
+                    }
+                }
+            }
+        }
+        // `any_bits`: the bus is in use if the feature has any bit (even
+        // one dropped beyond the frame).
+        if !bits.bits.is_empty() {
+            self.mark_in_use(base, frames);
+        }
+        Ok(())
+    }
+
+    fn mark_in_use(&mut self, base: u32, frames: u32) {
+        if self.last_in_use != Some((base, frames)) {
+            self.in_use.insert((base, frames));
+            self.last_in_use = Some((base, frames));
+        }
     }
 }
 

@@ -23,5 +23,9 @@ serde_json = { workspace = true }
 name = "db"
 harness = false
 
+[[bench]]
+name = "assemble"
+harness = false
+
 [lints]
 workspace = true

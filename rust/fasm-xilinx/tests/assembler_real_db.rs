@@ -127,7 +127,12 @@ fn counter_test() {
         &Default::default(),
         &format!("{COUNTER}/top.frm.xz"),
     );
-    check(&db, &fasm, &sparse(), &format!("{COUNTER}/top.sparse.frm.xz"));
+    check(
+        &db,
+        &fasm,
+        &sparse(),
+        &format!("{COUNTER}/top.sparse.frm.xz"),
+    );
     let pudc = Fasm2FramesOptions {
         emit_pudc_b_pullup: true,
         ..Default::default()
@@ -144,7 +149,12 @@ fn synthetic_multibit_stepdown() {
         return;
     };
     let fasm = "synthetic/multibit_stepdown.fasm";
-    check(&db, fasm, &sparse(), "synthetic/multibit_stepdown.sparse.frm.xz");
+    check(
+        &db,
+        fasm,
+        &sparse(),
+        "synthetic/multibit_stepdown.sparse.frm.xz",
+    );
     let roi = Fasm2FramesOptions {
         sparse: true,
         roi: Some(corpus("synthetic/multibit_stepdown.roi.json")),
