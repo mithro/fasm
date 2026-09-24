@@ -59,6 +59,10 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       iterates ~4G times in `output/canonical.rs:84` (also reachable from
       the CLI with --canonical); iterate over set bits of the value instead
       of the address range, and bound the work (after T1.4).
+- [ ] T1.3b `parser::tests::huge_values_are_fast_and_errors_short` is timing
+      based (500 ms budget in debug) and was seen failing once under full
+      workspace parallel load; make it robust (measure operations or raise
+      the budget / mark as a benchmark) (after T1.3).
 - [ ] T1.6 Fuzzing (`cargo fuzz` or proptest) for parser/printer round trip;
       crashes fixed; regression files added to the corpus (after T1.3).
 
@@ -80,7 +84,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T3.2 Replace setup.py/ANTLR build with maturin based build; update
       `tests/test_simple.py` and add parity tests between `rust` and `textx`
       parsers over the corpus; `tox.ini`; wheel build workflow (after T3.1).
-- [~] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
+- [r] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
       `merge_and_sort` exposed and tested for identical results (after T3.1).
 
 ## Phase 4: C and C++ wrappers

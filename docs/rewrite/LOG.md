@@ -410,3 +410,16 @@ what happened, branch/commit references, open issues.
   tools/difftest-xilinx.py (69/69 identical), 100 fasm2frames CLI cases,
   tests/cli 1320 passed 12 skipped, 375 Rust tests. Sent for Opus review
   with an adversarial corpus.
+* T3.3 implemented on branch `worktree-agent-ac5b9a0423fabdc2d` (5 commits):
+  `fasm.fasm_tuple_to_string` uses the Rust fast path with Python fallback;
+  new `_fasm_rs.merge_and_sort` (Python callables called once per group in
+  first seen order, `<` based stable sort, declines before any callback on
+  OutputError so Python raises the same AssertionError), wired into
+  `fasm.output.merge_and_sort` (callbacks now run eagerly at call time:
+  documented). 1447 Python tests pass; oracle parity 38/38 corpus files;
+  100k lines: to_string 89 vs 127 ms, merge_and_sort 243 vs 520 ms. In
+  review. Implementer saw the timing based parser test fail once under
+  load: recorded as T1.3b.
+* Housekeeping: the shared scratchpad reached ENOSPC (11 GB of finished
+  review/implementation scratch); deleted finished scratch directories,
+  17 GB free again. Reviewer briefs now cap and clean their scratch use.
