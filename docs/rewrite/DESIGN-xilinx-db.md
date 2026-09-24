@@ -2426,7 +2426,10 @@ fails), and the sections are decoded on scoped threads; the grid section
 builds `by_loc` from the raw records on its own thread from the start and
 the tiles/`by_name` on another as soon as the tile names are interned,
 while the site names are interned. Files and payloads under 1 MiB (the
-test databases) are handled on the calling thread.
+test databases) are handled on the calling thread, and so is any work
+for which the operating system refuses a thread (`cache/task.rs`:
+`std::thread::Scope::spawn` would panic); a worker that panics is a
+cache error (rebuild, or no write), never a failure of the tool.
 
 **Measurements** (release, this machine: 4 cores, Firecracker VM;
 `cargo bench -p fasm-xilinx --bench db`, each open in a fresh process
@@ -2482,8 +2485,9 @@ same size with the modification time restored, tilegrid, an absent file
 appearing, a mask file or a part file disappearing, a new tile type, the
 part moving to another fabric; touched files are re-hashed and the
 header updated, not rebuilt; header identity (loader fingerprint, part,
-root, layout, tile type list, recorded size); `verify_file` hashes even
-when the stat fingerprints match; unwritable cache directory; 8 threads
+root, layout, tile type list, recorded size); `verify_file` (and
+`CacheOptions::verify_contents`) hashes even when the stat fingerprints
+match; unwritable cache directory; 8 threads
 opening concurrently (one file, no temporary file left); two copies of a
 database get two files, another spelling of a root the same one; a
 synthetic prjuray-db layout; `build`/`clear`/`cache_files`/
