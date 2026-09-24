@@ -1,0 +1,5 @@
+# Pins the Rust toolchain used to build/test/lint the workspace in
+# rust/ (see docs/rewrite/PLAN.md). `rustup` picks this up automatically.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]

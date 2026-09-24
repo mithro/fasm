@@ -1,0 +1,19 @@
+[package]
+name = "fasm-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "pyo3 extension module fasm._fasm_rs, built with maturin, exposing the fasm crate to the existing fasm Python package."
+
+[lib]
+name = "_fasm_rs"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fasm = { path = "../fasm" }
+
+[lints]
+workspace = true

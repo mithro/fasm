@@ -1,0 +1,17 @@
+[package]
+name = "fasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Core library for the FASM (FPGA Assembly) file format: idstring interning, data model, parser and output/merge support."
+
+[lib]
+name = "fasm"
+path = "src/lib.rs"
+
+[dependencies]
+
+[lints]
+workspace = true
