@@ -47,3 +47,4 @@ manifest-path = "rust/fasm-python/Cargo.toml"
 python-source = "."
 module-name = "fasm._fasm_rs"
 bindings = "pyo3"
+strip = true
