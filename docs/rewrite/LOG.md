@@ -184,3 +184,9 @@ what happened, branch/commit references, open issues.
   inaccuracies (rule 3 modulo relaxations, octal > 10 digits mis-decoding
   in ANTLR, NUL handling, `\r` in annotation values). No panics in 3M
   random inputs; 253-289 MB/s. Fixes in progress.
+* T1.4 review (~13,900 differential cases vs the oracle): REQUEST CHANGES
+  with one finding: `write_set_feature` panics (via `width()`) on malformed
+  features instead of returning OutputError. Also flagged: the linear scan
+  in `merge_addresses` is O(G^2) in distinct feature names (fast follow
+  needed before full chip use), and the CLI will need a small
+  fmt::Write-over-io::Write adapter. Fix in progress.
