@@ -176,3 +176,11 @@ what happened, branch/commit references, open issues.
   `MergeModel.add_to_comment_group` does not reset `current_group` after a
   feature line ends a comment group, so the group can be emitted twice
   (verified against the oracle). Sent for differential review.
+* T1.3 review (Opus, 5092 file differential corpus): REQUEST CHANGES.
+  Findings: quadratic decimal conversion running before the width check
+  (10 MB value never finished; both originals cap decimals at 4300 digits),
+  unbounded error messages embedding huge values, ANTLR's annotation mode
+  lexer lookahead error positions not reproduced (6 cases), and COMPAT.md
+  inaccuracies (rule 3 modulo relaxations, octal > 10 digits mis-decoding
+  in ANTLR, NUL handling, `\r` in annotation values). No panics in 3M
+  random inputs; 253-289 MB/s. Fixes in progress.
