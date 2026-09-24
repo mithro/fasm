@@ -427,8 +427,8 @@ prjxray's C++ tools of the same name (`tools/xc7frames2bit.cc`,
   bytes`, `Input doesn't look like a bitstream`, exit code 1) and exactly
   `st_size` bytes are read; `xc7frames2bit` writing to an unseekable
   output (`--output_file=/dev/stdout | ...`) cannot seek back to fill in
-  the header's data length, which stays 0 (field `e`, bytes 84-87 for
-  the smoke design); a `--part_file` that is a directory makes yaml-cpp's
+  the header's data length, which stays 0 (the 4 bytes after the `e`
+  tag); a `--part_file` that is a directory makes yaml-cpp's
   `std::ifstream` throw: `terminate called after throwing an instance of
   'std::__ios_failure'` / `what():  basic_filebuf::underflow error
   reading the file: Is a directory`, SIGABRT (both tools; the Rust

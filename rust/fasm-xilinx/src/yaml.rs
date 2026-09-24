@@ -19,7 +19,7 @@
 //! `mapping/{parts,devices}.yaml` (two level mappings of scalars).
 //!
 //! Supported: block mappings (indentation by spaces), block sequences
-//! indented under their key (`- item`, `- !<tag>` followed by a nested
+//! indented under their key or at its indentation (`- item`, `- !<tag>` followed by a nested
 //! mapping, `- key: value` compact mappings; used by the
 //! `configuration_ranges` form of `part.yaml`), plain, single and double
 //! quoted scalars, `!<verbatim>` and `!shorthand` tags, one line flow
@@ -314,6 +314,11 @@ impl Parser<'_> {
             let mut node = if rest.is_empty() {
                 match self.lines.get(self.pos) {
                     Some(next) if next.indent > indent => self.block(next.indent)?,
+                    // `key:` followed by `- item`s at the key's own
+                    // indentation (valid YAML, what many emitters write).
+                    Some(next) if next.indent == indent && is_item(next.text) => {
+                        self.sequence(indent)?
+                    }
                     _ => Node {
                         tag: None,
                         line: number,
@@ -360,7 +365,12 @@ impl Parser<'_> {
                 return error(number, "unexpected indentation");
             }
             if !is_item(line.text) {
-                return error(number, "expected a `- ` sequence item");
+                if items.is_empty() {
+                    return error(number, "expected a `- ` sequence item");
+                }
+                // The next key of a mapping whose sequence value is at
+                // the key's indentation.
+                break;
             }
             let (tag, rest) = split_tag(line.text[1..].trim_start(), number)?;
             let mut node = if rest.is_empty() {
@@ -642,6 +652,12 @@ ranges:
         assert_eq!(items[4].as_seq().unwrap()[0].as_str().unwrap(), "nested");
         assert!(doc.as_seq().is_err());
         assert_eq!(parse("- 1\n- 2\n").unwrap().as_seq().unwrap().len(), 2);
+        // A sequence at its key's indentation, then the next key.
+        let doc = parse("a:\n- 1\n- b: 2\n  c: 3\nd: 4\n").unwrap();
+        let a = doc.require("a").unwrap().as_seq().unwrap();
+        assert_eq!(a.len(), 2);
+        assert_eq!(a[1].require("c").unwrap().as_u32().unwrap(), 3);
+        assert_eq!(doc.require("d").unwrap().as_u32().unwrap(), 4);
     }
 
     #[test]
@@ -720,8 +736,8 @@ ranges:
     #[test]
     fn unsupported_is_an_error_with_a_line() {
         let cases = [
-            ("a:\n- 1\n", 2, "sequence item"),
-            ("a:\n  - 1\n  b: 2\n", 3, "sequence item"),
+            ("- 1\na: 2\n", 2, "unexpected content"),
+            ("a:\n  - 1\n  b: 2\n", 3, "indentation"),
             ("a: 1\n  b: 2\n", 2, "indentation"),
             ("a: 1\na: 2\n", 2, "duplicate"),
             ("a: [1, 2]\n", 1, "unsupported"),
