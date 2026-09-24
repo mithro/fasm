@@ -12,6 +12,16 @@ name = "fasm"
 path = "src/lib.rs"
 
 [dependencies]
+# Hasher of the idstring interner tables (fast on short keys, no
+# dependencies); see docs/rewrite/DESIGN-idstring.md.
+foldhash = "0.2"
+
+[dev-dependencies]
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+
+[[bench]]
+name = "idstring"
+harness = false
 
 [lints]
 workspace = true
