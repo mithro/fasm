@@ -132,3 +132,10 @@ dmypy.json
 # machine builds its own.
 tests/oracle/venv/
 tests/oracle/build/
+
+# Rust rewrite: Xilinx reference tool oracle (tests/oracle/setup-xilinx.sh)
+# and its fetched prjxray-db/prjuray-db database cache
+# (tools/fetch-db.sh, ${FASM_DB_CACHE:-tests/oracle/build/db}, already
+# covered by tests/oracle/build/ above unless FASM_DB_CACHE points
+# elsewhere); never committed, each machine builds/fetches its own.
+tests/oracle/venv-xilinx/

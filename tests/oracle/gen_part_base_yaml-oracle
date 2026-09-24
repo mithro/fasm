@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Copyright 2017-2022 F4PGA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs the oracle prjxray C++ `gen_part_base_yaml` tool (debug bitstream ->
+# part.yaml), e.g.:
+#
+#   tests/oracle/gen_part_base_yaml-oracle debug.bit > part.yaml
+#
+# See docs/rewrite/DESIGN-xilinx-db.md section 8.4 for its flags (-f uses
+# FAR registers instead of LOUT ones). Only needed if fasm-xilinx ever
+# regenerates part.yaml itself, not for the assemble/write pipeline.
+#
+# Run tests/oracle/setup-xilinx.sh first to build the binary.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BIN="$SCRIPT_DIR/build/xilinx/bin/gen_part_base_yaml"
+
+if [[ ! -x "$BIN" ]]; then
+  echo "gen_part_base_yaml-oracle: $BIN not found; run tests/oracle/setup-xilinx.sh first" >&2
+  exit 1
+fi
+
+exec "$BIN" "$@"

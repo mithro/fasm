@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Copyright 2017-2022 F4PGA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs the oracle (f4pga-xc-fasm) `bit2fasm` tool -- .bit -> FASM -- for
+# Series7 parts, e.g.:
+#
+#   tests/oracle/bit2fasm-oracle --db-root <db>/artix7 \
+#       --part xc7a35tcsg324-1 in.bit
+#
+# bit2fasm shells out to `bitread` *by bare name* (its --bitread flag
+# defaults to the literal string "bitread" -- see xc_fasm/bit2fasm.py and
+# docs/rewrite/DESIGN-xilinx-db.md section 8.4), so it needs the oracle's
+# C++ tools on PATH:
+#
+#   source tests/oracle/xilinx-env.sh
+#   tests/oracle/bit2fasm-oracle ...
+#
+# Run tests/oracle/setup-xilinx.sh first to create tests/oracle/venv-xilinx.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The installed console-script entry point, not `python -m xc_fasm.bit2fasm`
+# -- see xcfasm-oracle / tests/oracle/README.md ("Avoiding the
+# current-directory shadowing pitfall") for why.
+BIN="$SCRIPT_DIR/venv-xilinx/bin/bit2fasm"
+
+if [[ ! -x "$BIN" ]]; then
+  echo "bit2fasm-oracle: $BIN not found; run tests/oracle/setup-xilinx.sh first" >&2
+  exit 1
+fi
+
+if ! command -v bitread >/dev/null 2>&1; then
+  echo "bit2fasm-oracle: WARNING: bitread not on PATH;" \
+    "'source tests/oracle/xilinx-env.sh' first, or pass --bitread <path>" >&2
+fi
+
+exec "$BIN" "$@"

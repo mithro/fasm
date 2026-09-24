@@ -280,3 +280,290 @@ by this task).
 * `tests/oracle/build/` holds logs and `status.json` from the most recent
   `setup.sh` run, not a full build log history; `setup.sh --force` starts
   it fresh each time.
+
+## Xilinx reference tools
+
+`tests/oracle/setup-xilinx.sh` sets up a **second, separate** oracle:
+the reference Xilinx FASM<->frames<->bitstream tools (prjxray's C++
+tools and Python package, f4pga-xc-fasm, and prjuray/prjuray-tools for
+UltraScale/UltraScale+, best effort), pinned to immutable commits, used
+by the Rust rewrite's Xilinx differential tests (T5.9, T6.3;
+`docs/rewrite/DESIGN-xilinx-db.md` is the design reference these tools'
+CLI flags and on-disk database layout are documented against). It is
+**not** part of `tests/oracle/setup.sh`/`tests/oracle/venv` above -- that
+venv stays a minimal, pristine `fasm`-only install on purpose (see "Why
+the oracle is pinned to a commit" above); this is a second venv,
+`tests/oracle/venv-xilinx`, that additionally carries `prjxray`,
+`xc_fasm` and `prjuray` and their dependencies, but installs the exact
+same pinned `fasm` package from the exact same pristine worktree
+(`tests/oracle/build/pristine-src`, created by `setup.sh` and reused here
+if present) so both oracles agree on what "the original fasm" means.
+
+### Setup
+
+```sh
+tests/oracle/setup-xilinx.sh          # first run: ~2-2.5 minutes
+tests/oracle/setup-xilinx.sh          # re-run: fast no-op (<0.1s)
+tests/oracle/setup-xilinx.sh --force  # rebuild from scratch (same pins)
+```
+
+It creates, all under the gitignored `tests/oracle/build/xilinx/` and
+`tests/oracle/venv-xilinx/` (never `tests/oracle/venv`, see above):
+
+1. Calls `tests/oracle/setup.sh` first (a fast no-op if it already ran)
+   to guarantee the pinned `fasm` pristine worktree exists.
+2. Clones `prjxray`, `f4pga-xc-fasm`, `prjuray` and `prjuray-tools`,
+   each pinned to an immutable commit (see "Pinned commits" below).
+   Idempotent per repo: a clone already at the pinned commit is left
+   alone. A pin change (any of the four `*_COMMIT` variables) is
+   auto-detected against `tests/oracle/build/xilinx/status.json` and
+   triggers a rebuild, the same scheme as `setup.sh`'s `ORACLE_COMMIT`.
+3. Fetches the C++ build's git submodules (`third_party/{abseil-cpp,
+   cctz,gflags,googletest,yaml-cpp,sanitizers-cmake}`, shallow) for
+   `prjxray` and `prjuray-tools`. Deliberately **not** fetched:
+   `third_party/{fasm,python-sdf-timing,yosys,display_port,edalize,
+   embeddedsw}` -- unrelated to the C++ tools built here and, in
+   `yosys`'s case, huge. `prjxray-db` is not a submodule of `prjxray`
+   (it's a separate repo, see "Database fetch" below) so there was
+   nothing to avoid fetching there.
+4. Builds the prjxray C++ tools (CMake + Ninja, `Release`):
+   `xc7frames2bit`, `bitread`, `frame_address_decoder`,
+   `gen_part_base_yaml`, `bittool`, `xc7patch`. Copies them to
+   `tests/oracle/build/xilinx/bin/`.
+5. Best effort (budgeted at 20 minutes, via `timeout`; a failure here is
+   recorded in `status.json` and never fails the rest of the script):
+   builds prjuray-tools' C++ tools the same way --
+   `xcframes2bit`, `bitread`, `xc7_frame_address_decoder`,
+   `xcu_frame_address_decoder`, `gen_part_base_yaml`, `bittool` -- and
+   copies them to `tests/oracle/build/xilinx/bin/` with a `uray-` prefix
+   (e.g. `uray-xcframes2bit`). On the container this was developed in,
+   this build succeeded too (no fallback was needed -- see "What
+   worked" below).
+6. Creates `tests/oracle/venv-xilinx` and installs, in this order (order
+   matters -- see the comments in `tests/oracle/setup-xilinx.sh`):
+   1. `textX`+`Cython` (needed to install the pinned `fasm` package
+      below, same as `setup.sh`), then the pinned `fasm` package itself
+      from `tests/oracle/build/pristine-src` (non-editable, with the
+      same editable-of-pristine-worktree fallback as `setup.sh`).
+   2. `prjxray`'s Python package, installed **`--no-deps`** (its
+      `setup.py` declares `install_requires=['fasm', ...]`, which would
+      otherwise silently pull a different `fasm` wheel from PyPI over
+      the pinned one just installed), then its other dependencies
+      explicitly (`intervaltree numpy pyjson5 pyyaml simplejson`).
+   3. `f4pga-xc-fasm`, same story (`install_requires` includes both
+      `prjxray` and `fasm` from PyPI) -- `--no-deps`, then
+      `intervaltree simplejson textx` explicitly.
+   4. `prjuray-tools`'s Python package (`prjuray.db`, `prjuray.grid`,
+      `prjuray.tile_segbits`, ...) -- no `fasm`/`prjxray` pin to defend
+      against, installed normally.
+   5. `pytest`.
+7. Verifies `fasm`/`prjxray`/`xc_fasm`/`prjuray` all import from inside
+   `venv-xilinx`, never from the live repository's `fasm/` (same check
+   as `setup.sh`, run from a directory with no `fasm/` subdirectory of
+   its own so it cannot be defeated by the CWD-shadowing pitfall below).
+8. Records `tests/oracle/build/xilinx/status.json` and touches
+   `tests/oracle/venv-xilinx/.oracle-xilinx-setup-ok`.
+
+The `f4pga/prjuray` repo itself (`utils/fasm2frames.py`,
+`utils/bit2fasm.py`, ...) is cloned too, but has no `setup.py` -- it is
+not pip-installable. It's kept for Phase 6 (T6.x) use via a `PYTHONPATH`
+wrapper (its `utils` package needs the `prjuray` repo root on
+`PYTHONPATH`, alongside `prjuray-tools` for `prjuray.db`); T5.8 itself
+only needed the `prjuray-tools` Python package (prjxray-shaped API) and
+the C++ tools above, both covered.
+
+### Pinned commits
+
+Resolved by cloning each repo fresh on 2026-09-24 (their default-branch
+HEAD at the time); see `tests/oracle/setup-xilinx.sh`'s
+`PRJXRAY_COMMIT`/`F4PGA_XC_FASM_COMMIT`/`PRJURAY_COMMIT`/
+`PRJURAY_TOOLS_COMMIT` (override any to re-pin -- auto-detected, same as
+`setup.sh`'s `ORACLE_COMMIT`) and `tools/fetch-db.sh`'s
+`PRJXRAY_DB_COMMIT`/`PRJURAY_DB_COMMIT`:
+
+| Repo | Commit |
+|---|---|
+| `f4pga/prjxray` | `c9f02d8576042325425824647ab5555b1bc77833` |
+| `chipsalliance/f4pga-xc-fasm` | `25dc605c9c0896204f0c3425b52a332034cf5e5c` |
+| `f4pga/prjuray` | `c550b03a26b4c4a9c4453353bd642a21f710b3ec` |
+| `SymbiFlow/prjuray-tools` | `f53f07b8fe37721137a57e9bee3b2b13e7676f53` |
+| `f4pga/prjxray-db` (database, `tools/fetch-db.sh`) | `0a0addedd73e7e4139d52a6d8db4258763e0f1f3` |
+| `f4pga/prjuray-db` (database, `tools/fetch-db.sh`) | `affbc5e555ebae16475f32e8fb2d6565d4204f3f` |
+
+These happen to match the commits `docs/rewrite/DESIGN-xilinx-db.md`
+section 1 was researched against (its scratchpad checkouts, not
+committed anywhere) -- both were resolved from each repo's HEAD only
+days apart, and none of these repos moved in between.
+
+### Wrappers
+
+Thin `exec` wrappers in `tests/oracle/`, mirroring the `fasm-oracle` /
+`run_fasm.py` pattern above (each requires `setup-xilinx.sh` to have run
+first):
+
+| Wrapper | Runs |
+|---|---|
+| `fasm2frames-oracle` | `xc_fasm.fasm2frames:main` in `venv-xilinx` (`python -P -m ...` -- see below for why `-P`) |
+| `xcfasm-oracle` | `venv-xilinx`'s installed `xcfasm` console script |
+| `bit2fasm-oracle` | `venv-xilinx`'s installed `bit2fasm` console script |
+| `xc7frames2bit-oracle` | the built `xc7frames2bit` C++ binary |
+| `bitread-oracle` | the built `bitread` C++ binary |
+| `gen_part_base_yaml-oracle` | the built `gen_part_base_yaml` C++ binary |
+
+`source tests/oracle/xilinx-env.sh` puts `tests/oracle/build/xilinx/bin`
+on `PATH` and exports `PRJXRAY_DB_ROOT`/`PRJURAY_DB_ROOT` (this repo's
+own convenience variables pointing at `tools/fetch-db.sh`'s cache --
+**not** read by the reference tools themselves, which take
+`--db-root`/`--part` explicitly or fall back to prjxray's own
+`XRAY_DATABASE_DIR`+`XRAY_DATABASE`/`XRAY_PART`; see
+`docs/rewrite/DESIGN-xilinx-db.md` section 2.1). This matters for
+`xcfasm-oracle`: `xcfasm` shells out to `xc7frames2bit` **by bare name**
+(`--frm2bit` defaults to the literal string `"xc7frames2bit"`, looked up
+on `PATH`), so it needs the built tools on `PATH` to work at all; same
+for `bit2fasm-oracle` and `bitread`.
+
+`fasm2frames-oracle` has no installed console-script entry point to run
+(f4pga-xc-fasm's `setup.py` only registers `xcfasm`/`bit2fasm`; the
+`fasm2frames` script that *is* installed is prjxray's own, unrelated,
+broken one -- `utils.fasm2frames:main`, which fails with
+`ModuleNotFoundError: No module named 'utils'` because `prjxray`'s
+`setup.py` only packages `prjxray/`, not the top-level `utils/` script
+directory it lives in). So `fasm2frames-oracle` runs
+`python -m xc_fasm.fasm2frames` directly, and passes `-P` to disable
+Python's normal "prepend the current directory to `sys.path` for `-m`"
+behaviour -- without it, running `fasm2frames-oracle` from the
+repository root would shadow `venv-xilinx`'s pinned `fasm`/`xc_fasm`
+with the live repository's own `fasm/` directory, exactly the
+CWD-shadowing pitfall described above for the plain oracle. This was
+caught during development of this script (the warning
+`Falling back to the much slower pure Python textX based parser` with a
+path pointing at this worktree's own `fasm/parser/__init__.py`, instead
+of `venv-xilinx`) and is why `xcfasm-oracle`/`bit2fasm-oracle` use the
+installed console scripts instead (a script file's own directory,
+`venv-xilinx/bin`, gets prepended, never the caller's CWD -- immune by
+construction, like `tests/oracle/fasm-oracle` above).
+
+### Database fetch (`tools/fetch-db.sh`)
+
+```sh
+tools/fetch-db.sh prjxray artix7            # -> <cache>/prjxray-db/artix7   (~181 MiB, ~6s)
+tools/fetch-db.sh prjxray kintex7 spartan7 zynq7   # add more families
+tools/fetch-db.sh prjuray zynqusp           # -> <cache>/prjuray-db/zynqusp  (~217 MiB, ~3s)
+tools/fetch-db.sh all                       # every family of both databases
+```
+
+`<cache>` defaults to `${FASM_DB_CACHE:-tests/oracle/build/db}`
+(gitignored, same as everything else under `tests/oracle/build/`).
+prjxray-db's four families are `artix7`, `kintex7`, `spartan7`, `zynq7`
+(confirmed with `git ls-tree -d HEAD` on a `--filter=blob:none --sparse`
+clone -- there is no way to list a remote's tree without cloning it
+first); prjuray-db currently has exactly one, `zynqusp`.
+
+Each database is a single sparse (`--filter=blob:none --sparse
+--depth 1`), cone-mode clone per repo (`<cache>/prjxray-db`,
+`<cache>/prjuray-db`); requesting a family checks out that top-level
+directory (`git sparse-checkout add <family>`), which pulls in
+everything a `--db-root <cache>/prjxray-db/<family>` invocation of a
+reference or Rust tool needs directly -- `settings.sh`, `mapping/`,
+every `<fabric>/` and `<part>/` under it, `segbits_*.db`, `ppips_*.db`,
+`mask_*.db` -- since `--db-root` addresses the family directory itself,
+not its parent (see `docs/rewrite/DESIGN-xilinx-db.md` section 2.1:
+`get_fabric_for_part`/`get_part_information` join `db_root` directly
+with `"mapping"`, so `db_root` in prjxray's own code *is* the family
+directory, e.g. `prjxray-db/artix7`). No extra step was needed to make
+`settings.sh` show up -- it's an ordinary file inside the family
+directory cone-mode already checks out whole.
+
+Idempotent: a family already present (checked out **and** currently
+listed by `git sparse-checkout list`) is left alone and not re-fetched;
+adding a new family to an already-cloned repo uses `git sparse-checkout
+add` (only fetches the new family's objects, doesn't touch what's
+already there). A pin change (`PRJXRAY_DB_COMMIT`/`PRJURAY_DB_COMMIT`)
+is detected by comparing the clone's current `HEAD` against the pinned
+commit and re-fetches/checks out in place.
+
+Measured sizes on the container this was developed in (`du -sh`):
+
+| Family | Size | Fetch time (cold) |
+|---|---|---|
+| `prjxray-db/artix7` | 181 MiB | ~6.3s |
+| `prjxray-db/spartan7` (added to the same clone) | 64 MiB | ~1.4s |
+| `prjuray-db/zynqusp` | 217 MiB | ~3.2s |
+
+### Smoke tests (`tests/oracle/test_xilinx_oracle.py`)
+
+```sh
+tests/oracle/venv-xilinx/bin/pytest tests/oracle/test_xilinx_oracle.py -v
+```
+
+Run with `venv-xilinx`'s installed pytest entry point, for the same
+CWD-shadowing reason as `tests/oracle/test_oracle.py` above. Two
+independent checks, each skipped cleanly (`pytest.skip`, not a failure)
+when its prerequisite hasn't been set up:
+
+1. **`test_f4pga_xc_fasm_test_suite_passes`** -- runs f4pga-xc-fasm's own
+   `tests/test_fasm2frames.py` (against its bundled miniature database,
+   `tests/test_data/db` -- no database fetch needed) inside
+   `venv-xilinx`. On the container this was developed in: **7 passed, 5
+   skipped** (upstream `@unittest.skip`s documenting known-unimplemented
+   behavior -- see `docs/rewrite/DESIGN-xilinx-db.md` section 7), with
+   one upstream test, `test_badkey`, deselected (`-k 'not test_badkey'`)
+   rather than silently left to fail: it does
+   `except TextXSyntaxError` around a parse error, but which exception
+   class a bad-key parse error actually raises is decided once, at
+   `fasm` package build time, by whether the antlr4 C++ extension built
+   (see `fasm/parser/__init__.py`) -- on this container it did (same as
+   the plain oracle, see "Parsers available" above), so the same call
+   raises a generic antlr4 C++ binding `Exception` instead, which
+   `test_badkey`'s narrow `except` doesn't catch. This is a pre-existing
+   assumption in f4pga-xc-fasm's own test (not something this task's
+   scripts introduce) and is documented in detail in
+   `test_xilinx_oracle.py`'s docstring.
+2. **`test_smoke_fasm_matches_golden_frm`**,
+   **`test_smoke_bit_bitread_matches_golden`**,
+   **`test_smoke_bitread_lists_expected_bits`** -- run
+   `fasm2frames-oracle` / `xc7frames2bit-oracle` / `bitread-oracle` over
+   `tests/corpus/xilinx/artix7/smoke_x1y0.fasm` (a tiny hand written FASM
+   using three real artix7 features -- see
+   `tests/corpus/xilinx/artix7/README.md`) against a real fetched artix7
+   database, and byte-compare against the checked-in golden
+   `smoke_x1y0.frm`/`smoke_x1y0.bitread.txt` (**not** `smoke_x1y0.bit`
+   itself -- see the "not byte-for-byte reproducible" note in that
+   README for why). Skipped if `tools/fetch-db.sh prjxray artix7` hasn't
+   been run. All four tests passed on the container this was developed
+   in (`4 passed in 0.88s`).
+
+### What worked / what didn't
+
+On the container this was developed in (Ubuntu, `cmake` 3.28,
+`ninja-build`, `g++`, already had `uuid-dev`/`pkg-config` from the plain
+oracle's own best-effort apt step): **everything worked**, including the
+best-effort prjuray-tools C++ build -- no extra system packages beyond
+what `setup.sh` already ensures were needed for either C++ build.
+`tests/oracle/setup-xilinx.sh` still runs its own best-effort
+`apt-get install cmake ninja-build build-essential uuid-dev pkg-config`
+step for portability to a machine missing one of these (never fatal; a
+missing prerequisite surfaces as a clear cmake/ninja failure recorded in
+`tests/oracle/build/xilinx/logs/` and `status.json`'s
+`prjuray_cpp_error` field instead).
+
+### Timings (container this was developed in)
+
+| Step | Time |
+|---|---|
+| `tests/oracle/setup-xilinx.sh` (cold; includes calling `setup.sh` if needed, both C++ builds, all pip installs) | ~2m27s wall (`setup_seconds` in `status.json`: 147s excluding the `setup.sh` prerequisite step) |
+| `tests/oracle/setup-xilinx.sh` (warm, no-op) | <0.1s |
+| prjxray C++ build alone (`cmake` configure + `ninja` 6 targets) | ~1s configure + ~45s build |
+| prjuray-tools C++ build alone (`cmake` configure + `ninja` 6 targets) | ~1s configure + ~47s build |
+| `tools/fetch-db.sh prjxray artix7` (cold) | ~6.3s |
+| `tools/fetch-db.sh prjuray zynqusp` (cold) | ~3.2s |
+| smoke pytest suite | ~0.9s |
+
+### Disk usage
+
+| Path | Size |
+|---|---|
+| `tests/oracle/build/xilinx/src` (4 repo clones + C++ build trees) | 169 MiB |
+| `tests/oracle/build/xilinx/bin` (12 copied binaries) | 11 MiB |
+| `tests/oracle/venv-xilinx` | 141 MiB |
+| `tests/oracle/build/db` (artix7 only) | 190 MiB |
