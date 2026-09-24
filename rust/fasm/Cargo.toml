@@ -17,6 +17,7 @@ path = "src/lib.rs"
 foldhash = "0.2"
 
 [dev-dependencies]
+num-bigint = "0.4"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 
 [[bench]]
