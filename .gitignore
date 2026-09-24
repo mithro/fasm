@@ -123,3 +123,6 @@ dmypy.json
 /fasm/parser/tags.py
 /fasm/parser/antlr_to_tuple.c
 /fasm/version.py
+
+# Sub-agent git worktrees (never commit)
+.claude/worktrees/
