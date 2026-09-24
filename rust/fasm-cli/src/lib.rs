@@ -21,6 +21,8 @@
 //! * `fasm2frames` ([`fasm2frames`]): a replacement for f4pga-xc-fasm's
 //!   `xc_fasm.fasm2frames` (FASM -> `.frm` frames for Xilinx 7 series
 //!   parts);
+//! * `xcfasm` ([`xcfasm`]): f4pga-xc-fasm's `xc_fasm.xc_fasm` (FASM ->
+//!   `.frm` -> `.bit` in one step);
 //! * `xc7frames2bit` ([`xc7frames2bit`]) and `bitread` ([`bitread`]):
 //!   prjxray's C++ tools (`.frm` -> `.bit`, `.bit` -> frames).
 //!
@@ -38,3 +40,4 @@ pub mod terminal;
 pub mod tool;
 mod unicode_tables;
 pub mod xc7frames2bit;
+pub mod xcfasm;
