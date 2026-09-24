@@ -28,9 +28,10 @@ use crate::error::{fasm_error, fasm_status, set_error, CapiError};
 /// **Not NUL terminated.** When filled in by the library (comments,
 /// annotations), it points into the owning object (a `fasm_file`, or the
 /// line passed to a streaming callback) and is valid as long as that object
-/// is; for an empty string `ptr` may point to a zero length buffer (never
-/// `NULL` when filled in by the library). When passed to the library,
-/// `ptr` may be `NULL` only if `len` is 0; the bytes must be valid UTF-8.
+/// is. When `len` is 0, `ptr` must not be dereferenced: it can be any
+/// value, including `NULL` (the empty view `fasm_line_comment` stores for a
+/// line without comment). When passed to the library, `ptr` may be `NULL`
+/// only if `len` is 0; the bytes must be valid UTF-8.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct fasm_str {
