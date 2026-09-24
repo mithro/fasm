@@ -502,3 +502,16 @@ what happened, branch/commit references, open issues.
   stdout in merged logs; three undocumented differences (mmap of non
   regular files, unseekable output header length, directory as part
   file). Fixes in progress.
+* T5.6/T5.7 done: fixes 540a40c (bitread streams and flushes like the
+  reference: 22 MiB peak vs 68 MiB reference), 3e6f640 (size-0/pipe inputs,
+  unseekable output header, directory part file emulated), 8c441d2 (YAML
+  block sequences), d107b33 (11 bitread flag sets), docs. Merged with
+  --no-ff; on the merged tree: 418 Rust tests, difftest-xilinx 107/107
+  fasm2frames + 60/60 xcfasm + 6/6 reference bitstreams identical;
+  binaries fasm, fasm2frames, xc7frames2bit, bitread, xcfasm; worktree
+  removed. The complete 7 series FASM -> bitstream path is in place.
+* T6.1 marked done: the loader already reads prjuray-db (zynqusp, per-part
+  layout) with 0 mismatches in the T5.2 review; remaining UltraScale work
+  is T6.2/T6.3.
+* T6.2 (UltraScale / UltraScale+ assembler validation and bitstream
+  writer/reader vs prjuray-tools) started.
