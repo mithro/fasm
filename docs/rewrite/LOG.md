@@ -229,3 +229,18 @@ what happened, branch/commit references, open issues.
   by keeping both); 228 tests pass, fmt/clippy/doc/MSRV clean; worktree
   removed.
 * T2.1 (compatible `fasm` CLI) started.
+* T1.1b implemented on branch `worktree-agent-a525263a33b581c6e` (10 commits):
+  intern hit 82 -> 53 ns (1.55x), 8 threads 36-52 -> 25-34 ns, lookup 80 ->
+  50 ns, memory unchanged; `get` renamed to `lookup`; publication test;
+  lock free re-intern of overflowed names; Panics docs; alloc test; Display
+  test. Thread local cache tried and rejected (measured slower). Parser
+  bench with new idstring: pips 168 -> 184 MB/s (interning now 26% of
+  instructions); remaining gap is the parser itself (T8.2). In review.
+* T2.1 implemented on branch `worktree-agent-a019d02c283a0a548` (4 commits):
+  argparse emulation following CPython 3.11 step by step (prefixes, `=`,
+  `--`, repr() based errors, help wrapping at terminal width), Python string
+  behaviour for non UTF-8 argv, unicode tables generated from the oracle's
+  Python, ANTLR error precedence emulation, `Error:` on stdout with exit 0.
+  Differential test tests/cli/test_cli_compat.py: 692 cases, 0 differences
+  (3 documented normalisation rules for error message texts). 200k lines
+  in 0.09 s vs 3.6 s for the original. In review.

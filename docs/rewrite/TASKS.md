@@ -34,7 +34,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 - [x] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
-- [~] T1.1b idstring follow ups from review (optional items): strengthen
+- [r] T1.1b idstring follow ups from review (optional items): strengthen
       `concurrent_lookups_while_tables_grow` into a positive publication test;
       fast path for repeat interning of overflowed names (check overflow table
       before locking); `# Panics` docs on `Ord`/`Display`/`PartialEq<str>`
@@ -60,7 +60,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 2: Command line tool
 
-- [~] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
+- [r] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
       text, identical output/exit behaviour (including `Error: ...` on
       stdout) (after T1.4).
 - [ ] T2.2 CLI differential test: run oracle `fasm` and Rust `fasm` over the
