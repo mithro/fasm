@@ -420,7 +420,26 @@ prjxray's C++ tools of the same name (`tools/xc7frames2bit.cc`,
   parsing that stops at an incomplete packet or a header type above 2,
   the `FAR`/`CMD`/`CTL1`/`MASK` register machine with the per frame CRC
   quirk, the two padding frames skipped between rows, `IDCODE` checked:
-  `Bitstream does not appear to be for this part`).
+  `Bitstream does not appear to be for this part`);
+* the reference's handling of unusual files: `bitread` maps the input
+  with `mmap` after an `fstat`, so a file whose size is 0 (an empty
+  file, a pipe, a `/proc` file) is an empty input (`Bitstream size: 0
+  bytes`, `Input doesn't look like a bitstream`, exit code 1) and exactly
+  `st_size` bytes are read; `xc7frames2bit` writing to an unseekable
+  output (`--output_file=/dev/stdout | ...`) cannot seek back to fill in
+  the header's data length, which stays 0 (field `e`, bytes 84-87 for
+  the smoke design); a `--part_file` that is a directory makes yaml-cpp's
+  `std::ifstream` throw: `terminate called after throwing an instance of
+  'std::__ios_failure'` / `what():  basic_filebuf::underflow error
+  reading the file: Is a directory`, SIGABRT (both tools; the Rust
+  binaries print the same and call `abort()`);
+* `bitread` streams its output (frame by frame, through a buffer) and
+  flushes stdout after the `Bitstream size`, `Config size` and `Number
+  of configuration frames` lines (the reference's `std::endl`) and before
+  anything goes to stderr, so stdout and stderr merged (`2>&1`) come out
+  in the reference's order; peak memory stays small (22 MiB for
+  `-x -o` on a dense random xc7a200t bitstream, a 340 MiB output; the
+  reference: 68 MiB).
 
 `part.yaml` files are read by the database loader's YAML subset; for
 Series7 it now also accepts the `configuration_ranges` form the C++
@@ -449,7 +468,7 @@ errors, malformed `.frm`/`.bit` input, every output mode).
 | gflags' "Did you really mean to set flag ..." warning | only for string flags whose help mentions `true`/`false` (none in these tools) | not implemented |
 | `--architecture=UltraScale`, `UltraScalePlus`, `Spartan6` | supported (UltraScale/UltraScale+ with the Series7 part types and ECC of the plain prjxray checkout) | `xc7frames2bit: --architecture=UltraScale is not supported yet (only Series7)` (or `bitread: ...`), exit code 1 (T6.2) |
 | A `part.yaml` of another architecture (`!<xilinx/xcupseries/part>`) given to these Series7 tools | depends on what yaml-cpp's Series7 decoder makes of it | `Part file ... not found or invalid` |
-| `.bit` header date and time | the current UTC time | the same, or the time of `$SOURCE_DATE_EPOCH` (seconds since the epoch) when it is set: an extension for reproducible builds, used by the tests |
+| `.bit` header date and time | the current UTC time | the same, or the time of `$SOURCE_DATE_EPOCH` (seconds since the epoch) when it is set: an extension for reproducible builds, used by the tests. A value that is not an integer is reported (`warning: SOURCE_DATE_EPOCH="..." is not an integer, using the current time` on stderr) and the current time is used |
 | An error writing the `.bit` after the file was created (`ENOSPC`) | ignored: a truncated file, exit code 0 | `Error writing <file>: <error>`, `Failed to write bitstream`, `Exitting`, exit code 1 |
 | `bitread` on a bitstream whose length after the sync word is not a multiple of 4 bytes | `terminate called after throwing an instance of 'std::out_of_range'` / `what():  pos > size()`, SIGABRT | the incomplete last word is ignored |
 | `bitread --help`, `--helpxml` | | one more flag, `--frm_out=FILE` (listed under `rust/fasm-cli/src/bitread_extensions.rs`): writes the frames selected by `-z`, `-f` and `-F` as a `.frm` file (the ECC bits cleared unless `-C`), the inverse of `xc7frames2bit` |
@@ -493,7 +512,7 @@ error cases.
 | `--frm2bit TOOL` | the program run through the shell to write the `.bit` (`subprocess.check_output(..., shell=True)`): any tool; a missing one fails with `/bin/sh: 1: TOOL: not found` and `CalledProcessError ... exit status 127` | accepted and ignored: the bitstream is always written in process by the Rust `xc7frames2bit` code (byte for byte the reference's output) and `TOOL` only appears in the `CalledProcessError` message |
 | No `--frm_out` | the `.frm` is written to a `tempfile.mkstemp()` file that is never deleted; its path is in the `.bit` header and in error messages | no `.frm` file is written; the `.bit` header (field `a`) and the messages name the `--fn_in` path instead |
 | Paths with spaces or shell metacharacters | split or interpreted by the shell command line | used as given |
-| Errors of the bitstream step | the `xc7frames2bit` messages, then a traceback ending with the `CalledProcessError` line | the same messages, then only the `CalledProcessError` line |
+| Errors of the bitstream step | the `xc7frames2bit` messages, then a traceback ending with the `CalledProcessError` line | the same messages, then only the `CalledProcessError` line. For a `--part_file` that is a directory the reference's `xc7frames2bit` aborts and `/bin/sh` (dash) prints `Aborted` and exits with 134: the Rust tool prints the same text and `... returned non-zero exit status 134.` (with another `/bin/sh`, e.g. bash, the reference's text differs) |
 | Anything `xc7frames2bit` prints on stdout | captured and discarded | nothing is printed |
 | `.bit` header time | the current UTC time | the same, or `$SOURCE_DATE_EPOCH` (see `xc7frames2bit`) |
 
