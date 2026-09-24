@@ -22,21 +22,27 @@
 //! * the [`idstring`] module: a `Copy`, 8-byte interned handle for
 //!   hierarchical dotted feature names (following
 //!   <https://github.com/mithro/idstring>);
-//! * a `model` module: `ValueFormat`, `FeatureValue`, `SetFasmFeature`,
+//! * the [`model`] module: `ValueFormat`, `FeatureValue`, `SetFasmFeature`,
 //!   `Annotation` and `FasmLine`, mirroring the Python namedtuples;
-//! * a `parser` module: a hand written, byte oriented, zero-copy line
-//!   parser matching the ANTLR and textX reference grammars;
+//! * the [`parser`] module: a hand written, byte oriented, zero-copy line
+//!   parser compatible with the ANTLR and textX reference parsers (see
+//!   `docs/rewrite/COMPAT.md`);
 //! * an `output` module: string formatting, canonicalisation and
 //!   `merge_features` / `merge_and_sort` (`MergeModel`) equivalents.
 //!
-//! [`idstring`] and `model` exist so far; the `parser` and `output` modules
-//! follow in later tasks of `docs/rewrite/TASKS.md`.
+//! [`idstring`], [`model`] and [`parser`] exist so far; the `output`
+//! module follows in a later task of `docs/rewrite/TASKS.md`.
 
 pub mod idstring;
 pub mod model;
+pub mod parser;
 
 pub use model::{
     Annotation, FasmLine, FeatureValue, ModelError, SetFasmFeature, ValueFormat, ValueParseError,
+};
+pub use parser::{
+    parse_fasm_bytes, parse_fasm_filename, parse_fasm_string, parse_line, parse_lines, Lines,
+    ParseError, ParseErrorKind,
 };
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.
