@@ -1,0 +1,4 @@
+{
+  "info": {"GRID_X_MIN": 20, "GRID_X_MAX": 30, "GRID_Y_MIN": 150, "GRID_Y_MAX": 155},
+  "required_features": ["CLBLM_L_X8Y0.SLICEL_X1.CLUT.INIT[3:0] = 4'hF", "INT_L_X8Y0.BYP_ALT1.VCC_WIRE"]
+}

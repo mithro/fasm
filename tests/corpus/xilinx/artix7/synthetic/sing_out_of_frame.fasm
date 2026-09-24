@@ -1,0 +1,5 @@
+# LIOB33_SING_X0Y49 is the top alias tile of its clock region (offset 99):
+# the bits of the other IOB site are past the end of the frame, prjxray
+# drops them with a "frame_set: invalid word address" warning.
+LIOB33_SING_X0Y49.IOB_Y0.PULLTYPE.PULLUP
+LIOB33_SING_X0Y49.IOB_Y1.PULLTYPE.PULLUP

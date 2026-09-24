@@ -1,0 +1,8 @@
+# Features that are not in the database: one FasmLookupError with one
+# message per enabled bit, in file order.
+CLBLM_L_X8Y0.SLICEM_X0.NOPE
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.INIT[70] = 1
+CLBLM_L_X8Y0.SLICEM_X0.NOPE[3:0] = 4'b0110 # comment
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.INIT[3:0] = 4'hF
+INT_L_X8Y0
+INT_L_X8Y0.NOPE = 0

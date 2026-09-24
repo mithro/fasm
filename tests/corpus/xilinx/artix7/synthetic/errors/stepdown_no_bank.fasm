@@ -1,0 +1,2 @@
+# STEPDOWN on an IOB tile that has no package pin (no IO bank): KeyError.
+LIOB33_X0Y101.IOB_Y0.LVCMOS12_LVCMOS15_LVCMOS18_SSTL135_SSTL15.STEPDOWN

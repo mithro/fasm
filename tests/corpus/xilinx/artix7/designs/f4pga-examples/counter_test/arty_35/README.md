@@ -94,3 +94,31 @@ revision can both change immaterial details).
   from source, so this is a genuine, structurally valid Series7 bitstream
   (not independently verified against real Arty A7 hardware in this
   session).
+
+## Reference `.frm` files (T5.4/T5.5)
+
+`top.frm.xz`, `top.sparse.frm.xz` and `top.pudc.frm.xz` (`xz -9`) are the
+output of the oracle `fasm2frames` (f4pga-xc-fasm
+`25dc605c9c0896204f0c3425b52a332034cf5e5c` on prjxray
+`c9f02d8576042325425824647ab5555b1bc77833`, `tests/oracle/setup-xilinx.sh`)
+with the pinned prjxray-db (`tools/fetch-db.sh prjxray artix7`), dense,
+`--sparse` and `--emit_pudc_b_pullup`; the dense one is identical to the
+openXC7 snap's `top.frm` above (same sha256). They are compared byte for
+byte with the Rust `fasm2frames` output by
+`rust/fasm-xilinx/tests/assembler_real_db.rs`:
+
+```sh
+DB=tests/oracle/build/db/prjxray-db/artix7
+tests/oracle/fasm2frames-oracle --db-root $DB --part xc7a35tcsg324-1 top.fasm top.frm
+tests/oracle/fasm2frames-oracle --db-root $DB --part xc7a35tcsg324-1 --sparse top.fasm top.sparse.frm
+tests/oracle/fasm2frames-oracle --db-root $DB --part xc7a35tcsg324-1 --emit_pudc_b_pullup top.fasm top.pudc.frm
+xz -9 top.frm top.sparse.frm top.pudc.frm
+```
+
+sha256 of the uncompressed files:
+
+```
+6013f01912aaff1b7461ceb5b350ab82694629eaa9ff8fe62dc086664591a359  top.frm
+a0ff0016cd2b2b3f6fbf2e541a6cdb154ee48558c1500c09ef31314b0707bc51  top.sparse.frm
+a1f670ac5e1c8be76e4ba65ad03d60ce4616945fb86a2828baa3f00561fef4de  top.pudc.frm
+```

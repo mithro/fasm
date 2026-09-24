@@ -1,0 +1,4 @@
+# The PUDC_B IOB site (LIOB33_X0Y43 IOB_Y0) is used by the design (a
+# feature with value 0 counts): --emit_pudc_b_pullup adds nothing.
+LIOB33_X0Y43.IOB_Y0.PULLTYPE.NONE = 0
+LIOB33_X0Y111.IOB_Y1.LVCMOS12_LVCMOS15_LVCMOS18_SSTL135_SSTL15.STEPDOWN
