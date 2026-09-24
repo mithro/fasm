@@ -1,0 +1,3 @@
+# Hand written test data for fasm-xilinx (Apache-2.0).
+"xc7test":
+  fabric: "xc7testfab"

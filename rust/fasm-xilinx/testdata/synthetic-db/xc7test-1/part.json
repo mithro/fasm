@@ -1,0 +1,55 @@
+{
+    "global_clock_regions": {
+        "bottom": {
+            "rows": {
+                "0": {
+                    "configuration_buses": {
+                        "CLB_IO_CLK": {
+                            "configuration_columns": {
+                                "0": {"frame_count": 42}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "top": {
+            "rows": {
+                "0": {
+                    "configuration_buses": {
+                        "BLOCK_RAM": {
+                            "configuration_columns": {
+                                "0": {"frame_count": 128}
+                            }
+                        },
+                        "CLB_IO_CLK": {
+                            "configuration_columns": {
+                                "0": {"frame_count": 42},
+                                "1": {"frame_count": 30}
+                            }
+                        }
+                    }
+                },
+                "1": {
+                    "configuration_buses": {
+                        "BLOCK_RAM": {
+                            "configuration_columns": {
+                                "0": {"frame_count": 128}
+                            }
+                        },
+                        "CLB_IO_CLK": {
+                            "configuration_columns": {
+                                "0": {"frame_count": 42},
+                                "6": {"frame_count": 28}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "idcode": 56807571,
+    "iobanks": {
+        "14": "X1Y26"
+    }
+}

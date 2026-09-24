@@ -1,0 +1,2 @@
+BRAM_L.RAMB18_Y0.IN_USE origin:036-bram-config 27_100 !27_101
+this line is not valid segbits and must never be read
