@@ -1,9 +1,9 @@
-check-manifest
-cython
-flake8
-pytest
+# Development requirements for the fasm Python package: building the Rust
+# extension (rust/fasm-python), running and linting the tests (T3.2). Kept
+# in sync with [project.optional-dependencies].dev in pyproject.toml
+# (`pip install .[dev]` is the preferred way to get these).
+maturin>=1.9.4,<2
 textx
-tox
-twine
-wheel
+pytest
+flake8
 yapf==0.24.0

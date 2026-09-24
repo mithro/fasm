@@ -113,6 +113,20 @@ Formal syntax specification of a line of a FASM file
     SetFasmFeature ::= Feature FeatureAddress? S* ('=' S* VerilogValue)?
     FasmLine ::= S* SetFasmFeature? S* Annotations? S* Comment?
 
+Reference grammar
++++++++++++++++++
+
+``antlr/FasmLexer.g4`` and ``antlr/FasmParser.g4`` are the ANTLR 4 grammar
+files the original project's fast (ANTLR based) parser was generated from.
+They remain here as the machine readable reference for the syntax
+described above, independent of any particular parser implementation.
+
+.. literalinclude:: antlr/FasmLexer.g4
+   :language: text
+
+.. literalinclude:: antlr/FasmParser.g4
+   :language: text
+
 Canonicalization
 ++++++++++++++++
 

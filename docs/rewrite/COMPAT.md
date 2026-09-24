@@ -335,7 +335,7 @@ namedtuples, with the field types of the ANTLR parser (a `list` of lines,
 
 | Case | Original (default parser: `antlr`) | Rust based package |
 |---|---|---|
-| `fasm.parser.available`, `fasm.parser.implementation` | `['antlr', 'textx']`, `'antlr'` | `['rust', 'textx']`, `'rust'` (`['rust', 'antlr', 'textx']` if a legacy `setup.py` ANTLR build is present too) |
+| `fasm.parser.available`, `fasm.parser.implementation` | `['antlr', 'textx']`, `'antlr'` | `['rust', 'textx']`, `'rust'` |
 | Parse error | plain `Exception('Parse error at L:C - <ANTLR message>')` | `fasm.parser.rust.FasmParseError` (an `Exception` subclass) with the same `str()` format, the Rust message (see "Errors"), and `line` / `column` attributes |
 | Value range error (`a = 2`, `a[3:0] = 5'h10`, `a[0:1]`) | `AssertionError` traceback printed on stderr, the function returns `None` | `FasmParseError` at the value or at the `[` |
 | Syntax error after a value range error (`a = 2\nb c`) | the syntax error (`Parse error at 2:2`): the whole file is checked for syntax first | the first error in file order (`Parse error at 1:4 - value 2 does not fit ...`); the Rust `fasm` CLI emulates the original precedence (`2:2`, see "Command line tool") but the bindings do not, so the `fasm` console script of the Python package (`fasm/tool.py`) prints `1:4` where the Rust `fasm` binary prints `2:2` |
@@ -344,7 +344,7 @@ namedtuples, with the field types of the ANTLR parser (a `list` of lines,
 | Non-ASCII comment or annotation value (`# café`) | `parse_fasm_string`: `UnicodeEncodeError`; `parse_fasm_filename`: `None` (see "Non-ASCII input") | parsed |
 | NUL in `parse_fasm_string` input | the rest of the input is dropped | parsed (see "Non-ASCII input") |
 | `fasm --parser antlr` (`fasm/tool.py`) | the ANTLR parser | the Rust parser when the ANTLR one is not built (like the Rust CLI); `--parser rust` is accepted |
-| Neither the Rust nor the ANTLR parser importable | `RuntimeWarning` "Unable to import fast Antlr4 parser implementation. ..." and the textX parser | the same warning text, followed by a paragraph with the Rust extension's `ImportError`, and the textX parser |
+| Rust parser extension not importable | `RuntimeWarning` "Unable to import fast Antlr4 parser implementation. ..." and the textX parser (original: no `setup.py` ANTLR build) | `RuntimeWarning` "Unable to import the fasm._fasm_rs Rust parser extension (ImportError: ...); falling back to ..." and the textX parser |
 | `fasm.__version__` | from `fasm/version.py` (`update_version.py`) | from the package metadata (`0.1.0.dev0` for now); `fasm/version.py` is no longer tracked or packaged (a locally generated one still takes precedence when importing from the source tree) |
 | New API | | `fasm.parser.rust.parse_fasm_bytes`, `fasm.parser.rust.FasmParseError`, `fasm._fasm_rs.fasm_tuple_to_string` (fast path, returns `None` when it cannot guarantee the Python result) |
 | Cyclic garbage collector while building a result of 256 lines or more | runs | paused, then restored (`gc.callbacks` do not fire meanwhile) |
