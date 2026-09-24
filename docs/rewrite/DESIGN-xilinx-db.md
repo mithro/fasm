@@ -2135,6 +2135,157 @@ the assembly (1.4 ms for counter_test dense). Breakdown of the 1M line run
 150-170 ms, assemble 326 ms, `get_frames` dense 40-50 ms, `write_frm`
 20-25 ms (21.6 MiB).
 
+### 8.7 Implementation notes (T5.6/T5.7)
+
+What the Series7 bitstream writer and reader
+(`rust/fasm-xilinx/src/bitstream/`) and the `xc7frames2bit`, `bitread`
+and `xcfasm` binaries (`rust/fasm-cli/src/{xc7frames2bit,bitread,
+xcfasm,gflags}.rs`, `src/bin/`) do, and measurements. The user visible
+differences are in the `xc7frames2bit`/`bitread` and `xcfasm` sections of
+`COMPAT.md`.
+
+**Modules** (`fasm_xilinx::bitstream`).
+
+* `ecc`: `icap_ecc` (a literal port of `xc7series::icap_ecc`, checked
+  with the vectors of prjxray's `ecc_test.cc`), `frame_ecc` and
+  `update_ecc` (`calculateECC`/`updateECC`). `frame_ecc` does not loop
+  over the 32 bits of a word: `val = idx * 32 + band` is a multiple of 32,
+  so `val + i == val | i`, and the XOR over the set bits is `val` (odd
+  number of set bits) XOR the XOR of their indexes, whose bit `k` is the
+  parity of `data & M_k` (`M_0 = 0xAAAAAAAA`, ..., `M_4 = 0xFFFF0000`);
+  equal to the literal port on random frames (test), 4 ms for the 24060
+  frames of xc7a200t.
+* `packet`: register and command numbers, Type1/Type2 header words
+  (`packet2header`, values masked to their fields), and `PacketIter`,
+  `BitstreamReader::iterator` + `ConfigurationPacket::InitWithWords`
+  exactly: a Type0 word is a one word NOP, a Type2 packet takes the
+  register of the previous *parsed* packet (none: its words are skipped
+  without a packet), an incomplete packet or a header type above 2 ends
+  the stream.
+* `header`: `BitHeader::parse` (the TLV fields, for tests and tools),
+  `create_header` (lengths include the NUL and are truncated to 16 bits
+  like the reference's `uint8_t` casts), `utc_date_time` (`%E4Y/%m/%d`,
+  `%H:%M:%S` in UTC; civil from days, no time zone library).
+* `writer`: `fdri_payload` (`addMissingFrames` as a merge of the part's
+  address walk with the given frames, frames outside the part kept at
+  their address; the ECC recomputed for every frame, which is what
+  `readFrames` does for the `.frm` frames and a no-op for the added zero
+  frames; two zero frames after every frame whose
+  `Part::next_frame_address` is in another block type, half or row; two
+  at the end), `configuration_words` (the 13 sync words and the packet
+  sequence of §6.3; `COR0` is `0x02003FE5`, checked against the golden
+  bitstream), `bitstream_bytes` / `write_bitstream` (the header, then the
+  words big-endian, the data length in field `e` computed up front
+  instead of seeking back). `BitstreamOptions { design_name, generator,
+  part_name, date, time }`: `None` date/time is the current UTC time.
+* `reader`: `BitstreamReader::from_bytes` (the first `AA 99 55 66` at any
+  byte offset; trailing bytes that do not make a word are dropped where
+  the reference aborts), `Configuration::from_packets`
+  (`InitWithPackets` literally: `MASK`, `CTL1 & MASK`, `CMD` (`WCFG`
+  starts a write), `IDCODE` (mismatch: `ReadError::IdcodeMismatch`),
+  `FAR` (restarts the write if `CMD` is `WCFG` and `CTL1` bit 21 is
+  clear), `FDRI` cut into 101 word frames that follow
+  `next_frame_address` and skip 202 words at row changes; the last frame
+  of a packet can be short, a later write of an address replaces it),
+  `Configuration::to_frames(clear_ecc, skip_zero)` (bit -> `Frames` ->
+  `.frm`).
+
+Only Series7 is implemented: other architectures are
+`BitstreamError::UnsupportedArchitecture` / `ReadError::...` (T6.2 adds
+UltraScale/UltraScale+, whose plain prjxray support uses the Series7
+frame address and ECC, while prjuray-tools has its own).
+
+**Reference behaviour found on the way.**
+
+1. `Part::next_frame_address` of T5.2 returned `None` for a minor beyond
+   its column; `ConfigurationColumn::GetNextFrameAddress` returns nothing
+   there and `ConfigurationBus` then tries the next column. Only visible
+   for `.frm` frames outside the part (the writer asks for the next
+   address of every frame to place the zero frames); fixed and tested.
+2. `ArchitectureFactory::create_architecture` returns a default
+   constructed variant, i.e. Series7, for an unknown `--architecture`.
+3. `Frames::readFrames` asserts a non empty file name, but the oracle is
+   a release build: `--frm_file=` (or none) is `Unable to open frm file:`.
+   A directory opens and reads as an empty file. An empty line is
+   `std::stoul("")`: an uncaught `std::invalid_argument`, SIGABRT; the
+   Rust binary prints the same `terminate called ...` text and calls
+   `std::process::abort()`.
+4. `writeBitstream` reports a `.bit` it cannot create with `Failed to
+   write bitstream` but `xc7frames2bit` still exits with 0.
+5. `bitread` reads stdin unless there is exactly one positional argument
+   (two file names read stdin); `-c` is defined but unused; the `-p` image
+   is ported literally; the `-z` test compares with a 101 word zero
+   vector, so a short frame is never "zero".
+6. `xcfasm` formats Python's `None` into its shell command: without
+   `--bit_out` the bitstream goes to a file named `None`; without
+   `--fn_in` it fails in the ANTLR wrapper with `TypeError: encoding
+   without a string argument` (after opening the database).
+7. The reference `part.yaml` decoder also accepts `configuration_ranges`
+   (a sequence of `[begin, end)` frame address ranges, used by prjxray's
+   own test data): the YAML subset of T5.2 now parses block sequences
+   (`- item`, `- !<tag>` with a nested mapping, `- key: value`) and
+   `Part::from_yaml_str` builds the rows with `Part::from_frame_addresses`
+   (the C++ `Part(idcode, addresses)` constructor).
+
+**gflags.** `rust/fasm-cli/src/gflags.rs` ports `ParseNewCommandLineFlags`
+(permutation of non flags, `--`, `SplitArgumentLocked` with `-nox`,
+`FlagValue::ParseFrom`, the per flag error map printed in name order
+after the help flags were handled), `HandleCommandLineHelpFlags` and
+`DescribeOneFlag`'s line breaking, `--undefok`, `--fromenv`,
+`--tryfromenv`; flags are listed by (file, name) like `GetAllFlags`, the
+gflags flags under `third_party/gflags/src/*.cc` and the tools' under
+`tools/<tool>.cc` (relative paths: the reference prints its absolute
+build paths). `--flagfile` is an error and `--tab_completion_word` is
+ignored (COMPAT.md). The `.bit` header time can be fixed with
+`SOURCE_DATE_EPOCH` (all three tools).
+
+**xcfasm.** `fasm2frames.rs` now exposes the pieces `xcfasm` reuses
+(`build_frames`: open the database and assemble with the reference's
+error texts; `create_output`, `write_frm_file`); `xcfasm` then writes the
+bitstream in process with the `xc7frames2bit` code and turns its failures
+into the reference's `subprocess.CalledProcessError: Command '...'
+returned non-zero exit status 1.` line. `--frm2bit` is ignored; without
+`--frm_out` nothing is written to a temporary file and the header names
+the FASM file.
+
+**Tests.** Unit tests: ports of prjxray's `ecc_test`, `frames_test`
+(`FillInMissingFrames`), `configuration_test` (single frame,
+autoincrement, padding frames), the packet sequence, a random frames ->
+bit -> frames round trip on a synthetic part (sparse and dense input give
+the same bit; rewriting the read frames gives the same bit), a reader
+fuzz test (mutated and random bitstreams: no panic), packet parsing and
+fuzzing, the header and dates, gflags. Integration tests
+(`rust/fasm-xilinx/tests/bitstream_real_db.rs`,
+`rust/fasm-cli/tests/xilinx_tools.rs`, skipped without the database):
+`smoke_x1y0.frm` -> byte for byte `smoke_x1y0.bit` (header fields taken
+from the golden file), `bitread -z -y` of it = `smoke_x1y0.bitread.txt`,
+bit -> frm -> bit, the counter design's dense, sparse and PUDC `.frm`
+identical to the reference `xc7frames2bit` (run when built), dense =
+sparse bitstreams, prjxray's `configuration_test` bitstreams (normal,
+debug, per frame CRC) read to equal configurations, `xcfasm` on the smoke
+FASM. Differential: `make xilinx-difftest` (87 fasm2frames runs + 154
+xc7frames2bit/bitread runs on their `.frm` files, 45 xcfasm runs, 6
+reference bitstreams x 6 bitread flag sets: all identical), and the CLI
+tests `tests/cli/test_{xc7frames2bit,bitread,xcfasm}_compat.py` (60 + 55
++ 56 cases).
+
+**Measurements** (release, this machine; best of 3 runs of the binary,
+including reading the `.frm` text; `cargo bench -p fasm-xilinx --bench
+bitstream` for the library phases):
+
+| input | reference `xc7frames2bit` | Rust | reference `bitread -z -y -o` | Rust |
+|---|---|---|---|---|
+| xc7a200tffg1156-1, dense `.frm` of an empty design (20230 frames, 24060 written) | 0.25-0.26 s | 0.12-0.14 s | 0.05 s | 0.02 s |
+| same frames with 30% random words | 0.27-0.28 s | 0.16 s | 1.87-1.97 s | 0.55 s |
+| `smoke_x1y0.frm` (sparse, xc7a35t) | 0.03 s | 0.006 s | 0.015 s | 0.005 s |
+
+Library phases for xc7a200t, 24060 frames (zero / random): `Frames::read_frm`
+of the 25.7 MiB text 94 / 113 ms (the bulk of the binary's time), ECC 4 /
+13 ms, `bitstream_bytes` (payload, ECC, packets, 9.3 MiB of bytes) 8 /
+17 ms, reading the bitstream back to frames 5 / 6 ms, `write_frm` 40 ms.
+The `.bit` writing itself is far below the 0.5 s target; `bitread`'s
+bit lines are formatted by hand (3.4x faster than `format!`).
+
 ## 9. Open questions / risks
 
 1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**
