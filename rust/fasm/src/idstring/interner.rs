@@ -23,7 +23,9 @@ use std::sync::OnceLock;
 
 use foldhash::fast::RandomState;
 
-use super::repr::{decode, encode_levels, Repr, LEVELS, LEVEL_LIMITS};
+use super::repr::{
+    decode, encode_levels, encode_overflow, Repr, LEVELS, LEVEL_LIMITS, OVERFLOW_LIMIT,
+};
 use super::resolved::Resolved;
 use super::storage::Table;
 use super::IdString;
@@ -40,6 +42,11 @@ use super::IdString;
 /// lock; interning takes a read lock on one of 16 shards per level (a write
 /// lock when the text is new).
 ///
+/// When a level table is full, strings that need a new entry in it are
+/// interned whole in a separate overflow table instead (the canonical
+/// handle of such a string is then the overflow form, forever). Nothing is
+/// lost and nothing panics; see `docs/rewrite/DESIGN-idstring.md`.
+///
 /// Interned text is never freed, not even when a private `Interner` is
 /// dropped (only its index structures are); this is what allows the
 /// `&'static str` results of [`Resolved`].
@@ -49,6 +56,7 @@ use super::IdString;
 pub struct Interner {
     hasher: OnceLock<RandomState>,
     levels: [Table; LEVELS],
+    overflow: Table,
 }
 
 /// `min` for `u32` in const context.
@@ -91,6 +99,7 @@ impl Interner {
                 Table::new(min(limit, LEVEL_LIMITS[1])),
                 Table::new(min(limit, LEVEL_LIMITS[2])),
             ],
+            overflow: Table::new(OVERFLOW_LIMIT),
         }
     }
 
@@ -103,6 +112,12 @@ impl Interner {
     /// Every string has exactly one handle per interner, so equal strings
     /// give equal handles. When all components are already known, this does
     /// one hash lookup per level and no allocation.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if the overflow table is exhausted, which takes more
+    /// than 4 billion distinct overflowed strings (hundreds of GiB of text)
+    /// and is treated like running out of memory.
     pub fn intern(&self, s: &str) -> IdString {
         let hasher = self.hasher();
         let mut pos0 = 0;
@@ -110,7 +125,9 @@ impl Interner {
         for (level, piece) in s.splitn(LEVELS, '.').enumerate() {
             let table = &self.levels[level];
             let Some(pos) = table.intern(hasher.hash_one(piece), piece, hasher) else {
-                panic!("idstring level {level} table is full");
+                // `piece` is not in the table and the table is full, which
+                // can never change: `s` is represented in the overflow table.
+                return self.intern_overflow(s);
             };
             if level == 0 {
                 pos0 = pos;
@@ -121,6 +138,15 @@ impl Interner {
         IdString::from_raw(encode_levels(pos0, fields))
     }
 
+    #[cold]
+    fn intern_overflow(&self, s: &str) -> IdString {
+        let hasher = self.hasher();
+        match self.overflow.intern(hasher.hash_one(s), s, hasher) {
+            Some(pos) => IdString::from_raw(encode_overflow(pos)),
+            None => panic!("idstring overflow table exhausted ({OVERFLOW_LIMIT} entries)"),
+        }
+    }
+
     /// Returns the handle of `s` if it has already been interned, without
     /// interning it.
     pub fn get(&self, s: &str) -> Option<IdString> {
@@ -128,7 +154,12 @@ impl Interner {
         let mut pos0 = 0;
         let mut fields = [0u32; LEVELS - 1];
         for (level, piece) in s.splitn(LEVELS, '.').enumerate() {
-            let pos = self.levels[level].find(hasher.hash_one(piece), piece)?;
+            let Some(pos) = self.levels[level].find(hasher.hash_one(piece), piece) else {
+                // Some component is unknown: `s` can only be known as an
+                // overflowed string.
+                let pos = self.overflow.find(hasher.hash_one(s), s)?;
+                return Some(IdString::from_raw(encode_overflow(pos)));
+            };
             if level == 0 {
                 pos0 = pos;
             } else {
@@ -162,7 +193,10 @@ impl Interner {
     pub fn resolved(&self, id: IdString) -> Resolved {
         match decode(id.raw()) {
             Repr::Levels(fields) => self.resolve_levels(id, fields, 0),
-            Repr::Overflow(_) => foreign(id),
+            Repr::Overflow(pos) => {
+                let text = self.overflow.text(pos).unwrap_or_else(|| foreign(id));
+                Resolved::from_pieces([text, "", ""], 1)
+            }
         }
     }
 
@@ -228,6 +262,7 @@ impl fmt::Debug for Interner {
         let entries = self.levels.each_ref().map(Table::len);
         f.debug_struct("Interner")
             .field("level_entries", &entries)
+            .field("overflow_entries", &self.overflow.len())
             .finish_non_exhaustive()
     }
 }

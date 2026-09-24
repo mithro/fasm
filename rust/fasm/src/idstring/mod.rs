@@ -61,8 +61,6 @@ use std::num::NonZeroU64;
 use std::str::{FromStr, Utf8Error};
 
 mod interner;
-// The overflow encoding is used by the overflow table (follow up change).
-#[allow(dead_code)]
 mod repr;
 mod resolved;
 mod storage;
