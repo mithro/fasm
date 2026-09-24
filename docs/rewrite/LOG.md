@@ -328,7 +328,7 @@ what happened, branch/commit references, open issues.
   tests/test_rust_parser.py (skip rust_stricter / invalid files, fast path
   must decline models Python asserts on). `maturin develop` in a scratch
   venv: available ['rust', 'textx'], implementation rust; Python tests
-  pass. flake8 clean apart from the F401 in fasm/parser/__init__.py that
+  pass (full run after the fix: 443 passed, 19 skipped). flake8 clean apart from the F401 in fasm/parser/__init__.py that
   tox.ini's per-file-ignores already allow.
 * T5.2 implemented on branch `worktree-agent-a23111aea3549812f` (7 commits):
   Database::open for prjxray-db and prjuray-db, segbits/ppips/tilegrid/
