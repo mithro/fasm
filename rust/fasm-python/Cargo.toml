@@ -11,10 +11,18 @@ description = "pyo3 extension module fasm._fasm_rs, built with maturin, exposing
 [lib]
 name = "_fasm_rs"
 path = "src/lib.rs"
+# `cdylib` is the extension module maturin packages; `rlib` lets
+# `cargo test` build the (pure Rust) unit tests.
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 fasm = { path = "../fasm" }
+# `abi3-py39`: one wheel (`cp39-abi3`) for every CPython >= 3.9, see
+# docs/rewrite/DESIGN-python.md. The deprecated `extension-module` feature
+# is not used: maturin (>= 1.9.4) sets `PYO3_BUILD_EXTENSION_MODULE` when it
+# builds the wheel, and a plain `cargo build` / `cargo test` links
+# libpython like any other pyo3 program.
+pyo3 = { version = "0.29.2", features = ["abi3-py39"] }
 
 [lints]
 workspace = true
