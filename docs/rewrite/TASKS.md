@@ -81,7 +81,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 4: C and C++ wrappers
 
-- [~] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
+- [r] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
       formatting, canonicalisation; `include/fasm/fasm.h` via cbindgen;
       C test program built with CMake (after T1.4).
 - [ ] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
