@@ -654,6 +654,8 @@ impl Core<'_> {
             .ok()
             .and_then(|i| i.checked_mul(2))
             .unwrap_or(!1);
+        // The line text of the warnings, rendered once per call.
+        let mut rendered: Option<String> = None;
         for &segbit in bits.bits {
             let frame = base.checked_add(segbit.word_column).ok_or_else(|| {
                 AssemblerError::FrameAddressOverflow {
@@ -670,10 +672,8 @@ impl Core<'_> {
                 } else {
                     "frame_clear"
                 };
-                let warning = format!(
-                    "{function}: invalid word address {word} in line: {}",
-                    line_str(lines, index)
-                );
+                let line = rendered.get_or_insert_with(|| line_str(lines, index));
+                let warning = format!("{function}: invalid word address {word} in line: {line}");
                 self.warnings.push(warning);
                 continue;
             }
