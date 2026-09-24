@@ -38,6 +38,8 @@
 //! (ignored). The file names in the help are relative to the prjxray
 //! checkout (`tools/bitread.cc`) instead of the absolute build paths.
 
+#![forbid(unsafe_code)]
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::path::PathBuf;

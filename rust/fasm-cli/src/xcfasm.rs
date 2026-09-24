@@ -34,6 +34,8 @@
 //! bitstream header names the `--fn_in` file instead. See the `xcfasm`
 //! section of `docs/rewrite/COMPAT.md`.
 
+#![forbid(unsafe_code)]
+
 use std::io::Write;
 
 use crate::argparse::{Argument, ArgumentParser, Outcome, Values};

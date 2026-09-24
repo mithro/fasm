@@ -29,6 +29,8 @@
 //! builds). Only the Series7 architecture is implemented; see the
 //! `xc7frames2bit` section of `docs/rewrite/COMPAT.md`.
 
+#![forbid(unsafe_code)]
+
 use std::io::Write;
 
 use fasm_xilinx::bitstream::{bitstream_bytes, utc_date_time, BitstreamOptions};

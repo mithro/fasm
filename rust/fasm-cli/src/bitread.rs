@@ -29,6 +29,8 @@
 //! the inverse of `xc7frames2bit`. Only the Series7 architecture is
 //! implemented; see the `bitread` section of `docs/rewrite/COMPAT.md`.
 
+#![forbid(unsafe_code)]
+
 use std::io::{Read, Write};
 
 use fasm_xilinx::bitstream::{BitstreamReader, Configuration};
