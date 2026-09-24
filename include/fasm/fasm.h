@@ -275,9 +275,10 @@ typedef bool (*fasm_zero_fn)(const char *feature, size_t len, void *user);
  *
  * `group_id` is the group id (the first `.` separated component of the
  * feature names, e.g. the tile name; NUL terminated, `len` bytes, valid
- * only during the call). Groups are sorted by increasing key, groups with
- * equal keys by `group_id`. May be called several times per group. Must
- * not unwind or `longjmp`.
+ * only during the call). It is called exactly once per group (the result
+ * is cached), so it need not be deterministic. Groups are sorted by
+ * increasing key, groups with equal keys by `group_id`. Must not unwind or
+ * `longjmp`.
  */
 typedef int64_t (*fasm_sort_key_fn)(const char *group_id, size_t len, void *user);
 

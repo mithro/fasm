@@ -17,9 +17,11 @@
 //! `merge_and_sort` (Python: `fasm.output.merge_and_sort`).
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_char, c_void};
 use std::ptr;
 
+use fasm::idstring::IdString;
 use fasm::{merge_and_sort, merge_and_sort_by_key};
 
 use crate::error::{fasm_error, CapiError};
@@ -40,9 +42,10 @@ pub type fasm_zero_fn =
 ///
 /// `group_id` is the group id (the first `.` separated component of the
 /// feature names, e.g. the tile name; NUL terminated, `len` bytes, valid
-/// only during the call). Groups are sorted by increasing key, groups with
-/// equal keys by `group_id`. May be called several times per group. Must
-/// not unwind or `longjmp`.
+/// only during the call). It is called exactly once per group (the result
+/// is cached), so it need not be deterministic. Groups are sorted by
+/// increasing key, groups with equal keys by `group_id`. Must not unwind or
+/// `longjmp`.
 pub type fasm_sort_key_fn =
     Option<unsafe extern "C" fn(group_id: *const c_char, len: usize, user: *mut c_void) -> i64>;
 
@@ -115,12 +118,26 @@ pub unsafe extern "C" fn fasm_file_merge_and_sort_ex(
         let merged = match sort_key_fn {
             None => merge_and_sort(lines, zero)?,
             Some(key_fn) => {
+                // The core sort asks for a key once per comparison, and a
+                // C key need not be deterministic (Rust's sort may panic
+                // on an inconsistent order): call `key_fn` once per group
+                // and cache the result. Group ids are already interned by
+                // the core, so `IdString::new` does not allocate, and
+                // `IdString`'s `Ord` compares the strings (the tie break).
                 let key_buf = RefCell::new(Vec::new());
+                let cache: RefCell<HashMap<IdString, i64>> = RefCell::new(HashMap::new());
                 let key = |group_id: &str| {
-                    // SAFETY: as above.
-                    let key =
-                        with_c_str(&key_buf, group_id, |p, len| unsafe { key_fn(p, len, user) });
-                    (key, group_id.to_owned())
+                    let id = IdString::new(group_id);
+                    let cached = cache.borrow().get(&id).copied();
+                    let key = cached.unwrap_or_else(|| {
+                        // SAFETY: as above.
+                        let key = with_c_str(&key_buf, group_id, |p, len| unsafe {
+                            key_fn(p, len, user)
+                        });
+                        cache.borrow_mut().insert(id, key);
+                        key
+                    });
+                    (key, id)
                 };
                 merge_and_sort_by_key(lines, zero, &key)?
             }
