@@ -162,7 +162,10 @@ difftest:
 # `xcfasm` against prjxray's and f4pga-xc-fasm's (T5.6/T5.7: identical .bit,
 # bitread output and xcfasm results). Needs tests/oracle/setup-xilinx.sh; set ORACLE_DIR
 # to use another checkout's oracle. DIFFTEST_XILINX_ARGS can add e.g.
-# `--jobs N`, `--filter GLOB` or `-v`.
+# `--jobs N`, `--filter GLOB` or `-v`. The Rust tools use the binary
+# database cache of $FASM_XDB_CACHE (default ~/.cache/fasm/db; set
+# FASM_XDB_CACHE=0 to run them without it, see
+# docs/rewrite/DESIGN-xilinx-db.md §8.8).
 xilinx-difftest: DIFFTEST_XILINX_ARGS ?=
 xilinx-difftest:
 	cargo build --release -p fasm-cli

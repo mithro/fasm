@@ -64,9 +64,9 @@ rust-version = "1.88"
 # dependency of fasm (oracle parse trees).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# Content hashes of the source files and the payload of the fasm-xilinx
-# binary database cache (T5.3, docs/rewrite/DESIGN-xilinx-db.md §8.8);
-# used by fasm-xilinx and the fasm-db-cache tool (fasm-cli).
+# Content hashes of the source files and integrity hashes of the
+# fasm-xilinx binary database cache (T5.3, docs/rewrite/DESIGN-xilinx-db.md
+# §8.8, which gives the reasons for this choice).
 blake3 = "1.8"
 
 [workspace.lints.clippy]
