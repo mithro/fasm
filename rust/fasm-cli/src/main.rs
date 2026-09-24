@@ -14,23 +14,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `fasm` command line tool.
+//! `fasm` command line tool: a byte for byte compatible replacement for the
+//! original Python `fasm` console script (`fasm/tool.py`).
 //!
-//! This will become a byte for byte compatible replacement for
-//! `python -m fasm.tool` / the `fasm` console script (same arguments, same
-//! stdout/stderr behaviour, same exit codes), see `docs/rewrite/PLAN.md`.
-//! Argument parsing and behaviour are added in task T2.1; this is only the
-//! workspace skeleton (task T0.3).
+//! ```text
+//! usage: FASM tool [-h] [--canonical] [--parser PARSER] file
+//! ```
+//!
+//! Same arguments (parsed by an emulation of Python's argparse, including
+//! its abbreviations, error messages and help text), same stdout/stderr
+//! output and exit codes: the FASM file is printed back (`--canonical`:
+//! one line per set bit, sorted and deduplicated) followed by an empty
+//! line, and errors reading or parsing it are printed as `Error: ...` on
+//! stdout with exit code 0. The known differences are listed in the CLI
+//! section of `docs/rewrite/COMPAT.md`.
 
-fn main() {
-    // Nothing to do yet: this is the workspace skeleton, argument parsing
-    // and `fasm/tool.py` compatible behaviour land in task T2.1.
-}
+mod argparse;
+mod pystr;
+mod terminal;
+mod tool;
+mod unicode_tables;
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn depends_on_fasm_crate() {
-        assert!(!fasm::VERSION.is_empty());
-    }
+use std::io;
+use std::process::ExitCode;
+
+use pystr::PyStr;
+
+fn main() -> ExitCode {
+    let args: Vec<PyStr> = std::env::args_os()
+        .skip(1)
+        .map(|arg| PyStr::from_os_str(&arg))
+        .collect();
+    let stdout = io::stdout();
+    let stderr = io::stderr();
+    let code = tool::run(
+        &args,
+        terminal::columns,
+        &mut stdout.lock(),
+        &mut stderr.lock(),
+    );
+    ExitCode::from(code)
 }

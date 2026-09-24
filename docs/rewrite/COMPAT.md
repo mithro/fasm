@@ -238,3 +238,71 @@ up as `Box<str>`.
   (`Parse error at 0:0 - Couldn't open file <path>: <OS error>`); ANTLR
   gives `Parse error at 0:0 - Couldn't open file`, textX a
   `FileNotFoundError`.
+
+## Command line tool (`fasm`, `rust/fasm-cli/`, T2.1)
+
+### Rule
+
+The `fasm` binary is a drop in replacement for the original `fasm`
+console script (`fasm/tool.py`): same arguments, and byte for byte the
+same stdout, stderr and exit code, as the original running under Python
+3.11 (the oracle, Python 3.11.15). Its arguments are parsed by an
+emulation of Python 3.11's argparse (`rust/fasm-cli/src/argparse.rs`), not
+by a Rust argument parser, so that every argparse behaviour carries over:
+unambiguous prefixes (`--canon`, `--pars textx`, `--h`), `--opt=value`,
+`--`, `-h` anywhere on the command line, repeated options (the last one
+wins), values that look like negative numbers (`--parser -1`), every usage
+error message (`the following arguments are required: file`,
+`unrecognized arguments: ...`, `argument --parser: expected one
+argument`, `ambiguous option: --=x could match --help, --canonical,
+--parser`, `argument -h/--help: ignored explicit argument 'x'`, with
+Python's `repr()`), non UTF-8 arguments (Python's `surrogateescape`
+decoding; `\udcXX` on stderr, the raw bytes on stdout), and the help and
+usage text wrapped at the terminal width (`COLUMNS`, or the width of the
+terminal on stdout, or 80, like `shutil.get_terminal_size()`). The Unicode
+properties this depends on (`str.isprintable()` for `repr()`, `\d` of the
+negative number pattern, `int()` of `COLUMNS`) come from tables generated
+with the oracle's Python (Unicode 14.0.0,
+`rust/fasm-cli/tools/gen_unicode_tables.py`).
+
+Like the original, the whole file is parsed before anything is printed:
+an invalid file prints only its `Error: ...` line (on stdout, exit code
+0), never part of the output.
+
+`tests/cli/test_cli_compat.py` (`make cli-difftest`) runs both tools over
+the corpus with every option combination, over argparse edge cases and at
+100+ terminal widths, and compares stdout, stderr and exit codes byte for
+byte, modulo the normalisation rules 1 to 3 below (`normalise()` in the
+test).
+
+### Differences
+
+| Case | Original (`fasm/tool.py`) | Rust |
+|---|---|---|
+| Syntax error (rule 1) | `Error: Parse error at L:C - <ANTLR message>` | `Error: Parse error at L:C - <Rust message>`: same `L:C`, own message text (see "Errors" above) |
+| Value range error: `a = 2`, `a[3:0] = 5'h10`, `a[0:1]` (rule 2) | `Error: 'NoneType' object is not iterable` on stdout, and a `ctypes` callback traceback with the `AssertionError` on stderr (default and `--parser antlr`) | `Error: Parse error at L:C - <message>` with the position of the value (or of the `[`), nothing on stderr |
+| Error with `--parser textx` (rule 3) | textX's own messages: `Error: <path>:L:C: Expected ...`, `Error: (2, 1)` (range), `Error: [Errno 2] No such file or directory: 'x'` | the Rust parse error (the Rust tool has one parser for every `--parser` name) |
+| Valid input where textX and ANTLR differ, with `--parser textx` (whitespace only lines, `\"` in annotations, `a b`, ...: see "Parser" above) | textX's result | the ANTLR compatible result |
+| Input only the Rust parser accepts (see "Parser" above; e.g. `# café`) | `Error: 'NoneType' object is not iterable` (ANTLR) | the file is printed |
+| `_` in a plain decimal value (accepted by Rust and textX, see "Parser" above) | `a[7:0] = 1_0`: `Error: Parse error at 1:10 - mismatched input '_' ...`; `a = 1_0`: `Error: Parse error at 1:5 - ...`; `a = 2_1F`: `Error: Parse error at 1:5 - ...` | `a[7:0] = 1_0`: the file is printed (`a[7:0] = 10`); `a = 1_0`: `Error: Parse error at 1:4 - value 10 does not fit in the 1 bit(s) ...`; `a = 2_1F`: `Error: Parse error at 1:7 - unexpected 'F', ...` |
+| `--parser rust` | `Error: Parser 'rust' is not available.` | accepted (the name of the Rust parser in the Rust based Python package) |
+| File that cannot be read | `Error: Parse error at 0:0 - Couldn't open file` | `Error: Parse error at 0:0 - Couldn't open file <path>: <OS error>` (rule 1) |
+| A file that opens but cannot be read: a directory, `EIO` (e.g. `/proc/self/mem`) | the process aborts (SIGABRT, exit code 134, `terminate called after throwing an instance of 'std::__ios_failure'` on stderr); `--parser textx`: `Error: [Errno 21] Is a directory: '<absolute path>'` | `Error: Parse error at 0:0 - Couldn't open file <path>: <OS error>` (`Is a directory (os error 21)`, `Input/output error (os error 5)`), exit code 0 |
+| Non-ASCII file name (`é.fasm`, or non UTF-8 bytes) | `Error: 'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)` (the ANTLR wrapper encodes the name as ASCII) | the file is read |
+| stdout closed early (`fasm big.fasm \| head -1`) | `BrokenPipeError` traceback on stderr, exit code 1 | nothing on stderr, exit code 1. Whether a given run hits the broken pipe at all is timing dependent and differs between the two: the Rust tool writes its output with one `write`, the original writes the text and `print`'s `\n` separately, so with an output that fits in the pipe buffer either one may exit with 0 where the other exits with 1 |
+| `-h`/`--help` with stdout closed (`fasm -h >&-`, `fasm --help --bogus >&-`) | `sys.stdout` is `None`, so argparse prints the help to stderr; exit code 0 | the Rust runtime reopens a closed stdout as `/dev/null`: the help is discarded, nothing on stderr; exit code 0 (not emulated: it depends on how the runtime handles closed standard descriptors; `test_help_with_closed_stdout` pins both behaviours) |
+| Other error writing stdout (`ENOSPC`, ...) | traceback on stderr, exit code 1 | `fasm: error writing to stdout: <error>` on stderr, exit code 1 |
+| Non UTF-8 bytes in a `--parser` value that is printed back (`Error: Parser '...' is not available.`) | written back raw in the C/POSIX locale (Python's UTF-8 mode, what the oracle runs with) and `C.UTF-8`; under another UTF-8 locale Python's stdout is strict and the tool dies with a `UnicodeEncodeError` traceback | always written back raw |
+| Help/usage width when stdout is a terminal and `COLUMNS` is not set, on non Unix platforms | the terminal width | 80 columns |
+| Python older than 3.10 | help heading `optional arguments:` | `options:` (Python 3.10+) |
+| `COLUMNS` with more than 4300 digits (leading zeros included) | `int()` raises `ValueError` above `sys.int_max_str_digits` (default 4300; `PYTHONINTMAXSTRDIGITS` and `-X int_max_str_digits` change it), so `COLUMNS` is ignored | the default limit of 4300 is applied; `PYTHONINTMAXSTRDIGITS` is not honoured |
+
+Precedence of errors: the original ANTLR parser checks the syntax of the
+whole file before it decodes any value, so a syntax error anywhere in the
+file is reported instead of an earlier value range error (`a = 2\nb c`:
+`Parse error at 2:2`). The Rust parser stops at the first error in file
+order; the tool emulates the original precedence: after a value range
+error it resumes parsing after that line and reports the first later
+error that is not a value range error, if there is one
+(`tool::error_to_report` in `rust/fasm-cli/src/tool.rs`), and the first
+value range error otherwise.

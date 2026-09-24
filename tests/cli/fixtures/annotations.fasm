@@ -1,0 +1,6 @@
+{ a = "b" }
+A { a = "b", c = "d" } # c
+B{x="1",y="2"}
+C { e = "q\\s" }
+D { m = "multi
+line" }

@@ -181,6 +181,19 @@ rust-check: rust-lint rust-doc rust-test
 
 .PHONY: rust-check
 
+# Differential test of the Rust `fasm` binary against the original Python
+# tool (tests/cli/test_cli_compat.py): identical stdout, stderr and exit
+# code over the FASM corpus and argparse edge cases. Needs the oracle venv
+# (tests/oracle/setup.sh); to use another checkout's oracle (e.g. from a git
+# worktree) set ORACLE_DIR to its tests/oracle directory.
+ORACLE_DIR ?= $(TOP_DIR)/tests/oracle
+
+cli-difftest:
+	cargo build --release -p fasm-cli
+	FASM_ORACLE=$(ORACLE_DIR)/fasm-oracle $(ORACLE_DIR)/venv/bin/pytest tests/cli
+
+.PHONY: cli-difftest
+
 
 # Upload to PyPI servers
 # ------------------------------------------------------------------------
