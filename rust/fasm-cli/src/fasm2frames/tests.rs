@@ -173,6 +173,7 @@ fn arguments() {
         xray_database_dir: Some(PyStr::from_str("/db/")),
         xray_database: Some(PyStr::from_str("artix7")),
         xray_part: Some(PyStr::from_str("xc7a35tcsg324-1")),
+        ..Default::default()
     };
     let v = parse(&["a"], &env);
     assert_eq!(s(&v, "db_root").as_deref(), Some("/db/artix7"));

@@ -36,12 +36,19 @@
 //! `<exception type>: <message>` (for example
 //! `prjxray.fasm_assembler.FasmLookupError: Segment DB ...`), and exits
 //! with 1. See the `fasm2frames` section of `docs/rewrite/COMPAT.md`.
+//!
+//! The database is opened through the binary cache of
+//! [`fasm_xilinx::cache`] as configured by the environment
+//! (`FASM_XDB_CACHE`, `FASM_XDB_CACHE_VERBOSE`; no command line flag, the
+//! command line is the reference one): the output is identical with and
+//! without it.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
 use fasm::ParseError;
+use fasm_xilinx::cache::CacheOptions;
 use fasm_xilinx::{
     dump_frames_sparse, fasm2frames, read_roi_design, AssemblerError, Database, Fasm2FramesOptions,
 };
@@ -49,7 +56,8 @@ use fasm_xilinx::{
 use crate::argparse::{Argument, ArgumentParser, Outcome, Values};
 use crate::pystr::PyStr;
 
-/// The environment variables `prjxray.util` reads for the defaults.
+/// The environment variables `prjxray.util` reads for the defaults, and
+/// the database cache settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Environment {
     /// `XRAY_DATABASE_DIR`.
@@ -58,6 +66,9 @@ pub struct Environment {
     pub xray_database: Option<PyStr>,
     /// `XRAY_PART`.
     pub xray_part: Option<PyStr>,
+    /// The binary database cache ([`CacheOptions::from_env`] for the
+    /// process; disabled by default).
+    pub db_cache: CacheOptions,
 }
 
 impl Environment {
@@ -68,6 +79,7 @@ impl Environment {
             xray_database_dir: get("XRAY_DATABASE_DIR"),
             xray_database: get("XRAY_DATABASE"),
             xray_part: get("XRAY_PART"),
+            db_cache: CacheOptions::from_env(),
         }
     }
 }
@@ -192,7 +204,7 @@ pub fn run(
             return 2;
         }
     };
-    let code = match assemble(&values, stdout, stderr) {
+    let code = match assemble(&values, &env.db_cache, stdout, stderr) {
         Ok(()) => 0,
         Err(message) => {
             let _ = stderr.write_all(message.as_bytes());
@@ -210,12 +222,17 @@ pub(crate) fn path(values: &Values, dest: &str) -> PathBuf {
 
 /// `main()` after `parse_args`: the error text (the last line of the
 /// Python traceback, with its newline) on failure.
-fn assemble(values: &Values, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<(), String> {
+fn assemble(
+    values: &Values,
+    cache: &CacheOptions,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> Result<(), String> {
     // `f_out=open(args.fn_out, 'w')` is evaluated before `fasm2frames()`.
     let fn_out = path(values, "fn_out");
     let file = create_output(&fn_out)?;
     let fn_in = path(values, "fn_in");
-    let frames = build_frames(values, Some(&fn_in), stderr)?;
+    let frames = build_frames(values, Some(&fn_in), cache, stderr)?;
     write_frm_file(&frames, file)?;
     if values.flag("debug") {
         dump_frames_sparse(&frames, stdout).map_err(|e| write_error(&e))?;
@@ -249,17 +266,23 @@ pub(crate) fn write_frm_file(frames: &fasm_xilinx::Frames, file: File) -> Result
 
 /// `fasm2frames()` of `xc_fasm.fasm2frames` with the arguments of
 /// `values` (`db_root`, `part`, `sparse`, `roi`, `emit_pudc_b_pullup`):
-/// opens the database and assembles `fn_in`, or returns the traceback
-/// line of the error. `fn_in` of `None` (`xcfasm` without `--fn_in`)
-/// fails like the reference when the FASM file would be parsed.
+/// opens the database (through `cache`, which never changes the result)
+/// and assembles `fn_in`, or returns the traceback line of the error.
+/// `fn_in` of `None` (`xcfasm` without `--fn_in`) fails like the reference
+/// when the FASM file would be parsed.
 pub(crate) fn build_frames(
     values: &Values,
     fn_in: Option<&Path>,
+    cache: &CacheOptions,
     stderr: &mut dyn Write,
 ) -> Result<fasm_xilinx::Frames, String> {
     let traceback = |e: AssemblerError| format!("{}\n", e.traceback_line());
-    let db = Database::open(&path(values, "db_root"), Some(&path_str(values, "part")))
-        .map_err(|e| traceback(e.into()))?;
+    let db = Database::open_cached(
+        &path(values, "db_root"),
+        Some(&path_str(values, "part")),
+        cache,
+    )
+    .map_err(|e| traceback(e.into()))?;
     let options = Fasm2FramesOptions {
         sparse: values.flag("sparse"),
         roi: values.str("roi").map(|r| PathBuf::from(r.to_os_string())),
