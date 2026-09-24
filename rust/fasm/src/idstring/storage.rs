@@ -198,7 +198,6 @@ impl Table {
     }
 
     /// Number of entries in the table.
-    #[cfg(test)]
     pub(crate) fn len(&self) -> u32 {
         self.next.load(Ordering::Relaxed)
     }
