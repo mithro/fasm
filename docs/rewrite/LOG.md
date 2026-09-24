@@ -354,3 +354,11 @@ what happened, branch/commit references, open issues.
   public API of Grid::from_json_slice, Part::new visibility, workspace dep
   comment.
 * T5.4 (frame assembler) started.
+* T3.2 implemented on branch `worktree-agent-a88301b57c5b468a9` (6 commits):
+  legacy ANTLR/Cython/CMake build, setup.py, MANIFEST.in, update_version.py,
+  third_party submodules, conda Makefile targets and the four legacy Python
+  workflows removed (grammars moved to docs/specification/antlr/); new
+  .github/workflows/python.yml (lint, test 3.9/3.11/3.13, abi3 manylinux
+  wheels x86_64+aarch64, sdist, trusted publishing on v* tags); tox.ini for
+  tox 4; .flake8; README rewritten. Found and fixed a NameError in the
+  missing-extension fallback path. In review.
