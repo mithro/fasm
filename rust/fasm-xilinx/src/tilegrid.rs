@@ -32,9 +32,9 @@ use crate::json::{JStr, OrderedMap, PyInt};
 
 /// A range of one of the flat arrays of [`Grid`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Span {
-    start: u32,
-    len: u32,
+pub(crate) struct Span {
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 impl Span {
@@ -84,7 +84,7 @@ pub struct BitsBlock {
     /// Number of words (`words`), same unit.
     pub words: u32,
     /// Index of the alias in the grid (see [`Grid::alias`]).
-    alias: Option<u32>,
+    pub(crate) alias: Option<u32>,
 }
 
 impl BitsBlock {
@@ -103,7 +103,7 @@ pub struct BitAlias {
     pub tile_type: IdString,
     /// Word offset into the aliased tile type's bits.
     pub start_offset: u32,
-    sites: Span,
+    pub(crate) sites: Span,
 }
 
 /// One tile of the grid (`grid_types.GridInfo` + name and location).
@@ -123,10 +123,10 @@ pub struct Tile {
     /// Index of the tile type in the database, `u32::MAX` if the family
     /// has no `tile_type_<TYPE>.json` for it.
     pub(crate) type_index: u32,
-    bits: Span,
-    sites: Span,
-    pin_functions: Span,
-    prohibited_sites: Span,
+    pub(crate) bits: Span,
+    pub(crate) sites: Span,
+    pub(crate) pin_functions: Span,
+    pub(crate) prohibited_sites: Span,
 }
 
 impl Tile {
@@ -143,15 +143,15 @@ impl Tile {
 /// blocks, sites, pin functions, prohibited sites, alias site maps) is
 /// stored in flat arrays that tiles refer to by range, so the grid is a
 /// handful of plain vectors (cheap to build, easy to serialise later).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Grid {
-    tiles: Vec<Tile>,
-    by_name: HashMap<IdString, u32>,
-    by_loc: HashMap<(i32, i32), u32>,
-    bits: Vec<BitsBlock>,
-    aliases: Vec<BitAlias>,
-    pairs: Vec<(IdString, IdString)>,
-    names: Vec<IdString>,
+    pub(crate) tiles: Vec<Tile>,
+    pub(crate) by_name: HashMap<IdString, u32>,
+    pub(crate) by_loc: HashMap<(i32, i32), u32>,
+    pub(crate) bits: Vec<BitsBlock>,
+    pub(crate) aliases: Vec<BitAlias>,
+    pub(crate) pairs: Vec<(IdString, IdString)>,
+    pub(crate) names: Vec<IdString>,
 }
 
 impl Grid {

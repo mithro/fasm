@@ -36,7 +36,7 @@ use crate::yaml::{self, Node, YamlError};
 pub struct ConfigBus {
     /// The bus.
     pub block_type: BlockType,
-    columns: Vec<(u32, u32)>,
+    pub(crate) columns: Vec<(u32, u32)>,
 }
 
 impl ConfigBus {
@@ -59,7 +59,7 @@ pub struct ConfigRow {
     /// Row number as keyed in `part.yaml` (see
     /// [`FrameAddress::row_index`]).
     pub row: u32,
-    buses: Vec<ConfigBus>,
+    pub(crate) buses: Vec<ConfigBus>,
 }
 
 impl ConfigRow {
@@ -780,7 +780,7 @@ fn parse_package_pins(text: &str) -> Result<Vec<PackagePin>, (usize, String)> {
 /// entry the tile `HCLK_IOI3_<loc>`, then the tile of every package pin.
 /// A tile's bank is the last one assigned; tiles of a bank are kept in
 /// first seen order without duplicates.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BanksTilesRegistry {
     banks: Vec<(IdString, Vec<IdString>)>,
     bank_index: HashMap<IdString, u32>,

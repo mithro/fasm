@@ -122,8 +122,8 @@ pub struct SegbitsEntry {
     /// The bus: [`BlockType::ClbIoClk`] for `segbits_<type>.db`,
     /// [`BlockType::BlockRam`] for `segbits_<type>.block_ram.db`.
     pub block_type: BlockType,
-    start: u32,
-    len: u32,
+    pub(crate) start: u32,
+    pub(crate) len: u32,
 }
 
 /// The result of [`TileSegbits::feature_to_bits`].
@@ -145,19 +145,19 @@ pub enum SegbitsMatch<'a> {
 /// Storage is flat (all bits of all entries in one `Vec`, entries refer to
 /// ranges of it) so the whole table can later be written to the binary
 /// cache as a few arrays.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TileSegbits {
-    entries: Vec<SegbitsEntry>,
-    bits: Vec<SegBit>,
+    pub(crate) entries: Vec<SegbitsEntry>,
+    pub(crate) bits: Vec<SegBit>,
     /// Exact name -> entry; the `CLB_IO_CLK` entry wins over a
     /// `BLOCK_RAM` entry of the same name (dict order in prjxray).
-    by_name: HashMap<IdString, u32>,
+    pub(crate) by_name: HashMap<IdString, u32>,
     /// (`NAME` of `NAME[N]`, N) -> entry (prjxray `feature_addresses`;
     /// `BLOCK_RAM` wins over `CLB_IO_CLK`, it is inserted later).
-    addressed: HashMap<(IdString, u32), u32>,
-    ppips: Vec<(IdString, PpipType)>,
-    ppip_index: HashMap<IdString, PpipType>,
-    foreign_lines: usize,
+    pub(crate) addressed: HashMap<(IdString, u32), u32>,
+    pub(crate) ppips: Vec<(IdString, PpipType)>,
+    pub(crate) ppip_index: HashMap<IdString, PpipType>,
+    pub(crate) foreign_lines: usize,
 }
 
 impl TileSegbits {

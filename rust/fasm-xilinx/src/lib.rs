@@ -38,8 +38,10 @@
 //! * the Series7 bitstream writer and reader ([`bitstream`]: prjxray's
 //!   `xc7frames2bit` and the library behind `bitread`).
 //!
-//! Still to come (tasks T5.3, T6.x): a binary cache of a loaded database
-//! and UltraScale / UltraScale+ bitstreams.
+//! * a binary cache of opened databases ([`cache`],
+//!   [`Database::open_cached`]), which the command line tools use.
+//!
+//! Still to come (tasks T6.x): UltraScale / UltraScale+ bitstreams.
 //!
 //! The file formats and the reference behaviour are described in
 //! `docs/rewrite/DESIGN-xilinx-db.md`.
@@ -78,6 +80,7 @@
 mod arch;
 mod assembler;
 pub mod bitstream;
+pub mod cache;
 mod db;
 mod error;
 mod fasm2frames;
