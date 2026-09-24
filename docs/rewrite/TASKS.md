@@ -28,9 +28,17 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 1: Core library crate `fasm`
 
-- [r] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
+- [x] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
-- [ ] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
+- [ ] T1.1b idstring follow ups from review (optional items): strengthen
+      `concurrent_lookups_while_tables_grow` into a positive publication test;
+      fast path for repeat interning of overflowed names (check overflow table
+      before locking); `# Panics` docs on `Ord`/`Display`/`PartialEq<str>`
+      about the GLOBAL interner and private interner handles; rename or
+      loudly document `IdString::get` as not a membership test; document that
+      raw handle values are insertion order dependent; zero allocation test;
+      `Display` padding test (after T1.1).
+- [~] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
       `SetFasmFeature`, `Annotation`, `FasmLine` + tests.
 - [ ] T1.3 `parser` module: tokenizer + line parser implementing the full
       grammar with exact ANTLR/textX compatible acceptance and error

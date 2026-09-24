@@ -86,3 +86,10 @@ what happened, branch/commit references, open issues.
   tiles) which were corrected (commits f8aac80, e1998d4; invariant test
   added as item 19 of §8.3). Merged with --no-ff.
 * T5.8 (reference Xilinx tools + database fetch scripts) started.
+* T1.1 done: Opus review (APPROVE, no required changes) ran the tests per
+  commit, a scratch stress crate (publication test under weak memory,
+  mixed overflow ordering, counting allocator: zero allocations on hit /
+  get / with_str / Display / cmp) and Miri on the lock free index; no race,
+  data loss or user reachable panic found. Merged with --no-ff; 44 tests
+  pass, fmt/clippy clean. Optional suggestions recorded as T1.1b.
+* T1.2 (model module) started.
