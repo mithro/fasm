@@ -483,3 +483,14 @@ what happened, branch/commit references, open issues.
   bitread + 45 xcfasm + 6 reference bitstreams all identical; cli-difftest
   1535 passed. xc7a200t dense .bit in 8-17 ms (0.12 s whole binary vs
   0.25 s reference). In review.
+* T7.2 done: fixes 8ad7dc8 (committed yosys `$buf` patch applied
+  idempotently, pipefail bug, --help), 259f0e7/7a5f132 (READMEs name the
+  snap prjxray-db: snap 0.8.2, Info.md "Project X-Ray 4c157493,
+  2021-12-14"), 55cc5de (e2e test uses the snap db, never the pinned one;
+  fixed a wrong `fasm parse` invocation), b31b8c7 (docs). Merged with
+  --no-ff; `pytest tests/e2e`: 59 passed in the main tree (18/18 designs'
+  frames identical with Rust fasm2frames + difftest over the arty
+  subset); corpus 11 MiB; worktree removed. Note from the implementer:
+  LiteX SoC builds are not bit for bit deterministic across runs on this
+  toolchain; the committed FASM is the frozen reference.
+* T1.4b + T1.3b + T1.6 (core crate hardening) started as one task.
