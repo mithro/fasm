@@ -48,3 +48,4 @@ python-source = "."
 module-name = "fasm._fasm_rs"
 bindings = "pyo3"
 strip = true
+exclude = ["fasm/version.py", "fasm/**/__pycache__/**"]

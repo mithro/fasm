@@ -333,6 +333,6 @@ namedtuples, with the field types of the ANTLR parser (a `list` of lines,
 | NUL in `parse_fasm_string` input | the rest of the input is dropped | parsed (see "Non-ASCII input") |
 | `fasm --parser antlr` (`fasm/tool.py`) | the ANTLR parser | the Rust parser when the ANTLR one is not built (like the Rust CLI); `--parser rust` is accepted |
 | Neither the Rust nor the ANTLR parser importable | `RuntimeWarning` "Unable to import fast Antlr4 parser implementation. ..." and the textX parser | the same warning text, followed by a paragraph with the Rust extension's `ImportError`, and the textX parser |
-| `fasm.__version__` | from `fasm/version.py` (`update_version.py`) | from `fasm/version.py` when present (source tree), otherwise from the package metadata (`0.1.0.dev0` for now) |
+| `fasm.__version__` | from `fasm/version.py` (`update_version.py`) | from the package metadata (`0.1.0.dev0` for now); `fasm/version.py` is no longer tracked or packaged (a locally generated one still takes precedence when importing from the source tree) |
 | New API | | `fasm.parser.rust.parse_fasm_bytes`, `fasm.parser.rust.FasmParseError`, `fasm._fasm_rs.fasm_tuple_to_string` (fast path, returns `None` when it cannot guarantee the Python result) |
 | Cyclic garbage collector while building a result of 256 lines or more | runs | paused, then restored (`gc.callbacks` do not fire meanwhile) |
