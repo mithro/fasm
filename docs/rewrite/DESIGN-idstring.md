@@ -1,6 +1,7 @@
 # Design: `fasm::idstring`
 
-Status: implemented in task T1.1 (`rust/fasm/src/idstring/`).
+Status: implemented in task T1.1 (`rust/fasm/src/idstring/`); intern hit
+path sped up, `get` renamed to `lookup` and `intern_bytes` added in T1.1b.
 
 ## Purpose
 
@@ -102,6 +103,13 @@ Three levels are used with uneven index widths:
 Because every string maps to exactly one handle (see *Canonical form*),
 `Eq` and `Hash` are derived on the integer.
 
+The entry numbers, and therefore the handle values, are handed out in
+first-come order. The same string gets a different value in another run or
+with another thread schedule, so raw values, `Hash` output and the
+iteration order of a `HashMap<IdString, _>` are not deterministic across
+runs. Reproducible output must be ordered with `Ord` (string order, see
+*Ordering*); the `IdString` and `Interner` docs say so.
+
 ## Splitting rule and round trip
 
 `s` is split at its first and second `.` (if any):
@@ -144,27 +152,51 @@ Table
                         their own leaked allocation
 ```
 
-**Intern** (`Interner::intern`): split the string into its levels (a word at
-a time search for `.`), then for each level hash the piece once and probe the
-shard index *without any lock*: load `current`, walk the linear probe
-sequence from `tag & mask`, and for a bucket whose 32 bit tag matches read
-the candidate's text through `slots` and compare. On a hit the entry number
-is returned without allocating or writing anything. On a miss the shard's
-writer mutex is taken, the probe is repeated on the current generation
-(authoritative, only lock holders change it), the index is grown if it would
-exceed 3/4 load, an entry number is reserved from `next` (a compare and swap
-loop that refuses to go past the limit), the text is copied into the shard
-arena, the slot is published with `OnceLock::set` and finally the bucket is
-written with `Release` ordering.
+**Intern** (`Interner::intern`) has a lock free hit path and an out of line
+insertion path.
+
+* *Hit path* (`find_levels`, also used by `lookup` and `intern_bytes`):
+  split the string as bytes into its levels (a word at a time search for
+  `.`; the last partial word is read as an overlapping word instead of a
+  byte loop), then for each level hash the piece once and probe the shard
+  index *without any lock*: load `current`, walk the linear probe sequence
+  from `tag & mask`, and for a bucket whose 32 bit tag matches read the
+  candidate's text through `slots` and compare (an inlined word compare,
+  cheaper than a `memcmp` call for 5 to 30 byte texts). If every level is
+  found, the handle is returned without allocating or writing anything.
+* *Insertion path* (`intern_missing`, `#[cold]`, only when some level was
+  not found): first a lock free probe of the overflow table (see *Overflow*),
+  then for each level the probe is repeated and, if the piece is still
+  missing, the shard's writer mutex is taken, the probe is repeated on the
+  current generation (authoritative, only lock holders change it), the index
+  is grown if it would exceed 3/4 load, an entry number is reserved from
+  `next` (a compare and swap loop that refuses to go past the limit), the
+  text is copied into the shard arena, the slot is published with
+  `OnceLock::set` and finally the bucket is written with `Release`
+  ordering.
+
+The hit path works on bytes, so **`intern_bytes(&[u8])` (and
+`IdString::from_bytes`) validate UTF-8 only on the insertion path**: a hit
+means every level equals interned text, which is valid UTF-8, and the
+levels joined by `.` are valid UTF-8 too (a `.` never splits a multi-byte
+sequence, and a piece holding half of one can never equal interned text).
+A parser can therefore intern names straight from its input buffer at the
+cost of `intern(&str)`.
 
 **Growing the index** builds generation `g + 1` (twice as large) from
 generation `g` under the writer lock and publishes it with a `Release` store
 of `current`. Old generations are never modified again and are kept until the
 interner is dropped because readers may still be probing them; this at most
 doubles the index memory. A reader that probes an old generation can miss an
-entry added a moment ago; `intern` then finds it under the lock, and `get`
-simply reports it as not yet present (there is no happens-before relation
-with that insertion anyway).
+entry added a moment ago; `intern` then finds it under the lock, and
+`lookup` simply reports it as not yet present (there is no happens-before
+relation with that insertion anyway). Once the interning call happens-before
+the reader's lookup (thread join, a lock, a `Release` store read with
+`Acquire`), the reader's `Acquire` load of `current` sees the generation the
+entry was written to or a later one (a later one is built under the lock
+from a copy that includes it), so it finds the entry; the test
+`published_names_are_found_while_tables_grow` checks exactly this while all
+tables and their generations grow.
 
 **Resolve**: `slots` is an append only segmented array whose segments never
 move and whose entries are written exactly once, so reading an entry is two
@@ -180,7 +212,23 @@ hasher of `hashbrown`) is several times faster than `SipHash` on 10 to 30
 byte keys. A per interner random seed keeps adversarial FASM input from
 forcing collisions. The seed only affects the index layout, never the handles
 (entry numbers are allocation order), so ids are deterministic for a given
-insertion order.
+insertion order. Each piece is hashed with a single `Hasher::write` of its
+bytes (`hash_one(&str)` also writes a terminator byte, which costs a second
+multiplication); the insertion path hashes the same bytes, so both paths
+agree.
+
+**Thread local cache: considered and rejected.** A per thread, per level,
+direct mapped cache of recently found texts (64 entries of `(interner id,
+&'static str, entry number)` per level, 6 KiB per thread) was prototyped to
+skip the shared index when consecutive lines share their tile or pip names.
+It executed about the same number of instructions as the plain probe
+(callgrind: 687 M vs 703 M for the same run) but was 50 % *slower* (29 to
+45 ns per hit on names with small tables, 48 to 75 ns on pip heavy names):
+whether a level hits the cache is data dependent, so the branch mispredicts
+cost more than the probe it saves, and the probe of a small table is
+already in L1. It would only pay off on input with very long runs of equal
+components, and it adds a thread local access (a function call in a
+`cdylib` such as the Python extension).
 
 **Why not `RwLock` + `hashbrown::HashTable<u32>`**: that was the first
 implementation (see the git history). Profiling showed that the two atomic
@@ -220,8 +268,19 @@ integer `Eq`/`Hash` correct:
   missing from a full table, and that component can never be added later:
   the string can never become hierarchical. Conversely, once all components of
   a string are present, every later intern finds them all.
-* `get` (lookup without interning) checks the level tables first and the
-  overflow table only if some component is missing.
+* `lookup` (without interning) checks the level tables first and the
+  overflow table only if some component is missing. A hit in either is the
+  canonical handle: all components present means the string was never
+  overflowed, and an overflowed string can never become hierarchical.
+* For the same reason, interning an already overflowed string again needs
+  no lock: when the lock free level lookup misses, `intern` probes the
+  overflow table (lock free) before taking any shard lock and returns the
+  overflow handle on a hit. A miss there (not overflowed, or inserted
+  concurrently and not visible yet) takes the locked path, which decides
+  authoritatively. The probe is skipped while the overflow table is empty.
+  A test holds every writer lock of an interner and checks that known
+  hierarchical and overflowed names are still interned from another
+  thread.
 
 Components inserted into earlier levels before a later level turned out to be
 full stay in their tables (harmless, they may be shared by later names).
@@ -259,8 +318,8 @@ pub struct IdString(NonZeroU64);        // Copy, Eq, Hash, Ord, Send, Sync
 
 impl IdString {
     pub fn new(s: &str) -> IdString;                           // interns
-    pub fn from_bytes(b: &[u8]) -> Result<IdString, Utf8Error>;
-    pub fn get(s: &str) -> Option<IdString>;                   // no interning
+    pub fn from_bytes(b: &[u8]) -> Result<IdString, Utf8Error>; // intern_bytes
+    pub fn lookup(s: &str) -> Option<IdString>;                // no interning
     pub fn resolve(self) -> String;
     pub fn with_str<R>(self, f: impl FnOnce(&str) -> R) -> R;
     pub fn resolved(self) -> Resolved;
@@ -279,7 +338,8 @@ impl Interner {
     pub const fn new() -> Interner;
     pub const fn with_level_limit(limit: u32) -> Interner;
     pub fn intern(&self, s: &str) -> IdString;
-    pub fn get(&self, s: &str) -> Option<IdString>;
+    pub fn intern_bytes(&self, b: &[u8]) -> Result<IdString, Utf8Error>;
+    pub fn lookup(&self, s: &str) -> Option<IdString>;
     pub fn resolved(&self, id: IdString) -> Resolved;
     pub fn resolve(&self, id: IdString) -> String;
     pub fn with_str<R>(&self, id: IdString, f: impl FnOnce(&str) -> R) -> R;
@@ -309,11 +369,15 @@ impl Resolved {
 }
 ```
 
-* `get(s)` returns the handle `s` *would* have if it can be produced without
-  adding anything to the tables. That is the case for every string interned
-  before, but also for a string never interned whole whose levels are all
-  known (after `A.B.C` and `X.Y`, `get("A.Y")` is `Some`). It is a cheap
-  lookup, not a set membership test.
+* `lookup(s)` returns the handle `s` *would* have if it can be produced
+  without adding anything to the tables. That is the case for every string
+  interned before, but also for a string never interned whole whose levels
+  are all known (after `A.B.C` and `X.Y`, `lookup("A.Y")` is `Some`). It is
+  a cheap lookup, **not a set membership test** (it was called `get` before
+  T1.1b; renamed because `get` suggested one).
+* `intern_bytes(b)` / `IdString::from_bytes(b)` equal
+  `intern(str::from_utf8(b)?)` but validate UTF-8 only for names that are
+  not known yet (see *Interner*).
 * `with_str` passes a single piece handle (one component, or overflowed)
   directly; other names up to 1024 bytes are joined in a reused per thread
   `String`, so there is no heap allocation in steady state. Longer names and
@@ -327,10 +391,16 @@ impl Resolved {
   `p` followed by `.` (a prefix aligned on component boundaries).
 * `stats()` reports entries per table and the exact heap bytes the tables
   allocated (text, slots, index generations); used by the benchmark.
-* All methods on `IdString` use `GLOBAL`. A handle created by a private
-  `Interner` must only be used through that interner's methods; using it with
-  another interner either panics (unknown entry) or yields another string.
-  Handles do not record their interner to keep them 8 bytes.
+* All methods on `IdString` use `GLOBAL`, and so do its `Display`, `Debug`,
+  `Ord`/`PartialOrd` and `PartialEq<str>` impls (documented under
+  `# Panics` on each). A handle created by a private `Interner` must only be
+  used through that interner's methods; using it with another interner
+  either panics (unknown entry) or yields another string. Handles do not
+  record their interner to keep them 8 bytes.
+* No allocation once names are known: interning them again (by `&str` or
+  bytes), `lookup`, `with_str`, `Display`/`Debug` (with or without padding),
+  `PartialEq<str>`, `Ord` and `components` allocate nothing. Checked with a
+  counting global allocator in `rust/fasm/tests/idstring_alloc.rs`.
 
 ## Trade offs and alternatives considered
 
@@ -348,45 +418,63 @@ impl Resolved {
   would make resolve slower; FASM tools are batch processes, so leaking the
   (small) component tables is the right trade.
 * **Interning cost**: an intern hit does three hash lookups, so it costs
-  about twice a single whole-string `HashMap` lookup when everything is in
-  cache, and less than one when the whole-string map would not fit in cache
-  (see below). The design optimises memory and handle operations
-  (`Eq`/`Hash`/copy) rather than the one-time intern.
+  about 1.4 times a single whole-string `HashMap` lookup when everything is
+  in cache, and less than half of one when the whole-string map would not
+  fit in cache (see below). The design optimises memory and handle
+  operations (`Eq`/`Hash`/copy) rather than the one-time intern.
 
 ## Benchmarks
 
-Machine: 4 vCPU Intel Xeon @ 2.10 GHz (cloud VM), Rust 1.94.1, release
-profile. `cargo bench -p fasm --bench idstring` (harness-less, best of 5
-rounds; numbers vary by about 10 % between runs).
+Machine: 4 vCPU Intel Xeon @ 2.10 GHz (cloud VM, shared with other jobs),
+Rust 1.94.1, release profile. `cargo bench -p fasm --bench idstring`
+(harness-less, best of 5 rounds; numbers vary by about 10 % between runs,
+the 8 thread figure by more). "T1.1" is the original implementation, "T1.1b"
+the current one; both binaries were run alternately in the same session and
+the table shows typical values of three runs.
 
 **Default input**: the 3 distinct feature names of `examples/many.fasm`, each
 repeated over a 150 x 150 tile grid (`INT_L_X{x}Y{y}.SW6BEG0.WW2END0`, ...):
 67,500 distinct names, 32.5 bytes on average, 67,500 distinct tile names.
 
-| operation                                   | ns/op  |
-|---------------------------------------------|-------:|
-| intern, miss (new name, new tile)           | 181    |
-| intern, hit                                 | 83     |
-| intern, hit, 8 threads (wall clock / ops)   | 35     |
-| `get`, hit                                  | 73     |
-| `with_str`                                  | 21     |
-| `resolve` (new `String`)                    | 29     |
-| sort `Vec<IdString>` (per element)          | 170    |
-| sort `Vec<String>` (per element)            | 66     |
-| `HashMap<String, u32>::get` (baseline)      | 36     |
+| operation                                   | T1.1 ns/op | T1.1b ns/op |
+|---------------------------------------------|-----------:|------------:|
+| intern, miss (new name, new tile)           | 178        | 181         |
+| intern, hit                                 | 82         | 53          |
+| intern, hit, 8 threads (wall clock / ops)   | 35-52      | 25-34       |
+| `intern_bytes`, hit                         | -          | 53          |
+| `from_utf8` + `intern`, hit                 | -          | 59          |
+| `lookup` (`get` in T1.1), hit               | 80         | 52          |
+| `with_str`                                  | 20         | 20          |
+| `resolve` (new `String`)                    | 29         | 28          |
+| sort `Vec<IdString>` (per element)          | 170        | 170         |
+| sort `Vec<String>` (per element)            | 66         | 66          |
+| `HashMap<String, u32>::get` (baseline)      | 38         | 38          |
+
+The hit path is about 1.55 times faster. The miss path is a few percent
+slower: it now probes the missing level once more (lock free, in
+`find_levels`) before the insertion path repeats the probe and takes the
+lock. Instruction counts (callgrind) of a hit went from about 710 to 520.
+
+**Pip heavy names** (scratch program, 200,000 names shaped like the parser
+benchmark's `pips` input, `INT_L_X{x}Y{y}.{dst}.{src}`, 15,251 tiles):
+intern hit 75 -> 48 ns, `from_bytes` hit 83 -> 52 ns (it no longer runs a
+separate UTF-8 pass).
 
 Interner heap: 6.28 MB = 93 bytes per distinct table entry (here every name
 has its own tile, so also per name). For the 67,500 entry level 0 table this
 splits into slots 46.6 bytes (24 byte `OnceLock<&str>`, segment 10 just
 started so half of it is unused), index 31 bytes (8 byte buckets, current plus
-old generations) and text plus arena slack about 15 bytes.
+old generations) and text plus arena slack about 15 bytes. T1.1b changed no
+data structure: the heap use is byte for byte the same.
 
 **prjxray sample**: `FASM_IDSTRING_BENCH_FILE` with 2,000,000 features drawn
 at random from the full `xc7a200t` feature space (38,924 / 1,842 / 2,104
-distinct level entries): intern miss 111 ns, hit 95 ns, 8 threads 27 ns,
-`get` 93 ns, `with_str` 34 ns, `resolve` 41 ns, sort 260 ns/element vs 197
-for `String`, and `HashMap<String, u32>::get` 188 ns (its 2M entries do not
-fit in cache).
+distinct level entries), T1.1 -> T1.1b: intern miss 106 -> 78 ns (most
+levels of a new name are known), hit 95 -> 68 ns, 8 threads 34-44 -> 27-30
+ns, `lookup` 93 -> 68 ns, `intern_bytes` hit 68 ns (`from_utf8` + `intern`
+83 ns); unchanged: `with_str` 34 ns, `resolve` 41 ns, sort 260 ns/element
+vs 197 for `String`, and `HashMap<String, u32>::get` 175 ns (its 2M entries
+do not fit in cache).
 Interner heap 4.0 MB = **2.0 bytes per distinct name** (plus the 8 byte
 handle), versus 56 bytes for a `String` (24 byte header + text, before
 allocator overhead).
@@ -398,4 +486,13 @@ including I/O). Level tables: 46,611 / 6,888 / 7,790 entries (exactly the
 measured distinct counts, no overflow), interner heap 5.05 MB (82 bytes per
 entry, 0.06 bytes per name), `Vec<IdString>` 721 MB, peak RSS 713 MB. The
 same names as `Vec<String>` would need more than 5 GB. Sorting 10 million of
-the handles took 2.5 s (252 ns per element).
+the handles took 2.5 s (252 ns per element). (Measured with T1.1.)
+
+**Effect on the parser** (measured on a scratch copy of the T1.3 parser
+branch with the T1.1b interner, 100 MB inputs, warm passes): `pips`
+165-171 -> 178-190 MB/s, `mixed` 266-284 -> 284-299 MB/s. Interning went
+from 38.5 % to 26 % of the parser's instructions (callgrind, all passes).
+`str::from_utf8` is only about 1.5 % of the instructions of the current
+parser branch, so switching it to `IdString::from_bytes` changes little
+(within noise). The rest of the `pips` gap to 200 MB/s is in the parser
+itself (about 1,300 instructions per line besides interning).

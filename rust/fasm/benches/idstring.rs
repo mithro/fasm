@@ -22,8 +22,9 @@
 //! `FASM_IDSTRING_BENCH_FILE` to a file with one feature name per line.
 //!
 //! Reports nanoseconds per operation for interning new names (miss) and
-//! known names (hit), lookups, resolving and sorting, plus the heap bytes the
-//! interner uses per distinct name and per distinct component.
+//! known names (hit, from `&str` and from bytes), lookups, resolving and
+//! sorting, plus the heap bytes the interner uses per distinct name and per
+//! distinct component.
 
 use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
@@ -126,9 +127,22 @@ fn main() {
             black_box(interner.intern(black_box(s)));
         }
     });
-    let get = best_of(5, n, || {
+    // Hit from bytes (a parser's input buffer): no UTF-8 validation.
+    let hit_bytes = best_of(5, n, || {
         for s in &names {
-            black_box(interner.get(black_box(s)));
+            black_box(interner.intern_bytes(black_box(s.as_bytes())).ok());
+        }
+    });
+    // The same with a separate validation pass, for comparison.
+    let hit_validated = best_of(5, n, || {
+        for s in &names {
+            let s = std::str::from_utf8(black_box(s.as_bytes())).ok();
+            black_box(s.map(|s| interner.intern(s)));
+        }
+    });
+    let lookup = best_of(5, n, || {
+        for s in &names {
+            black_box(interner.lookup(black_box(s)));
         }
     });
     let with_str = best_of(5, n, || {
@@ -191,7 +205,9 @@ fn main() {
     println!("  intern (miss)            {miss:8.1} ns/op");
     println!("  intern (hit)             {hit:8.1} ns/op");
     println!("  intern (hit, {THREADS} threads)  {concurrent:8.1} ns/op (wall clock / total ops)");
-    println!("  get (hit)                {get:8.1} ns/op");
+    println!("  intern_bytes (hit)       {hit_bytes:8.1} ns/op");
+    println!("  from_utf8 + intern (hit) {hit_validated:8.1} ns/op");
+    println!("  lookup (hit)             {lookup:8.1} ns/op");
     println!("  with_str                 {with_str:8.1} ns/op");
     println!("  resolve (to String)      {resolve:8.1} ns/op");
     println!("  sort IdString            {sort_ids:8.1} ns/element");

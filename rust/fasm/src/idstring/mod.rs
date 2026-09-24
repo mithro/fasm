@@ -80,6 +80,24 @@ pub static GLOBAL: Interner = Interner::new();
 /// methods instead.
 ///
 /// `Option<IdString>` is also 8 bytes.
+///
+/// # Handle values depend on interning order
+///
+/// `Eq` and `Hash` work on the 8 byte value, which is made of table entry
+/// numbers handed out in first-come order. The same string therefore gets
+/// a different value in another run (or with another thread schedule), so
+/// the raw value, the `Hash` output and the iteration order of a
+/// `HashMap<IdString, _>` / `HashSet<IdString>` are **not deterministic
+/// across runs**. Anything that must be reproducible (sorted output, a
+/// canonical file) has to be ordered with `Ord`, which compares the
+/// strings (e.g. collect into a `BTreeMap` or sort a `Vec<IdString>`).
+///
+/// ```
+/// # use fasm::idstring::IdString;
+/// let mut ids: Vec<IdString> = ["B.X", "A.Y", "A.X"].map(IdString::new).into();
+/// ids.sort(); // by string value, independent of interning order
+/// assert_eq!(ids, ["A.X", "A.Y", "B.X"]);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct IdString(NonZeroU64);
 
@@ -95,29 +113,49 @@ impl IdString {
         self.0
     }
 
-    /// Interns `s` in [`GLOBAL`] and returns its handle.
+    /// Interns `s` in [`GLOBAL`] and returns its handle (see
+    /// [`Interner::intern`]).
+    #[inline]
     pub fn new(s: &str) -> Self {
         GLOBAL.intern(s)
     }
 
-    /// Interns UTF-8 `bytes` in [`GLOBAL`].
+    /// Interns UTF-8 `bytes` in [`GLOBAL`] (see [`Interner::intern_bytes`]).
+    ///
+    /// Validates `bytes` only if the string is not known yet, so this is
+    /// the fastest way to intern names read from a byte buffer: known
+    /// names cost the same as [`IdString::new`], without a separate
+    /// `std::str::from_utf8` pass.
     ///
     /// # Errors
     ///
     /// Returns the UTF-8 error if `bytes` is not valid UTF-8.
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Utf8Error> {
-        std::str::from_utf8(bytes).map(Self::new)
+        GLOBAL.intern_bytes(bytes)
     }
 
-    /// Returns the handle of `s` in [`GLOBAL`] if it can be produced
-    /// without interning `s` (see [`Interner::get`]: this is also the case
-    /// for strings never interned whole whose levels are all known).
-    pub fn get(s: &str) -> Option<Self> {
-        GLOBAL.get(s)
+    /// Returns the handle `s` would have in [`GLOBAL`], if it can be
+    /// produced without interning anything (see [`Interner::lookup`]).
+    ///
+    /// **Not a membership test**: this is also `Some` for strings that were
+    /// never interned whole but whose levels are all known (after `A.B.C`
+    /// and `X.Y`, `IdString::lookup("A.Y")` is `Some`).
+    #[inline]
+    pub fn lookup(s: &str) -> Option<Self> {
+        GLOBAL.lookup(s)
     }
 
     /// Returns the interned pieces of the string, on which several string
     /// operations can be done without resolving the handle again.
+    ///
+    /// # Panics
+    ///
+    /// Like every method that reads the string (`resolve`, `with_str`,
+    /// `components`, `len`, ...), this resolves the handle in the
+    /// **global** interner [`GLOBAL`] and panics for a handle created by a
+    /// private [`Interner`] that has no entry there; use the interner's
+    /// own methods for such handles.
     pub fn resolved(self) -> Resolved {
         GLOBAL.resolved(self)
     }
@@ -176,26 +214,57 @@ impl IdString {
     }
 }
 
+/// Writes the string (honouring width, fill, alignment and precision like
+/// `str`).
+///
+/// # Panics
+///
+/// Resolves the handle in the **global** interner [`GLOBAL`]: panics for a
+/// handle created by a private [`Interner`] that has no entry in
+/// [`GLOBAL`] (and prints an unrelated string if it has one). Format such
+/// handles through [`Interner::resolved`] instead.
 impl fmt::Display for IdString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.resolved(), f)
     }
 }
 
+/// Writes `IdString("...")`.
+///
+/// # Panics
+///
+/// Like `Display`, resolves the handle in the **global** interner
+/// [`GLOBAL`] and panics for a handle of a private [`Interner`] that has no
+/// entry there.
 impl fmt::Debug for IdString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("IdString").field(&self.resolved()).finish()
     }
 }
 
+/// The order of `Ord`.
+///
+/// # Panics
+///
+/// Like `Ord`, reads the tables of the **global** interner [`GLOBAL`] and
+/// panics for handles of a private [`Interner`] missing from it.
 impl PartialOrd for IdString {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-/// Orders by string value (see [`Interner::cmp`]); reads the tables of
-/// [`GLOBAL`].
+/// Orders by string value, byte by byte like `str` (see
+/// [`Interner::cmp`]). Unlike the handle value used by `Eq` and `Hash`,
+/// this order does not depend on the interning order: use it for
+/// reproducible output.
+///
+/// # Panics
+///
+/// Reads the tables of the **global** interner [`GLOBAL`]: comparing
+/// handles created by a private [`Interner`] panics if an entry is missing
+/// from [`GLOBAL`] (or silently compares unrelated strings). Compare such
+/// handles with [`Interner::cmp`] instead.
 impl Ord for IdString {
     fn cmp(&self, other: &Self) -> Ordering {
         GLOBAL.cmp(*self, *other)
@@ -216,24 +285,38 @@ impl FromStr for IdString {
     }
 }
 
+/// Compares the string with a `str` (without allocating).
+///
+/// # Panics
+///
+/// Resolves the handle in the **global** interner [`GLOBAL`]: panics for a
+/// handle created by a private [`Interner`] that has no entry there (and
+/// compares an unrelated string if it has one). Compare such handles with
+/// `interner.resolved(id) == s` instead.
 impl PartialEq<str> for IdString {
     fn eq(&self, other: &str) -> bool {
         self.resolved() == *other
     }
 }
 
+/// See `PartialEq<str> for IdString` (resolves through [`GLOBAL`], panics
+/// for handles of a private [`Interner`]).
 impl PartialEq<&str> for IdString {
     fn eq(&self, other: &&str) -> bool {
         self.resolved() == **other
     }
 }
 
+/// See `PartialEq<str> for IdString` (resolves through [`GLOBAL`], panics
+/// for handles of a private [`Interner`]).
 impl PartialEq<IdString> for str {
     fn eq(&self, other: &IdString) -> bool {
         other == self
     }
 }
 
+/// See `PartialEq<str> for IdString` (resolves through [`GLOBAL`], panics
+/// for handles of a private [`Interner`]).
 impl PartialEq<IdString> for &str {
     fn eq(&self, other: &IdString) -> bool {
         other == self

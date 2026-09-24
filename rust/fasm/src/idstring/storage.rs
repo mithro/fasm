@@ -136,6 +136,7 @@ impl Slots {
     }
 
     /// Returns the string at `pos`, or `None` if it was never set.
+    #[inline]
     pub(crate) fn get(&self, pos: u32) -> Option<&'static str> {
         let (segment, offset) = locate(pos);
         self.segments
@@ -236,6 +237,7 @@ impl Shard {
     }
 
     /// The current index generation (`None` before the first insertion).
+    #[inline]
     fn buckets(&self) -> Option<&[AtomicU64]> {
         let current = self.current.load(Ordering::Acquire);
         self.generations.get(current)?.get().map(|b| &**b)
@@ -284,6 +286,39 @@ fn vacant_bucket(buckets: &[AtomicU64], tag: u32) -> usize {
         i = (i + 1) & mask;
     }
     i
+}
+
+/// `a == b`, inlined for short strings.
+///
+/// Level texts are mostly 5 to 30 bytes long; comparing them a word at a
+/// time (the last word overlapping) is several times cheaper than the
+/// `memcmp` call behind `==` on slices.
+#[inline]
+fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+    /// Longest strings compared here; longer ones use `==`.
+    const MAX_INLINE: usize = 32;
+    let word = |w: &[u8; 8]| u64::from_ne_bytes(*w);
+    if a.len() != b.len() {
+        return false;
+    }
+    match (a.last_chunk::<8>(), b.last_chunk::<8>()) {
+        (Some(last_a), Some(last_b)) if a.len() <= MAX_INLINE => {
+            word(last_a) == word(last_b)
+                && a.as_chunks::<8>()
+                    .0
+                    .iter()
+                    .zip(b.as_chunks::<8>().0)
+                    .all(|(x, y)| word(x) == word(y))
+        }
+        (Some(_), Some(_)) => a == b,
+        _ => match (a.first_chunk::<4>(), b.first_chunk::<4>()) {
+            // 4 to 7 bytes: first and last four bytes (overlapping).
+            (Some(first_a), Some(first_b)) => {
+                first_a == first_b && a.last_chunk::<4>() == b.last_chunk::<4>()
+            }
+            _ => a.iter().zip(b).all(|(x, y)| x == y),
+        },
+    }
 }
 
 /// One interning table: dense entry numbers `0..limit` for distinct
@@ -342,13 +377,15 @@ impl Table {
         self.slots.allocated() + shards
     }
 
+    #[inline]
     fn shard(&self, hash: u64) -> &Shard {
         // The low bits pick the shard, the high half is the bucket tag.
         &self.shards[(hash as usize) & (SHARDS - 1)]
     }
 
     /// Probes `buckets` for `s` with tag `tag`.
-    fn probe(&self, buckets: &[AtomicU64], tag: u32, s: &str) -> Probe {
+    #[inline]
+    fn probe(&self, buckets: &[AtomicU64], tag: u32, s: &[u8]) -> Probe {
         let mask = buckets.len() - 1;
         let mut i = tag as usize & mask;
         loop {
@@ -358,7 +395,11 @@ impl Table {
             }
             if (entry >> 32) as u32 == tag {
                 let pos = (entry as u32).wrapping_sub(1);
-                if self.slots.get(pos) == Some(s) {
+                if self
+                    .slots
+                    .get(pos)
+                    .is_some_and(|text| bytes_eq(text.as_bytes(), s))
+                {
                     return Probe::Found(pos);
                 }
             }
@@ -368,7 +409,11 @@ impl Table {
 
     /// Looks `s` (whose hash under the interner's hasher is `hash`) up
     /// without inserting it. Takes no lock.
-    pub(crate) fn find(&self, hash: u64, s: &str) -> Option<u32> {
+    ///
+    /// `s` is a byte string: finding it means that it equals interned text,
+    /// which is valid UTF-8, so callers need not validate it first.
+    #[inline]
+    pub(crate) fn find(&self, hash: u64, s: &[u8]) -> Option<u32> {
         let buckets = self.shard(hash).buckets()?;
         match self.probe(buckets, (hash >> 32) as u32, s) {
             Probe::Found(pos) => Some(pos),
@@ -380,7 +425,7 @@ impl Table {
     /// `None` only when `s` is not present and the table is full; since a
     /// full table stays full, the answer for `s` never changes afterwards.
     pub(crate) fn intern(&self, hash: u64, s: &str) -> Option<u32> {
-        if let Some(pos) = self.find(hash, s) {
+        if let Some(pos) = self.find(hash, s.as_bytes()) {
             return Some(pos);
         }
         let tag = (hash >> 32) as u32;
@@ -389,7 +434,7 @@ impl Table {
         // Only writers holding this lock change the index, so this probe of
         // the current generation is authoritative.
         if let Some(buckets) = shard.buckets() {
-            if let Probe::Found(pos) = self.probe(buckets, tag, s) {
+            if let Probe::Found(pos) = self.probe(buckets, tag, s.as_bytes()) {
                 return Some(pos);
             }
         }
@@ -401,6 +446,16 @@ impl Table {
         buckets[vacant_bucket(buckets, tag)].store(entry, Ordering::Release);
         writer.len += 1;
         Some(pos)
+    }
+
+    /// Holds the writer lock of every shard until the result is dropped
+    /// (for tests that check that a path takes no lock).
+    #[cfg(test)]
+    pub(crate) fn lock_writers(&self) -> impl Sized + '_ {
+        self.shards
+            .iter()
+            .map(|shard| shard.writer.lock().unwrap_or_else(PoisonError::into_inner))
+            .collect::<Vec<_>>()
     }
 
     /// Reserves the next entry number, or `None` if the table is full.
@@ -445,6 +500,24 @@ mod tests {
     }
 
     #[test]
+    fn bytes_eq_matches_slice_eq() {
+        for len in 0..=40usize {
+            let a: Vec<u8> = (0..len).map(|i| b'A' + (i % 26) as u8).collect();
+            assert!(bytes_eq(&a, &a.clone()), "{len}");
+            for at in 0..len {
+                let mut b = a.clone();
+                b[at] ^= 0x80;
+                assert!(!bytes_eq(&a, &b), "{len} {at}");
+                assert!(!bytes_eq(&b, &a), "{len} {at}");
+            }
+            for other in 0..=40usize {
+                let b: Vec<u8> = (0..other).map(|i| b'A' + (i % 26) as u8).collect();
+                assert_eq!(bytes_eq(&a, &b), len == other, "{len} {other}");
+            }
+        }
+    }
+
+    #[test]
     fn arena_copies_strings() {
         let mut arena = Arena::new();
         let long = "x".repeat(MAX_ARENA_STRING + 1);
@@ -484,8 +557,8 @@ mod tests {
         assert_eq!(intern("c"), None);
         assert_eq!(intern("b"), Some(1));
         assert_eq!(table.len(), 3);
-        assert_eq!(table.find(hasher.hash_one("c"), "c"), None);
-        assert_eq!(table.find(hasher.hash_one(""), ""), Some(2));
+        assert_eq!(table.find(hasher.hash_one("c"), b"c"), None);
+        assert_eq!(table.find(hasher.hash_one(""), b""), Some(2));
         assert_eq!(table.text(1), Some("b"));
         assert_eq!(table.text(3), None);
         assert!(table.heap_bytes() > 0);
@@ -502,7 +575,7 @@ mod tests {
         }
         for (i, name) in names.iter().enumerate() {
             assert_eq!(
-                table.find(hasher.hash_one(name.as_str()), name),
+                table.find(hasher.hash_one(name.as_str()), name.as_bytes()),
                 Some(i as u32)
             );
             assert_eq!(table.text(i as u32), Some(name.as_str()));
