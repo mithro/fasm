@@ -29,6 +29,7 @@
  */
 
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -798,6 +799,30 @@ static void test_build(void) {
     fasm_file_free(file);
 }
 
+/* The struct layout seen by C matches the Rust side (struct_layout in
+ * rust/fasm-capi/src/tests.rs asserts the same formulas). */
+static void test_layout(void) {
+    const size_t P = sizeof(void *);
+    const size_t S = 2 * P;
+    size_t spec_size = S + 20 + 2 * P;
+    spec_size = (spec_size + P - 1) / P * P;
+    CHECK(sizeof(fasm_str) == S && offsetof(fasm_str, len) == P, "fasm_str layout");
+    CHECK(sizeof(fasm_annotation) == 2 * S && offsetof(fasm_annotation, value) == S,
+          "fasm_annotation layout");
+    CHECK(offsetof(fasm_set_feature_spec, feature) == 0, "spec.feature");
+    CHECK(offsetof(fasm_set_feature_spec, has_start) == S, "spec.has_start");
+    CHECK(offsetof(fasm_set_feature_spec, start) == S + 4, "spec.start");
+    CHECK(offsetof(fasm_set_feature_spec, has_end) == S + 8, "spec.has_end");
+    CHECK(offsetof(fasm_set_feature_spec, end) == S + 12, "spec.end");
+    CHECK(offsetof(fasm_set_feature_spec, value_le) == S + 16, "spec.value_le");
+    CHECK(offsetof(fasm_set_feature_spec, value_len) == S + 16 + P, "spec.value_len");
+    CHECK(offsetof(fasm_set_feature_spec, value_format) == S + 16 + 2 * P,
+          "spec.value_format");
+    CHECK(sizeof(fasm_set_feature_spec) == spec_size, "sizeof(fasm_set_feature_spec) %zu",
+          sizeof(fasm_set_feature_spec));
+    CHECK(sizeof(fasm_status) == 4 && sizeof(fasm_value_format) == 4, "enum sizes");
+}
+
 static void test_null_handling(void) {
     fasm_str view;
     fasm_annotation annotation;
@@ -875,6 +900,7 @@ int main(int argc, char **argv) {
     test_merge_and_sort_counter_key();
     test_build();
     test_null_handling();
+    test_layout();
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures == 0 ? 0 : 1;

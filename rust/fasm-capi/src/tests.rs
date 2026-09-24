@@ -829,3 +829,34 @@ fn error_messages_drop_nul_bytes() {
         fasm_error_free(err);
     }
 }
+
+/// The layout of the public structs, as the C test (`test_layout` in
+/// `tests/c/test_capi.c`) checks it with `sizeof`/`offsetof`: `P` is the
+/// pointer size.
+#[test]
+fn struct_layout() {
+    use std::mem::{offset_of, size_of};
+    const P: usize = size_of::<usize>();
+    const S: usize = 2 * P;
+    assert_eq!(size_of::<fasm_str>(), S);
+    assert_eq!(offset_of!(fasm_str, len), P);
+    assert_eq!(size_of::<fasm_annotation>(), 2 * S);
+    assert_eq!(offset_of!(fasm_annotation, value), S);
+    assert_eq!(offset_of!(fasm_set_feature_spec, feature), 0);
+    assert_eq!(offset_of!(fasm_set_feature_spec, has_start), S);
+    assert_eq!(offset_of!(fasm_set_feature_spec, start), S + 4);
+    assert_eq!(offset_of!(fasm_set_feature_spec, has_end), S + 8);
+    assert_eq!(offset_of!(fasm_set_feature_spec, end), S + 12);
+    assert_eq!(offset_of!(fasm_set_feature_spec, value_le), S + 16);
+    assert_eq!(offset_of!(fasm_set_feature_spec, value_len), S + 16 + P);
+    assert_eq!(
+        offset_of!(fasm_set_feature_spec, value_format),
+        S + 16 + 2 * P
+    );
+    assert_eq!(
+        size_of::<fasm_set_feature_spec>(),
+        (S + 20 + 2 * P).next_multiple_of(P)
+    );
+    assert_eq!(size_of::<fasm_status>(), 4);
+    assert_eq!(size_of::<fasm_value_format>(), 4);
+}
