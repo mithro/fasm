@@ -48,16 +48,78 @@ reachable via `new_unchecked`) can never make `fasm_line_to_string` or
 The Python generator is lazy; `try_canonical_features` collects into a
 `Vec` up front instead. Every real FASM feature is at most a few hundred
 bits wide (256 for the widest known case, a BRAM `INIT`), so this is a
-small, bounded allocation in the overwhelmingly common case. A
-`SetFasmFeature` with a deliberately huge range (nothing in the grammar
-caps `u32` addresses) would allocate and iterate proportionally to its
-width either way — laziness would only change *when* that cost is paid,
-not the total work, since the caller (`fasm_line_to_string`, via
-`try_canonical_features`) always exhausts the result. Given `output` is
-not the hot path called out in `PLAN.md` (that is the parser and the
-`set_feature`/value formatting used per-feature during frame assembly),
-the simpler `Vec`-backed implementation was chosen over a hand written
-lazy iterator/state machine.
+small, bounded allocation in the overwhelmingly common case. Given
+`output` is not the hot path called out in `PLAN.md` (that is the parser
+and the `set_feature`/value formatting used per-feature during frame
+assembly), the simpler `Vec`-backed implementation was chosen over a hand
+written lazy iterator/state machine.
+
+### T1.4b: iterate set bits, not the address range
+
+The range case (`Some(start), Some(end)`) originally mirrored Python's
+`for address in range(start, end + 1): ... (value >> (address - start)) &
+1` literally, i.e. one loop iteration (and one `FeatureValue::bit` call)
+per *address*, not per set bit. `W[4294967295:1] = 1` (or any similarly
+huge range with a small value) therefore iterated close to 4 billion
+times — reachable both from the library (`fasm_tuple_to_string(...,
+canonical=true)`) and from the CLI's `--canonical` flag — while the
+Python generator has the exact same asymptotic cost (Python does the
+identical bounded-range loop), so this was not a Rust regression, but it
+is a real, user reachable cost in both.
+
+`try_canonical_features` now iterates `FeatureValue::iter_set_bits()`
+(ascending, and already `O(set bits)` — see `DESIGN-model.md`) instead,
+stopping once a bit index exceeds `end - start` (bits beyond that are out
+of the feature's declared range; `iter_set_bits`'s ascending order means
+everything after is out of range too, so this is a `break`, not a
+`filter`). This is behaviourally identical to the Python loop — including
+silently ignoring any set bit beyond `end - start` for a malformed
+(`new_unchecked`-built) `set_feature` whose value is wider than its
+declared range, exactly like the bounded Python loop never inspects
+those addresses — but its cost is `O(number of set bits)` rather than
+`O(range width)`. Real FASM values have at most a few hundred set bits
+(the same 256-bit BRAM `INIT` bound as above); `W[4294967295:1] = 1` now
+finishes in single-digit microseconds instead of not finishing in any
+practical time. See `rust/fasm/src/output/canonical/tests.rs`'s
+`huge_address_range_single_bit_is_fast` / `huge_range_sparse_bits_is_fast`
+for the regression tests (generously budgeted at 1 second to stay robust
+under CI load — see T1.3b's identical reasoning below — even though the
+actual cost is microseconds).
+
+### `merge_features` still iterates the full address range (left as is)
+
+`merge_features` (`rust/fasm/src/output/merge.rs`) has the same shape of
+loop (`for bit in start..=end`) but, unlike `canonical_features`, cannot
+be rewritten to only visit set bits: it must classify *every* bit in
+`[start, end]` as set, cleared, or (implicitly, by omission) untouched,
+to detect a bit set by one input feature and cleared by another
+(`set_bits`/`cleared_bits`, both `HashSet<u32>`) — a bit that is `0` in
+the value is just as significant as one that is `1` here, so iterating
+only `iter_set_bits()` would silently lose the "cleared" half of the
+conflict check. This mirrors Python's `merge_features`'s identical
+`for address in range(start, end + 1)` exactly, and is reachable the same
+way in both: a `SetFasmFeature` with a huge range feeding
+`merge_and_sort`/`MergeModel::merge_addresses`. A hand rolled bit-parallel
+version (classifying 64 bits at a time against the value's limbs instead
+of one `HashSet` insert per bit) is possible and would cut the constant
+factor by roughly 64x plus remove the hashing overhead, but was not done
+for T1.6/T1.4b: no test, CLI flag or corpus file in this repository
+exercises `merge_and_sort` with a huge range (unlike `--canonical`, which
+the task brief specifically calls out and `rust/fasm-cli` exercises), and
+the `set_bits`/`cleared_bits` accounting is exactly the kind of
+per-bit-precise state a hand rolled bit-parallel rewrite risks getting
+subtly wrong (e.g. the `cleared_bits` bookkeeping, which has no analogue
+in `canonical_features`). This is intentionally left as a known,
+documented cost rather than reworked under time pressure; T1.6's fuzz
+target for `merge_and_sort` (see `rust/fasm/fuzz/README.md`) does not
+attempt pathologically huge ranges for the same never-finishes reason
+`W[4294967295:1]` used to have for `canonical_features` (a fuzz corpus
+entry that never returns would stall the fuzzer, not surface a bug), so
+it does not catch this cost either. A future task should either bound the
+range width `merge_and_sort` will accept, or rewrite this loop to walk
+`FeatureValue` limbs directly if this ever becomes a real workload
+(tracked informally here; not added to `TASKS.md` since it was not asked
+for and no observed input needs it).
 
 ## `merge_and_sort` split into two functions
 
