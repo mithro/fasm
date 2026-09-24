@@ -210,3 +210,8 @@ what happened, branch/commit references, open issues.
   oracle job building the Python oracle), dependabot, workspace
   rust-version = 1.88 (as_chunks needs 1.88), Makefile rust-doc/rust-check.
   Sent for review.
+* T0.5 done: review APPROVE (actionlint clean, MSRV verified, cache path
+  reasoning checked). Merged with --no-ff; worktree removed. Noted: `cargo
+  doc` warns about the output filename collision between the `fasm` binary
+  and the `fasm` lib (cargo bug 6313); harmless, consider renaming the doc
+  target later.

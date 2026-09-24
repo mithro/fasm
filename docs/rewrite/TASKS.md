@@ -26,7 +26,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `tests/oracle/setup.sh` (T5.8 implementer saw it succeed once and fall
       back to textX on another identical run); make the build deterministic
       or fail loudly (after T0.4).
-- [r] T0.5 CI: GitHub Actions workflow for `cargo fmt --check`, `clippy`,
+- [x] T0.5 CI: GitHub Actions workflow for `cargo fmt --check`, `clippy`,
       `cargo test`, Python tests. (Keep the existing Python workflows
       working until Phase 3 replaces them.)
 
