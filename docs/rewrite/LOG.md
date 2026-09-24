@@ -343,3 +343,14 @@ what happened, branch/commit references, open issues.
   golden files depend on it; unknown tiles raise KeyError not
   FasmLookupError in prjxray. In review.
 * T3.2 (maturin based build, legacy ANTLR removal, CI/tox/wheels) started.
+* T5.2 done: Opus review APPROVE. Differential vs prjxray/prjuray Python:
+  all tiles of xc7a50t/xc7a100t/xc7a200t/xczu3eg identical; 19.3M segbit
+  position queries with 0 mismatches (incl. _SING start_offset, negative
+  wrap, bits past the frame end); segbits/ppips tables identical; frame
+  enumeration identical to xc7frames2bit+bitread for all 88 artix7 parts
+  and both zynqusp parts; banks registry identical for all parts; 9000
+  mutation fuzz iterations without panic; 0 allocations per lookup. Merged
+  with --no-ff; worktree removed. Optional follow ups: serde_json in the
+  public API of Grid::from_json_slice, Part::new visibility, workspace dep
+  comment.
+* T5.4 (frame assembler) started.
