@@ -69,7 +69,8 @@ instance/
 # Sphinx documentation
 docs/_build/
 
-# PyBuilder
+# PyBuilder, and Rust `cargo build` output (rust/ crates share the
+# workspace-root target/ directory; Cargo.lock is committed, see T0.3)
 target/
 
 # Jupyter Notebook
