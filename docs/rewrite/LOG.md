@@ -554,3 +554,11 @@ what happened, branch/commit references, open issues.
   inside the racy window / hash the parsed bytes) plus tests. Follow-ups
   recorded under T5.3b (loader fingerprint in the file name, lazy tile
   type decode, skip payload hash on stat hit, NFS caveat).
+* T5.3 done: review fixes 468b8b5 (no cache write when a source changed
+  inside the 5 s racy window, unit test with explicit window, §8.8),
+  097969c (fasm-db-cache messages, verify/info without a cache dir),
+  e015b4e (tests/cli and difftest-xilinx use a temporary FASM_XDB_CACHE).
+  Merged with --no-ff; merged tree: fmt/clippy clean, 450 workspace tests
+  pass, real db cache tests 6/6, xilinx-difftest 107/107 fasm2frames,
+  60/60 xcfasm, 6/6 bitread identical with the cache on. Worktree
+  removed. Remaining cache work is T5.3b.

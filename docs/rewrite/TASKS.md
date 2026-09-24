@@ -106,7 +106,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T5.2 `fasm-xilinx`: database loader (tilegrid, segbits, ppips, part
       yaml/json, package pins) with tests on a checked in miniature database
       (from f4pga-xc-fasm test data) (after T5.1).
-- [r] T5.3 Binary cache for a loaded part database (versioned, content
+- [x] T5.3 Binary cache for a loaded part database (versioned, content
       hashed, memory mappable) + `fasm-db-cache` maintenance subcommand
       (after T5.2).
 - [ ] T5.3b Cache follow-ups from the T5.3 review: loader fingerprint in the
