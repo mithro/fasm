@@ -267,3 +267,10 @@ what happened, branch/commit references, open issues.
   cases from tools/gen-corpus.py; 600 KB), rust/fasm/examples/dump.rs
   (same JSON as dump.py), tools/difftest.py with COMPAT.md based classifier
   (70 files, 0 unexplained), `make difftest`, pytest wrapper. In review.
+* T1.5 done: review APPROVE (classifier verified honest with three injected
+  deviation experiments, dump.rs byte identical to dump.py, provenance
+  checked against the reference checkouts, generator deterministic). Merged
+  with --no-ff; `tools/difftest.py --jobs 4` in the main tree: 70 files, 0
+  unexplained. Optional follow ups: cover the remaining COMPAT.md rows in
+  gen-corpus.py and commit one small `.fasm.xz` to exercise decompression.
+* T4.1 (C API) started.

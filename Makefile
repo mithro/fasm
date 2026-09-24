@@ -181,6 +181,7 @@ rust-check: rust-lint rust-doc rust-test
 
 .PHONY: rust-check
 
+<<<<<<< HEAD
 # Differential test of the Rust `fasm` binary against the original Python
 # tool (tests/cli/test_cli_compat.py): identical stdout, stderr and exit
 # code over the FASM corpus and argparse edge cases. Needs the oracle venv
@@ -193,6 +194,18 @@ cli-difftest:
 	FASM_ORACLE=$(ORACLE_DIR)/fasm-oracle $(ORACLE_DIR)/venv/bin/pytest tests/cli
 
 .PHONY: cli-difftest
+=======
+# Differential test: Rust `fasm` crate vs. the original Python `fasm`
+# package (the oracle), over tests/corpus/ (T1.5, tools/difftest.py).
+# Requires tests/oracle/setup.sh to have been run once; DIFFTEST_ARGS can
+# add e.g. `--jobs N` or `--filter GLOB`.
+difftest: DIFFTEST_ARGS ?=
+difftest:
+	cargo build --release --example dump -p fasm
+	python3 tools/difftest.py $(DIFFTEST_ARGS)
+
+.PHONY: difftest
+>>>>>>> worktree-agent-ae95e0887b836dfce
 
 
 # Upload to PyPI servers
