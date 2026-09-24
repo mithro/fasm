@@ -2,8 +2,15 @@
 
 `test_simple.py` and `test_rust_parser.py` test the `fasm` Python package,
 including the Rust parser (the `fasm._fasm_rs` extension module, built from
-`rust/fasm-python` with maturin). They need the extension module installed
-in the venv that runs pytest. There are two ways to run them.
+`rust/fasm-python` with maturin). `test_fast_paths.py` tests the Rust fast
+paths wired into `fasm.fasm_tuple_to_string` and `fasm.output.merge_and_sort`
+(T3.3, `_fasm_rs.fasm_tuple_to_string`/`_fasm_rs.merge_and_sort`):
+differential tests against the pure Python implementations
+(`fasm.output._merge_and_sort_py`, `fasm/__init__.py`'s own
+`fasm_tuple_to_string` body) over the corpus and randomly generated models,
+call count/order for `zero_function`/`sort_key`, and the fast-path-vs-
+fallback wiring itself. All three need the extension module installed in
+the venv that runs pytest. There are two ways to run them.
 
 ## In the source tree (editable install)
 
@@ -11,7 +18,8 @@ in the venv that runs pytest. There are two ways to run them.
 python3 -m venv venv
 venv/bin/pip install maturin pytest textx
 VIRTUAL_ENV=$PWD/venv venv/bin/maturin develop --release  # or: venv/bin/pip install -e .
-venv/bin/pytest tests/test_simple.py tests/test_rust_parser.py
+venv/bin/pytest tests/test_simple.py tests/test_rust_parser.py \
+    tests/test_fast_paths.py
 ```
 
 `maturin develop` builds `fasm/_fasm_rs.abi3.so` into the source tree
@@ -31,7 +39,8 @@ python3 -m venv venv
 venv/bin/pip install pytest .          # or the wheel / sdist
 cd "$(mktemp -d)"
 /path/to/venv/bin/pytest --import-mode=importlib \
-    /path/to/fasm/tests/test_simple.py /path/to/fasm/tests/test_rust_parser.py
+    /path/to/fasm/tests/test_simple.py /path/to/fasm/tests/test_rust_parser.py \
+    /path/to/fasm/tests/test_fast_paths.py
 ```
 
 `--import-mode=importlib` keeps pytest from adding the repository root to
