@@ -1016,3 +1016,734 @@ immediately (**the `.frm` reader always recomputes and overwrites the ECC
 word(s) before storing the frame** — see §6; this means the ECC word(s) in
 a hand-written `.frm` file are ignored/replaced, not validated).
 
+## 6. Frames → bitstream (`xc7frames2bit` / `xcframes2bit`) and the reader
+
+### 6.1 `.bit` file header
+
+TLV-ish format, `BitstreamWriter<ArchType>::create_header`
+(`lib/xilinx/bitstream_writer.cc` template body,
+`lib/include/prjxray/xilinx/bitstream_writer.h:200-249`; identical in
+`prjuray-tools`), byte sequence:
+```
+00 09 0f f0 0f f0 0f f0 0f f0 00 00 01 'a'      # fixed 14-byte preamble
+<u16 len><"<frames_file>;Generator=<generator_name>" NUL>   # field 'a' payload, big-endian u16 length INCLUDES the NUL
+'b' <u16 len><part_name NUL>                     # field 'b': part name
+'c' <u16 len><"YYYY/MM/DD" NUL>                  # field 'c': build date, UTC, via absl::FormatTime("%E4Y/%m/%d", ...)
+'d' <u16 len><"HH:MM:SS" NUL>                    # field 'd': build time, UTC
+'e' 00 00 00 00                                  # field 'e': 4-byte placeholder for the data length, PATCHED after writing
+```
+(`lib/include/prjxray/xilinx/bitstream_writer.h:205-247` — quoted almost
+verbatim: `bit_header{0x0,0x9,0x0f,0xf0,0x0f,0xf0,0x0f,0xf0,0x0f,0xf0,0x00,0x00,0x01,'a'}`,
+then field `a`'s payload is `frames_file_name + ";Generator=" + generator_name`
+with length `size()+1` (the `+1` accounts for the trailing `0x0` NUL the
+code appends after the string bytes), field `b` is `part_name` (also
+NUL-terminated, length+1), fields `c`/`d` are the date/time strings). Field
+`'e'`'s 4 zero bytes are **overwritten** after the whole configuration
+stream is written: `writeBitstream` records the file offset right after
+the header (`end_of_header_pos`), writes all config words, then seeks back
+4 bytes before that position and writes the big-endian `u32` byte length of
+everything written after the header (`lib/include/prjxray/xilinx/bitstream_writer.h:160-197`,
+`length_of_data = out_file.tellp() - end_of_header_pos`). For
+`xc7frames2bit`, `part_name` is `FLAGS_part_name` (verbatim CLI value, no
+validation against `part.idcode`), `frames_file_name` is `FLAGS_frm_file`
+(verbatim path string), `generator_name` is the hardcoded string
+`"xc7frames2bit"` (`tools/xc7frames2bit.cc:77`). **`fasm-xilinx`'s
+`xc7frames2bit`-compatible CLI must byte-match this header** including the
+NUL terminators and the `+1`-inclusive length prefixes, but the
+date/time fields inherently make a byte-for-byte bitstream diff
+non-reproducible run-to-run — differential tests must mask/ignore bytes 14
+onward through the end of field `'d'`'s payload (or compare everything
+except that span).
+
+After the header comes the **sync word preamble + configuration packet
+stream**, written 1 `ArchType::WordType` at a time, **big-endian**, via
+`BitstreamWriter<ArchType>::iterator` walking a fixed per-architecture
+`header_` word list *then* every `ConfigurationPacket`'s header word (via
+`packet2header`) followed by its data words:
+```cpp
+// lib/xilinx/bitstream_writer.cc
+BitstreamWriter<Series7>::header_{0xFFFFFFFF ×8, 0x000000BB, 0x11220044,
+                                   0xFFFFFFFF, 0xFFFFFFFF, 0xAA995566};
+BitstreamWriter<UltraScale>::header_{0xFFFFFFFF, 0x000000BB, 0x11220044,
+                                       0xFFFFFFFF, 0xFFFFFFFF, 0xAA995566};
+BitstreamWriter<UltraScalePlus>::header_{0xFFFFFFFF ×16, 0x000000BB, 0x11220044,
+                                           0xFFFFFFFF, 0xFFFFFFFF, 0xAA995566};
+```
+(word counts: Series7 13 words, UltraScale 6 words, UltraScalePlus 21 words
+— all end in the same 5-word tail `BB 11220044 FFFFFFFF FFFFFFFF AA995566`;
+the `0xAA995566` word is UG470's documented sync word, matched at read time
+by `BitstreamReader<ArchType>::kSyncWord = {0xAA,0x99,0x55,0x66}` as raw
+**bytes**, `lib/include/prjxray/xilinx/bitstream_reader.h:172-176` — i.e.
+the *reader* only looks for the 4-byte sync pattern anywhere in the byte
+stream and discards everything before+including it, so the exact
+leading-`0xFFFFFFFF` padding word count the writer chose is not
+round-trip-checked). **Note the values shown here are what the prjuray
+`architectures.h`/`bitstream_writer.cc` shim has for UltraScale/+ — since
+this file was not further specialized per xcuseries/xcupseries beyond
+`words_per_frame` and `header_`, and is otherwise identical to the plain
+prjxray version already read, no separate prjuray-tools copy was diffed
+line-by-line for this table; treat it as verified for prjxray's own
+UltraScale support (which is what `xc7frames2bit --architecture
+UltraScale...` and prjuray-tools' `xcframes2bit` both implement, since the
+tool itself is shared/near-identical in both repos).**
+
+### 6.2 Configuration packet format (Type1/Type2)
+
+`ConfigurationPacket<ConfigRegType>::InitWithWords` for
+`Series7ConfigurationRegister` (`lib/xilinx/configuration_packet.cc:98-167`),
+header word layout (big-endian 32-bit, matches UG470 pg. 108):
+
+| Bits | Type1 | Type2 |
+|---|---|---|
+| 31:29 | header_type (`0`=NONE/pad, `1`=TYPE1, `2`=TYPE2) | same |
+| 28:27 | opcode (`0`=NOP,`1`=Read,`2`=Write) | same |
+| 26:13 | register address (14 bits, `ConfigurationRegister` enum) | *(none — inherits previous Type1 packet's address, `previous_packet->address()`)* |
+| 10:0 | data word count (11 bits) | *(n/a)* |
+| 26:0 | *(n/a)* | data word count (27 bits) |
+
+Register addresses (Series7, shared by UltraScale/UltraScalePlus — no
+override in either `xcuseries`/`xcupseries`), `lib/include/prjxray/xilinx/configuration_register.h:61-83`:
+`CRC=0x00, FAR=0x01, FDRI=0x02, FDRO=0x03, CMD=0x04, CTL0=0x05, MASK=0x06,
+STAT=0x07, LOUT=0x08, COR0=0x09, MFWR=0x0a, CBC=0x0b, IDCODE=0x0c,
+AXSS=0x0d, COR1=0x0e, WBSTAR=0x10, TIMER=0x11, UNKNOWN=0x13, BOOTSTS=0x16,
+CTL1=0x18, BSPI=0x1F`. Commands (`Command` enum,
+`lib/include/prjxray/xilinx/xc7series/command.h:17-37`): `NOP=0x0, WCFG=0x1,
+MFW=0x2, LFRM=0x3, RCFG=0x4, START=0x5, RCAP=0x6, RCRC=0x7, AGHIGH=0x8,
+SWITCH=0x9, GRESTORE=0xA, SHUTDOWN=0xB, GCAPTURE=0xC, DESYNC=0xD, IPROG=0xF,
+CRCC=0x10, LTIMER=0x11, BSPI_READ=0x12, FALL_EDGE=0x13`.
+
+A **Type0** header (`header_type == 0`, i.e. top 3 bits all zero) is
+treated as inert padding — consumes exactly one word, yields a synthetic
+NOP packet, never emitted by the writer (only tolerated by the reader for
+`BITSTREAM.GENERAL.DEBUGBITSTREAM`-style padding, `lib/xilinx/configuration_packet.cc:111-122`).
+
+### 6.3 Configuration packet **sequence** (the full programming sequence)
+
+This is exact, copy-pasteable from `lib/xilinx/configuration.cc`'s
+`Configuration<ArchType>::createConfigurationPackage` template
+specializations (`lib/xilinx/configuration.cc:300-470` for Series7,
+`:472-631` for UltraScale, `:633-792` for UltraScalePlus — all three read
+in full this session). Below, `Write(REG, [data...])` denotes a Type1 write
+packet (`ConfigurationPacketWithPayload<N, ConfigurationRegister>`), `NOP`
+a bare NOP packet, and `FDRI-DATA` the Type1-header-with-zero-length +
+Type2-header-with-payload pair that carries the actual frame words.
+
+**Series7**:
+```
+NOP
+Write(TIMER, [0x0])
+Write(WBSTAR, [0x0])
+Write(CMD, [NOP])
+NOP
+Write(CMD, [RCRC])
+NOP; NOP
+Write(UNKNOWN, [0x0])
+Write(COR0, [ConfigurationOptions0Value: AddPipelineStageForDoneIn=1,
+             ReleaseDonePinAtStartupCycle=Phase4,
+             StallAtStartupCycleUntilDciMatch=NoWait,
+             StallAtStartupCycleUntilMmcmLock=NoWait,
+             ReleaseGtsSignalAtStartupCycle=Phase5,
+             ReleaseGweSignalAtStartupCycle=Phase6])
+Write(COR1, [0x0])
+Write(IDCODE, [part.idcode()])
+Write(CMD, [SWITCH])
+NOP
+Write(MASK, [0x401]); Write(CTL0, [0x501])
+Write(MASK, [0x0]); Write(CTL1, [0x0])
+NOP ×8
+Write(FAR, [0x0])
+Write(CMD, [WCFG])
+NOP
+Type1(FDRI, opcode=Write, 0 words)      # "primer" packet, no payload
+Type2(FDRI, opcode=Write, <all frame words + zero-frame separators>)
+Write(CMD, [RCRC])
+NOP; NOP
+Write(CMD, [GRESTORE])
+NOP
+Write(CMD, [LFRM])
+NOP ×100
+Write(CMD, [START])
+NOP
+Write(FAR, [0x3be0000])
+Write(MASK, [0x501]); Write(CTL0, [0x501])
+Write(CMD, [RCRC])
+NOP; NOP
+Write(CMD, [DESYNC])
+NOP ×400
+```
+(`lib/xilinx/configuration.cc:300-470`; `COR0` construction:
+`lib/include/prjxray/xilinx/xc7series/configuration_options_0_value.h`
+bit-field setters, values as listed).
+
+**UltraScale**: identical shape with two extra leading `NOP`s (3 total
+before the first `Write(TIMER,...)`), `Write(COR0, [0x38003fe5])`,
+`Write(COR1, [0x400000])` (fixed constants, not built via
+`ConfigurationOptions0Value`), `Write(CTL0/MASK)` values `0x1`/`0x101`
+instead of Series7's `0x401`/`0x501`, and an **extra `Write(FAR, [0x0])`
+right before `Write(UNKNOWN, [0x0])`** that Series7 doesn't have. Otherwise
+byte-identical structure (same NOP counts, same finalization sequence
+`RCRC→GRESTORE→LFRM→100×NOP→START→FAR 0x3be0000→MASK/CTL0 0x101→RCRC→DESYNC→400×NOP`).
+**UltraScalePlus**: byte-identical to the UltraScale sequence just
+described (same COR0/COR1 constants, same MASK/CTL0 values, same extra FAR
+write) — the only difference between the two is `words_per_frame`
+(123 vs 93) and the `FrameAddress` bit layout (§4.2); the packet
+*sequence* itself is the same for both. (All three sequences verified by
+reading `lib/xilinx/configuration.cc:300-792` end to end this session —
+see §1.)
+
+**Frame data payload** (`createType2ConfigurationPacketData`,
+`lib/include/prjxray/xilinx/configuration.h:78-105`, shared by all
+architectures via the generic template — only Spartan6 has its own
+specialization): iterate `frames` (a `std::map<FrameAddress,
+vector<word>>`, i.e. **numeric frame-address ascending order** since
+`FrameAddress`'s `operator uint32_t` makes the map's default `<` compare
+raw addresses) and, for each frame, append its words to the packet data;
+**after** each frame, ask `part.GetNextFrameAddress(frame.first)` — if the
+*next* frame in address order does not have the same `block_type` **and**
+`is_bottom_half_rows` **and** `row` as the current one (i.e. a row/block
+boundary is being crossed), insert `words_per_frame * 2` zero words (**two
+full zero frames**) as a separator. After the loop, unconditionally append
+one more `words_per_frame * 2` zero-word block at the very end. This is the
+**"2 dummy/zero frames per row boundary"** rule the task brief asks about
+— confirmed exact: it is **2 frames' worth of zero words** (not 2 words),
+inserted between consecutive rows/block-types **and** once at the very
+end of the whole FDRI payload.
+
+`addMissingFrames` (`lib/include/prjxray/xilinx/frames.h:111-129`): before
+building the Type2 payload, `xc7frames2bit`/`xcframes2bit` call this to
+walk `part.GetNextFrameAddress` from address 0 through **every valid frame
+address the part's `part.yaml`/`part_file` declares** and insert an
+all-zero frame for any address missing from the `.frm`-derived map — i.e.
+**the final FDRI payload always contains every single frame the part has,
+in address order, with zero-fill for anything the `.frm` file didn't
+mention** (this happens regardless of whether the `.frm` was produced with
+`--sparse` or not — `--sparse` only controls what `fasm2frames.py` writes
+to the `.frm` text file; `addMissingFrames` re-densifies it before writing
+the actual bitstream). **This means the final `.bit`'s FDRI payload size
+is architecture/part-invariant given the same part** — sparse vs. non-sparse
+`.frm` inputs to `xc7frames2bit` for the *same part* produce byte-identical
+`.bit` output (module the header's timestamp fields), because
+`addMissingFrames` fills in exactly what non-sparse `fasm2frames.py` would
+have zero-filled anyway.
+
+### 6.4 CRC — **not actually computed by the writer**
+
+Despite `Command::RCRC` (Reset CRC) appearing three times in every packet
+sequence above, and `lib/include/prjxray/xilinx/xc7series/crc.h` defining a
+full `icap_crc(addr, data, prev)` CRC-32C(Castagnoli)-variant running CRC
+function, **`createConfigurationPackage` never calls `icap_crc` and never
+writes a `Write(CRC, [...])` packet with a computed value** (confirmed by
+reading `configuration.cc:300-792` — no `CRC` register write appears
+anywhere in any of the three sequences; only `CMD, [RCRC]` — a *command*,
+not a register write, telling the device to reset/skip CRC checking). The
+device-side CRC check is effectively disabled by never presenting a CRC
+value and repeatedly re-issuing `RCRC`. **`icap_crc` exists in the codebase
+only for `bittool`/interactive-ICAP-style tools** (not part of the
+`xc7frames2bit` write path checked this session) — `fasm-xilinx`'s
+bitstream writer does **not** need to implement CRC computation for
+write-compatibility with `xc7frames2bit`'s actual output (just emit the
+same `RCRC` command sequence); implement `icap_crc` only if a later task
+needs an ICAP-style live-reconfiguration packet builder.
+
+### 6.5 ECC — **is** computed (unlike CRC), per architecture
+
+Series7/UltraScale/UltraScalePlus (all three, `lib/xilinx/frames.cc:15-30`)
+share `xc7series::updateECC` (`lib/xilinx/xc7series/ecc.cc`): a single 13-bit
+ECC value stored in the **low 13 bits of word index `0x32` = 50** of every
+101-word (Series7) — or 123-word (UltraScale) / 93-word (UltraScale+, using
+the **plain-prjxray shim's copy** of this algorithm, since that repo does
+not special-case ECC per architecture either — see caveat below) — frame:
+```cpp
+constexpr size_t kECCFrameNumber = 0x32;   // = 50
+uint32_t icap_ecc(uint32_t idx, uint32_t data, uint32_t ecc) {
+  uint32_t val = idx * 32;
+  if (idx > 0x25) val += 0x1360; else if (idx > 0x6) val += 0x1340; else val += 0x1320;
+  if (idx == 0x32) data &= 0xFFFFE000;      // mask out the ECC word's own old value
+  for (i in 0..32) if (data & 1) ecc ^= val + i, data >>= 1;
+  if (idx == 0x64) { /* word 100, last word: fold ecc into a parity bit at position 12 */
+    v = ecc & 0xFFF; v ^= v>>8; v ^= v>>4; v ^= v>>2; v ^= v>>1; ecc ^= (v&1) << 12;
+  }
+  return ecc;
+}
+void updateECC(vector<uint32_t>& data) {  // called once per whole frame
+  data[50] = (data[50] & 0xFFFFE000) | (calculateECC(data) & 0x1FFF);
+}
+```
+(`lib/xilinx/xc7series/ecc.cc:18-65`, exact). **The `updateECC` loop
+hard-codes `idx == 0x64` (100) as "last word"**, i.e. this exact algorithm
+is only correct for a 101-word frame (Series7) — the plain-`prjxray`
+checkout applies it unmodified to UltraScale (123 words) and UltraScale+
+(93 words) too (`lib/xilinx/frames.cc:15-30`, all three `Frames<T>::updateECC`
+specializations call the same `xc7series::updateECC`), which is **wrong**
+for UltraScale+ per the corrected algorithm found in `prjuray-tools` (next
+paragraph) — flag as a known bug in the plain-prjxray UltraScale/+ support,
+not something to replicate.
+
+**`prjuray-tools/lib/include/prjxray/xilinx/xcupseries/ecc.{h,cc}`** has
+the *correct*, architecture-specific UltraScale+ ECC: a **48-bit** ECC
+value (not 13-bit) stored across **word 45 (all 32 bits) and the low 16
+bits of word 46**:
+```cpp
+constexpr size_t kECCFrameNumber = 45;
+// calculate_us_ecc(word, bit): nibble-expanded offset function, odd-parity
+// encoded 12-bit offset expanded to a 48-bit mask, shifted by bit-in-nibble.
+uint64_t get_us_ecc(idx, data, ecc) {
+  if (idx == 45) data = 0;                 // ECC word itself excluded
+  if (idx == 46) data &= 0xFFFF0000;        // only the upper half of word 46 is real data
+  for (i in 0..32) if (data&1) ecc ^= calculate_us_ecc(idx, i); data >>= 1;
+  return ecc;
+}
+void updateECC(data) {
+  ecc = calculateECC(data);   // fold over ALL words (0..92 for a 93-word frame)
+  data[45] = ecc;                                  // low 32 bits
+  data[46] = (data[46] & 0xffff0000) | ((ecc>>32) & 0xffff);  // high 16 bits, low half of word 46 preserved
+}
+bool verifyECC(data) { /* recompute and compare against stored value */ }
+```
+(`prjuray-tools/lib/xilinx/xcupseries/ecc.cc`, full file read). **No
+separate `xcuseries` (plain UltraScale) ECC file exists in the checked-out
+`prjuray-tools/lib/include/prjxray/xilinx/xcuseries/` directory beyond
+`ecc.h`/`.cc` being *listed*** — not read in full this session; treat plain
+UltraScale's ECC algorithm/word-position as **unconfirmed** (§9) and, if it
+turns out to reuse `xc7series::updateECC` unmodified (matching its
+identical `FrameAddress` layout, §4.2), that would be consistent with the
+pattern; a later agent must open
+`prjuray-tools/lib/xilinx/xcuseries/ecc.cc` before implementing plain
+UltraScale ECC.
+
+**Recommendation for `fasm-xilinx`**: implement ECC per-architecture as a
+trait method (`fn update_ecc(&self, frame: &mut [u32])`) with three
+concrete implementations — Series7 (word 50, 13-bit, `idx*32 +
+{0x1320,0x1340,0x1360}` banding, parity fold at word 100) and
+UltraScale+ (word 45+46, 48-bit, `(word+(255-92))<<3|nibble` offset,
+odd-parity + nibble-expansion) copied verbatim from the two `.cc` files
+quoted above; UltraScale (xcuseries) needs its own file read before coding
+— do not assume it matches either.
+
+### 6.6 Bitstream reader (`bitread` / `BitstreamReader<ArchType>`)
+
+`BitstreamReader<ArchType>::InitWithBytes` (`lib/include/prjxray/xilinx/bitstream_reader.h:144-170`):
+search the raw byte stream for the 4-byte sync word `AA 99 55 66`
+anywhere (not requiring it at a fixed offset — tolerates the header TLV
+fields being variable length), discard everything up to and including it,
+then reinterpret the remainder as big-endian `ArchType::WordType` (u32 for
+Series7/UltraScale/UltraScalePlus, u16 for Spartan6) words via
+`make_big_endian_span` (`lib/include/prjxray/big_endian_span.h`, not
+separately quoted — a straightforward big-endian word reinterpretation
+iterator). Then `begin()`/`end()` give an iterator over
+`ConfigurationPacket<ConfRegType>` by repeatedly calling
+`ConfigurationPacket::InitWithWords` (§6.2) on the remaining word span,
+skipping consumed words each time (`lib/include/prjxray/xilinx/bitstream_reader.h:189-234`).
+`Configuration<ArchType>::InitWithPackets` (`lib/include/prjxray/xilinx/configuration.h:231-360`,
+the Series7/UltraScale/UltraScalePlus generic template — Spartan6 has its
+own `FAR_MAJ`/`FAR_MIN` two-register variant not relevant here) replays the
+packet stream as a tiny register-machine: tracks `command_register`,
+`frame_address_register`, `mask_register`, `ctl1_register`, and a
+`start_new_write` flag; on `Write(IDCODE, [v])`, if `v != part.idcode()`
+the whole read **fails** (`return {}`, i.e. `bitread`/`xc7frames2bit`-style
+consumers get "Bitstream does not appear to be for this part",
+`tools/bitread.cc:96-100`); on `Write(CMD, [1 /*WCFG*/])`, set
+`start_new_write = true` (also on `Write(FAR, [addr])` if the
+undocumented `ctl1_register` bit 21 is clear — the "PERFRAMECRC" quirk,
+`configuration.h:294-311`); on `Write(FDRI, [data...])`, chunk `data` into
+`words_per_frame`-sized frames starting at `frame_address_register` (only
+latched into `current_frame_address` the *first* time after a
+`start_new_write`), auto-incrementing via `part.GetNextFrameAddress` for
+each subsequent chunk, and **skipping `2*words_per_frame` words whenever
+the next address crosses a row/block-type boundary** (mirroring the
+writer's separator insertion, `configuration.h:335-351`) — this is how the
+reader correctly re-syncs past the "2 zero frames per row" padding
+without needing to specially detect all-zero frames.
+
+`bitread`'s own CLI (`tools/bitread.cc`) layers a "skip word 50's low 13
+ECC bits unless `-C`" convention on top when printing/exporting `.bits`
+text (`(i != 50 || FLAGS_C)`, `tools/bitread.cc:184,252` — Series7-specific
+magic number 50, **not parameterized per architecture in this file**,
+another latent 7-series-only assumption a Rust reimplementation should fix
+by using the per-architecture ECC word index from §6.5).
+`prjuray-tools/tools/bitread.cc` adds an `-E` flag ("Ignore failing frame
+ECC verification") not present in plain `prjxray`'s `bitread.cc`, implying
+prjuray's `bitread` actively calls `xcupseries::verifyECC` and fails by
+default if it doesn't match — worth mirroring in `fasm-xilinx`'s reader for
+UltraScale+ specifically.
+
+## 7. Reference test data for unit tests
+
+| Source | Path | License | Contents |
+|---|---|---|---|
+| f4pga-xc-fasm | `tests/test_data/db/` | Apache-2.0 | Miniature prjxray-db: `mapping/{devices,parts}.yaml` (one fake part `"xc7"`, device `"xc7"`, fabric `"xc7"`); `xc7/{tilegrid.json (255 lines), part.json ({"iobanks":{"99":"X1Y26","66":"X113Y26"}}), package_pins.csv}`; `segbits_{clblm_l(96 lines),hclk_ioi3(2),hclk_l(2),int_l(13),liob33(6),riob33(6)}.db`; `tile_type_{CLBLM_L,HCLK_IOI3,HCLK_L,INT_L,LIOB33,LIOB33_SING,RIOB33,RIOB33_SING}.json`. No `part.yaml`, no `ppips_*`/`mask_*` files (tile types used have none). |
+| f4pga-xc-fasm | `tests/test_data/{lut,ff_int_0s,ff_int_op1}.fasm`, `tests/test_data/{lut_int,ff_int}.fasm` + `tests/test_data/{lut_int,ff_int}/{design.bits,top.v}` | Apache-2.0 | FASM inputs + golden `.bits` (bitread-format) outputs for differential testing; e.g. `lut.fasm` sets 13 `ALUT.INIT[N]` bits on `CLBLM_L_X10Y102.SLICEM_X0`; `ff_int_0s.fasm` exercises explicit `= 0` assignment on `FFSYNC`/`LATCH` plus several pseudo-PIP features (`INT_L_X10Y102.BYP_ALT0.EE2END0` etc., all expected to be no-ops) plus `HCLK_L` `ENABLE_BUFFER`/leaf-clock features. |
+| f4pga-xc-fasm | `tests/test_data/iob/{liob_stepdown,riob_stepdown}.{fasm,bits}` | Apache-2.0 | STEPDOWN-bank-propagation golden test (§5 step 9); `liob_stepdown.fasm` sets STEPDOWN on one `LIOB33` site and expects it propagated to `RIOB33_X43Y1`'s other site via the shared IO bank. |
+| f4pga-xc-fasm | `tests/test_fasm2frames.py` | Apache-2.0 | The Python test harness itself — reusable as a spec for exact expected behavior (`frm2bits`/`bitread2bits` comparison helpers, `test_lut/_int/_ff_int/_ff_int_0s/_stepdown_1/_2`, plus `@unittest.skip`ped cases documenting **known-unimplemented/edge behavior**: `test_ff_int_op1` (omitted-key handling), `test_opkey_enum` (enumerated optional key should be a syntax error), `test_dupkey` (duplicate key detection — **confirms no duplicate-key error exists today**, consistent with §5 step 5), `test_sparse` (sparse vs full equivalence — confirms the semantics in §5 step 10 but is itself skipped, i.e. not CI-verified upstream either). |
+| prjxray | `lib/test_data/` | ISC | C++ unit fixtures: `configuration_test.{yaml,bit,debug.bit,perframecrc.bit}` (tiny real Series7 bitstreams + matching `part.yaml`, used by `configuration_test.cc`/`bitstream_reader_test.cc`/`bitstream_writer_test.cc` — good candidates for a Rust reader/writer round-trip test), `{one_entry,one_entry_extra_whitespace,one_entry_missing_bit,one_entry_empty_tag,two_entries}.segbits` + `small_file`/`empty_file` (segbits-parser edge cases for `segbits_file_reader_test.cc`), `ToolsTestData.tar.gz` (not extracted/inspected this session). |
+| prjuray-tools | `lib/test_data/` (present per the earlier `find`; not read in detail this session — same directory shape expected as prjxray's) | Apache-2.0 | Not yet inventoried — a later agent should `tar`/list this before relying on it; flagged in §9. |
+
+All licenses above (ISC, Apache-2.0, CC0-1.0) are copy-friendly into this
+repo's `tests/`; CC0-1.0 database slices (prjxray-db, prjuray-db) need no
+attribution but keeping a short provenance note (repo + commit) in
+`tests/corpus/README` is still good practice.
+
+## 8. Proposed Rust data model for `fasm-xilinx`
+
+### 8.1 Core structs
+
+```rust
+/// One architecture's fixed shape (word count, address bit layout, ECC).
+trait XilinxArchitecture {
+    const WORDS_PER_FRAME: usize;         // 101 / 123 / 93
+    type FrameAddress: Copy + Ord + Into<u32> + From<u32>;
+    fn decompose(addr: u32) -> (BlockType, bool /*bottom*/, u8 /*row*/, u16 /*col*/, u16 /*minor*/);
+    fn compose(bt: BlockType, bottom: bool, row: u8, col: u16, minor: u16) -> u32;
+    fn update_ecc(frame: &mut [u32; Self::WORDS_PER_FRAME]);
+    fn config_register(name: &str) -> Option<ConfigRegister>; // shared Series7 table for all 3
+}
+struct Series7;      // 101 words, block[25:23] row[21:17]+half[22] col[16:7] minor[6:0]
+struct UltraScale;   // 123 words, SAME bit layout as Series7 (verify xcuseries ECC before shipping)
+struct UltraScalePlus; // 93 words, block[26:24] row[22:18]+half[23] col[17:8] minor[7:0]
+
+/// Part: idcode + the row/bus/column frame-count tree (from part.json OR part.yaml).
+struct Part<A: XilinxArchitecture> {
+    idcode: u32,
+    // top/bottom -> row -> block_type -> column -> frame_count (Series7/UltraScale)
+    // row -> block_type -> column -> frame_count             (UltraScale+/xcupseries: no top/bottom split)
+    rows: BTreeMap<(bool /*bottom, always false for xcupseries*/, u8), BTreeMap<BlockType, BTreeMap<u16, u16>>>,
+    iobanks: Option<HashMap<u32, String>>,   // absent for prjuray-db today
+    _arch: PhantomData<A>,
+}
+impl<A: XilinxArchitecture> Part<A> {
+    fn is_valid_frame_address(&self, addr: A::FrameAddress) -> bool;
+    fn next_frame_address(&self, addr: A::FrameAddress) -> Option<A::FrameAddress>;
+}
+
+/// One IdString-keyed tile in the grid.
+struct TileGrid {
+    tiles: HashMap<IdString /*tile instance name*/, TileInfo>,
+    loc_index: HashMap<(i32, i32), IdString>,   // grid_x, grid_y -> tile
+}
+struct TileInfo {
+    tile_type: IdString,
+    grid_x: i32, grid_y: i32,
+    clock_region: Option<IdString>,
+    bits: SmallVec<[(BlockType, BitsBlock); 2]>,  // almost always 1-2 entries
+    sites: HashMap<IdString, IdString>,           // site name -> site type
+    pin_functions: HashMap<IdString, IdString>,
+    prohibited_sites: Vec<IdString>,
+}
+struct BitsBlock {
+    base_address: u32, frames: u32, offset: u32, words: u32,
+    alias: Option<BitAlias>,
+}
+struct BitAlias { tile_type: IdString, start_offset: u32, sites: HashMap<IdString, IdString> }
+
+/// Compact per-tile-type segbits table: feature id -> bit list.
+/// feature id = IdString of "TILE_TYPE.rest.of.feature" (WITHOUT the "[N]" suffix
+/// when the feature is multi-bit-addressed; the address int is a separate key).
+struct TileTypeSegbits {
+    // exact-name lookup (address == 0 path)
+    by_name: HashMap<IdString, (BlockType, Box<[SegBit]>)>,
+    // "[N]"-addressed lookup: base feature id -> address -> (block_type, full feature id)
+    // (kept as a separate index only to preserve the exact 2-step lookup order from
+    // prjxray/tile_segbits.py:169-184 — full segbits are still looked up via `by_name`
+    // using the full (with-suffix) feature id once the address resolves it)
+    addressed: HashMap<IdString, BTreeMap<u32, (BlockType, IdString)>>,
+    ppips: HashMap<IdString, PpipType>,   // always | default | hint — all treated the same by the assembler
+}
+struct SegBit { word_column: u32, word_bit: u32, is_set: bool }  // word_bit NOT clamped to 0..32, see §3.2/§4.1
+
+/// Frames container: BTreeMap keeps numeric-address order for free (needed by
+/// the bitstream writer's row-boundary zero-frame insertion, §6.3).
+type Frames<const N: usize> = BTreeMap<u32, [u32; N]>;   // N = Series7:101, UltraScale:123, UltraScalePlus:93
+
+/// Bitstream writer trait, one impl per architecture (packet sequences differ, §6.3).
+trait BitstreamWriter<A: XilinxArchitecture> {
+    fn write(part: &Part<A>, frames: &Frames<{A::WORDS_PER_FRAME}>,
+              part_name: &str, frm_file_name: &str, generator: &str,
+              out: &mut impl Write) -> io::Result<()>;
+}
+/// Bitstream reader: bytes -> Frames, for verification / bit2fasm.
+trait BitstreamReader<A: XilinxArchitecture> {
+    fn read(part: &Part<A>, bytes: &[u8]) -> Result<Frames<{A::WORDS_PER_FRAME}>, ReadError>;
+}
+```
+
+`IdString` is the Phase 1 `fasm` crate's interned-string type (per
+`docs/rewrite/DESIGN-idstring.md`) — reuse it for tile names, tile types,
+site names and feature names throughout `fasm-xilinx` so a fully-loaded
+part database (tens of thousands of tiles, hundreds of thousands of
+segbits) has no per-string heap allocation beyond the interner's own
+tables, matching PLAN.md's "keyed by IdString, no per-feature heap
+allocation in the hot path" goal.
+
+### 8.2 Binary cache format (sketch)
+
+Versioned, content-hashed, `mmap`-able single file per `(db_root, part)`:
+```
+struct CacheHeader {
+    magic: [u8; 8],           // b"FASMXDB1"
+    format_version: u32,      // bump on any layout change
+    source_hash: [u8; 32],    // BLAKE3 (or similar) over: db_root path is NOT hashed,
+                               // but the *content* of every file this loader opened
+                               // for this part is (tilegrid.json, every segbits/ppips
+                               // file for every tile type actually present in the
+                               // tilegrid, part.json/.yaml, package_pins.csv,
+                               // required_features.fasm if present) — content hash,
+                               // not mtimes, so it's correct across git checkouts.
+    part_name_len: u32, part_name: [u8],
+    // then: fixed-size, mmap-friendly tables (offsets recorded here):
+    //   tile_name_interner_blob, tile_table, bits_table,
+    //   tile_type_interner_blob, segbits_tables (one per tile type present),
+    //   part_frame_tree
+}
+```
+Load path: hash the same file set, compare against `source_hash`; on match,
+`mmap` and zero-copy-deserialize (e.g. via `rkyv` or a hand-rolled
+`bytemuck`-based layout — pick during T5.3, out of scope for this design
+doc beyond the shape above); on mismatch, fall back to the text-file loader
+and rewrite the cache. `fasm-db-cache` subcommand (T5.3) exposes
+`build`/`verify`/`clear` operations. Because prjuray-db has **no
+`mapping/`** directory, the cache key must record which addressing scheme
+(fabric-indirected vs. per-part) was used, not just assume prjxray-db's
+shape (§2.2, §9).
+
+### 8.3 Differential-test behaviours to cover (T5.9/T6.3)
+
+Derived directly from §5/§6 above — a later differential-test-generator
+task should assert Rust output matches the Python/C++ reference for each
+of these, using the miniature `f4pga-xc-fasm/tests/test_data/db` fixture
+(§7) plus synthetic per-segbit corpora for full artix7:
+
+1. Plain single-bit feature enable/disable (`TAG` bare vs `TAG = 0`).
+2. `!`-negated bits in a segbits entry (bit must end up **clear**).
+3. Multi-bit `TAG[a:b] = value` — only bits that are 1 in `value` produce
+   `enable_feature` calls; an all-zero value produces none (§5 step 2).
+4. Multi-bit feature with a gap in the `[N]` indices present in the
+   segbits DB (address not found → `FasmLookupError`, batched not immediate).
+5. Unknown feature name entirely → `FasmLookupError`, batched, exact
+   message format `"Segment DB %s, key %s not found from line '%s'"`.
+6. A feature that is a listed `ppips` entry (any of always/default/hint) →
+   silently zero bits, no error, tile's bus is **not** marked "in use" by
+   this feature alone (only if some other bit on the same bus was touched).
+7. Two FASM lines that set the same physical bit to the same value
+   (idempotent, no error) vs. to conflicting values (`!` vs plain, or two
+   different features overlapping) → `FasmInconsistentBits`, raised
+   immediately (not batched), first conflict wins.
+8. `--sparse` vs. non-sparse `get_frames` — sparse output must still
+   zero-fill *every* frame of a touched tile's bus, and touched-but-not-set
+   bits stay 0.
+9. `--roi` marks ROI-box tiles' frames in-use even with no FASM feature on
+   them; features outside the ROI box are still applied normally (no
+   filtering).
+10. `--emit_pudc_b_pullup`: synthetic lines only emitted if PUDC_B site
+    unused; part with 0 PUDC_B sites → no-op, no crash (fix the upstream
+    `assert` for >1 site into a clean error, §9).
+11. STEPDOWN bank propagation across `package_pins.csv` + `part.json`
+    `iobanks` (miniature fixture's `liob_stepdown`/`riob_stepdown` cases).
+12. `required_features.fasm` extra features applied after the main file,
+    same conflict-checking semantics (no real fixture available — write a
+    synthetic one, §9).
+13. `TileSegbitsAlias` bit remapping (HCLK U-turn / `_SING` IOB tiles) —
+    needs a synthetic segbits+tilegrid fixture since the miniature f4pga
+    fixture has none; use real artix7 data (`prjxray-db/artix7`) for this.
+14. `.frm` writer: exact `0x%08X <csv 0x%08X words>\n` format, numeric
+    address ascending order.
+15. `.frm` reader: word-count mismatch → skip line with warning, not error;
+    ECC word always recomputed on read (never trusted from the file).
+16. Bitstream writer: exact packet sequence per architecture (§6.3), header
+    TLV byte-for-byte (masking timestamp bytes), 2-zero-frame row-boundary
+    separators, `addMissingFrames` densification regardless of `--sparse`.
+17. Bitstream reader: IDCODE mismatch → clean error (not for the part);
+    row-boundary zero-frame skip; per-architecture ECC verification
+    (UltraScale+ `verifyECC`, optionally-ignorable via an `-E`-equivalent
+    flag).
+18. UltraScale/UltraScale+ frame-address bit layout (§4.2) — a synthetic
+    round-trip test (`decompose(compose(bt,bottom,row,col,minor)) ==
+    (bt,bottom,row,col,minor)`) for the boundary values (`minor=127` for
+    Series7/UltraScale, `minor=255` for UltraScale+, `block_type` at the
+    shifted bit position for UltraScale+).
+
+### 8.4 CLI flags to reproduce (drop-in compatibility, PLAN.md goal)
+
+All argparse/gflags declarations read verbatim this session:
+
+**`fasm2frames` (from `xc_fasm/fasm2frames.py:285-320`, prjuray's
+`prjuray/utils/fasm2frames.py:142-166` is the same set minus
+`--emit_pudc_b_pullup`, plus `--dump_bits`):**
+
+| Flag | Type | Default | Help (verbatim) |
+|---|---|---|---|
+| `--db-root` | str | required unless `XRAY_DATABASE_DIR`+`XRAY_DATABASE` env set (then defaults to `$XRAY_DATABASE_DIR/$XRAY_DATABASE`) | `"Database root."` |
+| `--part` | str | required unless `XRAY_PART` env set | `"Part name. When not given defaults to XRAY_PART env. var."` (prjuray: `"...URAY_PART env. var."`) |
+| `--sparse` | flag (`store_true`) | `False` | `"Don't zero fill all frames"` |
+| `--roi` | str | `None` | `"ROI design.json file defining which tiles are within the ROI."` |
+| `--emit_pudc_b_pullup` | flag | `False` | `"Emit an IBUF and PULLUP on the PUDC_B pin if unused"` (prjxray only) |
+| `--debug` | flag | `False` | `"Print debug dump"` |
+| `--dump_bits` | flag | `False` | `"Output in bits format (bit_%08x_%03d_%02d)"` (prjuray only) |
+| `fn_in` | positional str | required | `"Input FPGA assembly (.fasm) file"` |
+| `fn_out` | positional str, `nargs='?'` | `/dev/stdout` | `"Output FPGA frame (.frm) file"` |
+
+**`xcfasm` (`xc_fasm/xc_fasm.py:29-56`)** — same `--db-root`/`--part`/
+`--sparse`/`--roi`/`--emit_pudc_b_pullup`/`--debug` as above, plus:
+
+| Flag | Type | Default | Help |
+|---|---|---|---|
+| `--part_file` | str | required | `"Part YAML file."` |
+| `--frm2bit` | str | `"xc7frames2bit"` | `"xc7frames2bit tool."` |
+| `--fn_in` | str (named flag, **not positional** here) | — | `"Input FPGA assembly (.fasm) file"` |
+| `--bit_out` | str | — | `"Output FPGA bitstream (.bit) file"` |
+| `--frm_out` | str | `None` (→ tempfile if unset) | `"Output FPGA frame (.frm) file"` |
+
+Behavior: builds `.frm` via the same in-process `fasm2frames()` call, then
+shells out (`subprocess.check_output`, `shell=True`) to
+`"{frm2bit} --frm_file {frm_out} --output_file {bit_out} --part_name {part} --part_file {part_file}"`
+— i.e. `xcfasm` itself never links the C++ writer; a Rust `xcfasm`-compatible
+binary should call its own in-process bitstream writer instead of shelling
+out, but must accept identical flags.
+
+**`xc7frames2bit` (`tools/xc7frames2bit.cc:17-28`, gflags):**
+
+| Flag | Type | Default | Help |
+|---|---|---|---|
+| `--part_name` | string | `""` | `"Name of the 7-series part"` |
+| `--part_file` | string | `""` | `"Definition file for target 7-series part"` |
+| `--frm_file` | string | `""` | `"File containing a list of frame deltas to be applied to the base bitstream.  Each line in the file is of the form: <frame_address> <word1>,...,<word101>."` |
+| `--output_file` | string | `""` | `"Write bitstream to file"` |
+| `--architecture` | string | `"Series7"` | `"Architecture of the provided bitstream"` (accepts `Series7`/`UltraScale`/`UltraScalePlus`/`Spartan6`) |
+
+**`bitread` (`tools/bitread.cc:28-60`, gflags; prjuray-tools' copy is
+identical plus one extra flag noted):**
+
+| Flag | Type | Default | Help |
+|---|---|---|---|
+| `-c` | bool | `false` | `"output '*' for repeating patterns"` |
+| `-C` | bool | `false` | `"do not ignore the checksum in each frame"` (prjxray) / `"do not ignore the ECC bits in each frame"` (prjuray) |
+| `-f` | int32 | `-1` | `"only dump the specified frame (might be used more than once)"` |
+| `-F` | string | `""` | `"<first_frame_address>:<last_frame_address> only dump frame in the specified range"` |
+| `-o` | string | `""` | `"write machine-readable output file with config frames"` |
+| `-p` | bool | `false` | `"output a binary netpgm image"` |
+| `-x` | bool | `false` | `"use format 'bit_%%08x_%%03d_%%02d_t%%d_h%%d_r%%d_c%%d_m%%d'\n..."` (full multi-line help gives field meanings: complete frame id, word index, bit index, decoded block type, top/bottom, row, column, minor) |
+| `-y` | bool | `false` | `"use format 'bit_%%08x_%%03d_%%02d'"` |
+| `-z` | bool | `false` | `"skip zero frames (frames with all bits cleared) in o"` |
+| `--part_file` | string | `""` | `"YAML file describing a Xilinx part"` |
+| `--architecture` | string | `"Series7"` | `"Architecture of the provided bitstream"` |
+| `--aux` | string | `""` | `"write machine-readable output file with auxiliary bitstream data"` |
+| `-E` (prjuray-tools only) | bool | `false` | `"Ignore failing frame ECC verification"` |
+
+Positional: optional single bitfile path arg (else reads stdin).
+
+**`gen_part_base_yaml` (`tools/gen_part_base_yaml.cc:27`, produces
+`part.yaml` from a debug bitstream — needed only if `fasm-xilinx` ever
+regenerates `part.yaml` itself, not for the assemble/write pipeline):**
+
+| Flag | Type | Default | Help |
+|---|---|---|---|
+| `-f` | bool | `false` | `"Use FAR registers instead of LOUT ones"` |
+
+Positional: required bitfile path.
+
+**`bit2fasm` (`xc_fasm/bit2fasm.py:69-96`):**
+
+| Flag | Type | Default | Help |
+|---|---|---|---|
+| `--db-root`, `--part` | — | — | (same as above) |
+| `--bits-file` | str | `None` (tempfile) | `"Output filename for bitread output (default: tempfile)"` |
+| `--bitread` | str | `"bitread"` | `"Name of part being targetted"` (sic — help text is a copy-paste bug in the upstream tool, reproduce verbatim if byte-diffing `--help` output) |
+| `--frame_range` | str | `None` | `"Frame range to use with bitread."` |
+| `bit_file` | positional | required | `"Input bitstream file"` |
+| `--verbose` | flag | `False` | `"Print lines for unknown tiles and bits"` |
+| `--canonical` | flag | `False` | `"Output canonical bitstream."` |
+| `--fasm_file` | `FileType('w')` | `sys.stdout` | `"Output FASM file"` |
+
+Behavior: shells out to an external `bitread` binary (`subprocess.check_output`) to
+turn the `.bit` into a `.bits` text file, then decodes that with
+`prjxray.fasm_disassembler.FasmDisassembler` + `fasm.output.merge_and_sort`
+— i.e. `bit2fasm` is a thin composition of `bitread` (C++) + the Python
+disassembler; a Rust equivalent should call its own in-process bitstream
+reader (§6.6) instead of shelling out, but keep the same flags.
+
+## 9. Open questions / risks
+
+1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**
+   `prjuray-tools/lib/include/prjxray/xilinx/xcuseries/ecc.h` and
+   `lib/xilinx/xcuseries/ecc.cc` exist (confirmed via `find`) but were not
+   opened this session (token budget). Do **not** assume it matches either
+   Series7's (word 50, 13-bit) or UltraScale+'s (words 45/46, 48-bit)
+   algorithm before implementing — a later agent must read that file first.
+   Plain UltraScale's `FrameAddress` layout is confirmed identical to
+   Series7's (§4.2), which is *some* evidence its ECC might also match
+   Series7's, but this is not verified.
+2. **prjuray-db as checked out documents only UltraScale+ (`zynqusp`,
+   `URAY_ARCH=UltraScalePlus`), not plain UltraScale.** No plain-UltraScale
+   family directory exists in `prjuray-db`. `fasm-xilinx`'s T6.1/T6.2
+   differential tests (T6.3) can only be run against real per-bit data for
+   UltraScale+ unless another database source is found (e.g. building one
+   with the prjuray fuzzers, out of scope here) or the corrected
+   `xcuseries` C++ types are exercised only via synthetic/unit tests.
+3. **prjuray-db has zero `ppips_*.db` and zero `mask_*.db` files.**
+   Confirmed by exhaustive `find`. This means, for every zynqusp tile type
+   in the current database, `TileSegbits.ppips` is always empty — any
+   feature that *should* be a no-op pseudo-PIP but isn't yet documented
+   will instead raise `FasmLookupError` (or, worse, silently match a
+   real segbit if the tile-type happens to also have one under the same
+   name — unlikely but not provably impossible without cross-checking).
+   This is a database-completeness gap in the upstream project, not
+   something `fasm-xilinx` can work around — document it in `COMPAT.md`
+   when T6.x lands, and expect zynqusp differential tests to have a higher
+   "expected FasmLookupError" rate for pip-only features than artix7's.
+4. **No `required_features.fasm` file exists anywhere in the checked-out
+   artix7 or zynqusp database slices.** The required-features code path
+   (§5 step 6) is implemented per spec here but is **unexercised by any
+   available real fixture** — T5.9's differential-test corpus generator
+   should synthesize a fake `required_features.fasm` for at least one test
+   part to cover this path, since neither reference database exercises it.
+5. **`fasm-xilinx`'s loader must detect which of the two addressing
+   schemes (§2.1 fabric-indirected vs §2.2 per-part-direct) a given
+   `db_root/family` uses**, since nothing in `settings.sh`/the directory
+   itself declares it explicitly beyond "does `mapping/devices.yaml`
+   exist". Recommend probing for `<db_root>/<family>/mapping/devices.yaml`
+   and falling back to the per-part-direct scheme if absent, matching how
+   `prjuray-tools/prjuray/db.py` has no `get_fabric_for_part` call at all
+   (it simply never needed one because prjuray-db was always structured
+   this way) versus `prjxray/db.py`'s explicit `get_fabric_for_part` call.
+6. **`CFG_CLB` (`BlockType` value `2`) never appears in any real artix7
+   tilegrid `bits` block observed this session** (only `CLB_IO_CLK` and
+   `BLOCK_RAM` were found across the whole `xc7a50t` tilegrid, 18055
+   tiles). It is a legitimate enum value (`prjxray/util.py:348-352`,
+   `lib/include/.../xc7series/block_type.h:21-26`) used by the frame
+   address math and appears in `part.yaml`'s `configuration_buses` in
+   principle, but no concrete example was found to quote. Do not special
+   case it away — just note that it is untested against real data in this
+   research pass.
+7. **The PUDC_B `assert pudc_b_tile_site == None`
+   (`xc_fasm/fasm2frames.py:98`) will crash on any part with more than one
+   PUDC_B-labeled pin.** No such part was observed in the checked-out
+   artix7 slice, but `fasm-xilinx` should turn this into a clean, testable
+   error instead of blindly reproducing a Python `AssertionError` — this
+   is a deliberate, documented behavior *change*, not a compatibility gap,
+   since no CLI output/exit-code contract depends on the exact assertion
+   text (`fasm2frames.py`'s CLI has no handling for `AssertionError`
+   either way — it's an uncaught crash either way; a clean `Result::Err`
+   with a descriptive message is strictly better and does not regress any
+   observable compatibility surface).
+8. **`prjuray-tools/lib/test_data/` was not inventoried** (only confirmed
+   to exist via `find`). Before relying on it for T5.9/T6.3 fixtures, a
+   later agent must `ls`/inspect it — treat §7's prjuray-tools row as a
+   placeholder, not a verified fixture list.
+9. **HCLK "middle word" (§4.1) is described from a single tilegrid
+   example** (`HCLK_L_BOT_UTURN_X72Y130`, `offset: 50, words: 1`); it was
+   not independently cross-checked against a *non-alias* HCLK tile's
+   `bits` block (e.g. a plain `HCLK_L`/`HCLK_R` entry) to confirm `offset:
+   50` is universal for all HCLK row tile types and not an artifact of the
+   alias example chosen. A later agent implementing HCLK-specific logic
+   should spot-check a few more HCLK tile instances in `xc7a50t/tilegrid.json`.
+10. **Whether the UltraScale (xcuseries) `Row`/`ConfigurationBus`/
+    `ConfigurationColumn` `.cc` files (`prjuray-tools/lib/xilinx/xcuseries/*.cc`)
+    contain any further behavioral differences from Series7's beyond
+    `FrameAddress`'s bit-field ranges was not verified** — only the header
+    files' shapes were confirmed structurally similar by directory listing
+    and the `frame_address.h` diff; the `.cc` implementations for
+    `xcuseries`'s row/bus/column next-address logic were not opened this
+    session (they are very likely byte-identical in *logic* to Series7's,
+    given the plain-prjxray shim reused Series7's types wholesale and
+    still produced a plausible bitstream — but "very likely" is not
+    "confirmed", so flag before relying on it for UltraScale-specific
+    padding/row-boundary logic in T6.2).
