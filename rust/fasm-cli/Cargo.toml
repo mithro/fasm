@@ -8,6 +8,10 @@ authors.workspace = true
 rust-version.workspace = true
 description = "Command line tools for FASM: the `fasm` binary (100% command line compatible with the original Python `fasm/tool.py`) and, later, the Xilinx bitstream tool binaries."
 
+[lib]
+name = "fasm_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "fasm"
 path = "src/main.rs"

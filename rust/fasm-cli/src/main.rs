@@ -29,16 +29,11 @@
 //! stdout with exit code 0. The known differences are listed in the CLI
 //! section of `docs/rewrite/COMPAT.md`.
 
-mod argparse;
-mod pystr;
-mod terminal;
-mod tool;
-mod unicode_tables;
-
 use std::io;
 use std::process::ExitCode;
 
-use pystr::PyStr;
+use fasm_cli::pystr::PyStr;
+use fasm_cli::{terminal, tool};
 
 fn main() -> ExitCode {
     let args: Vec<PyStr> = std::env::args_os()
