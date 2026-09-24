@@ -65,6 +65,21 @@ fn from_le_limbs_matches_from_digits() {
 }
 
 #[test]
+fn as_le_limbs_is_trimmed_and_round_trips() {
+    assert_eq!(FeatureValue::zero().as_le_limbs(), &[] as &[u64]);
+    assert_eq!(FeatureValue::from_u64(5).as_le_limbs(), &[5]);
+    assert_eq!(
+        FeatureValue::from_u128((2u128 << 64) | 1).as_le_limbs(),
+        &[1, 2]
+    );
+    for limbs in [&[u64::MAX; 4][..], &[0, 0, 0, 0, 1], &[7, 0, 0, 0, 0, 3]] {
+        let v = FeatureValue::from_le_limbs(limbs);
+        assert_eq!(v.as_le_limbs(), limbs);
+        assert_eq!(FeatureValue::from_le_limbs(v.as_le_limbs()), v);
+    }
+}
+
+#[test]
 fn from_u128_basic() {
     let v = FeatureValue::from_u128(u128::MAX);
     assert_eq!(v.bit_len(), 128);

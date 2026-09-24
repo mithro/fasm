@@ -1,2 +1,51 @@
+# The fasm Python package, with its parser implemented in Rust (the
+# fasm._fasm_rs extension module, crate rust/fasm-python), built with
+# maturin:
+#
+#     pip install .                      # or: pip wheel .
+#     maturin develop --release          # editable install into a venv
+#
+# The pure Python package lives in fasm/ ("python-source" below); the
+# extension module is placed next to it as fasm/_fasm_rs.*.so. setup.py is
+# the legacy setuptools + CMake + ANTLR build and is no longer used.
+# See docs/rewrite/DESIGN-python.md.
+
 [build-system]
-requires = ["setuptools", "wheel", "cython"]
+# maturin >= 1.9.4 sets PYO3_BUILD_EXTENSION_MODULE, which replaces pyo3's
+# deprecated `extension-module` feature (see rust/fasm-python/Cargo.toml).
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "fasm"
+# TODO(T3.2): derive the version from `git describe` like update_version.py
+# (fasm/version.py) did for the setup.py build.
+version = "0.1.0.dev0"
+description = "FPGA Assembly (FASM) Parser and Generation library"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "F4PGA Authors", email = "f4pga-wg@lists.chipsalliance.org" },
+]
+requires-python = ">=3.9"
+dependencies = ["textx"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/chipsalliance/fasm"
+
+[project.scripts]
+fasm = "fasm.tool:main"
+
+[tool.maturin]
+manifest-path = "rust/fasm-python/Cargo.toml"
+python-source = "."
+module-name = "fasm._fasm_rs"
+bindings = "pyo3"
+strip = true
+exclude = ["fasm/version.py", "fasm/**/__pycache__/**"]

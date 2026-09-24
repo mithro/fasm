@@ -282,6 +282,15 @@ impl FeatureValue {
         Self::from_limb_vec(out)
     }
 
+    /// The value as little endian `u64` limbs (least significant limb
+    /// first) without high zero limbs: empty for `0`. The inverse of
+    /// [`Self::from_le_limbs`]; used by the Python bindings to build a
+    /// Python `int` without going through a string.
+    #[must_use]
+    pub fn as_le_limbs(&self) -> &[u64] {
+        self.trimmed()
+    }
+
     /// Returns `true` if the value is `0`.
     #[must_use]
     pub fn is_zero(&self) -> bool {

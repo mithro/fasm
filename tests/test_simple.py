@@ -97,7 +97,7 @@ class TestFasm(unittest.TestCase):
                 check_round_trip(self, parser, result)
 
     def test_implementations(self):
-        self.assertTrue('antlr' in fasm.parser.available)
+        self.assertTrue('rust' in fasm.parser.available)
         self.assertTrue('textx' in fasm.parser.available)
 
 
