@@ -472,3 +472,14 @@ what happened, branch/commit references, open issues.
   fix a `find | head` under pipefail that aborts run-fpgas-online.sh on a
   fresh setup, and commit the yosys `$buf` techmap workaround as a patch.
   Recorded T5.8b (fetch-db.sh openxc7 source). Fixes in progress.
+* T5.6/T5.7 implemented on branch `worktree-agent-ae46691f80970f2d8` (16
+  commits): Series7 bitstream writer (header, 13 sync words, §6.3 packet
+  sequence, addMissingFrames, ECC word 50, 2 zero frame padding, RCRC
+  without CRC) and reader (packet iterator, FAR tracking, to_frames),
+  gflags emulation, `xc7frames2bit`/`bitread`/`xcfasm` binaries
+  (SOURCE_DATE_EPOCH added to pin the header time), configuration_ranges
+  part.yaml support. Golden smoke .bit byte identical; counter dense =
+  sparse = oracle; difftest-xilinx: 87 fasm2frames + 154 xc7frames2bit/
+  bitread + 45 xcfasm + 6 reference bitstreams all identical; cli-difftest
+  1535 passed. xc7a200t dense .bit in 8-17 ms (0.12 s whole binary vs
+  0.25 s reference). In review.
