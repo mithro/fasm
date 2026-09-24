@@ -262,3 +262,8 @@ what happened, branch/commit references, open issues.
   tree: 715 passed, 0 differences. T2.2 (CLI differential test) is covered
   by tests/cli/test_cli_compat.py and `make cli-difftest`, so marked done.
 * T3.1 (Python bindings) started.
+* T1.5 implemented on branch `worktree-agent-ae95e0887b836dfce` (8 commits):
+  corpus v1 (examples, f4pga-xc-fasm, VTR literals, synthetic edge/invalid
+  cases from tools/gen-corpus.py; 600 KB), rust/fasm/examples/dump.rs
+  (same JSON as dump.py), tools/difftest.py with COMPAT.md based classifier
+  (70 files, 0 unexplained), `make difftest`, pytest wrapper. In review.

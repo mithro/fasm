@@ -51,7 +51,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T1.4 `output` module: string formatting, canonicalisation,
       `merge_features`, `merge_and_sort` (MergeModel) with tests ported from
       Python behaviour (after T1.2).
-- [~] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test
+- [r] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test
       data, VTR `utils/fasm/test` files, synthetic edge cases) plus
       `tools/difftest.py` comparing Rust parse/print/canonical output with
       the oracle for every corpus file (after T0.4, T1.3, T1.4).
