@@ -73,8 +73,10 @@
 #![warn(missing_docs)]
 
 mod arch;
+mod assembler;
 mod db;
 mod error;
+mod fasm2frames;
 mod frames;
 mod json;
 mod part;
@@ -85,11 +87,15 @@ mod yaml;
 pub use arch::{
     Architecture, BitPosition, BitPositionError, BlockType, FrameAddress, FrameAddressFields,
 };
+pub use assembler::{AssemblerError, FasmAssembler, FeatureCallback, Roi};
 pub use db::{
     Database, EccFinding, EccReport, FeatureBits, FeatureLookup, Layout, LookupError, PartInfo,
     TileType, TileTypeFiles,
 };
 pub use error::DbError;
+pub use fasm2frames::{
+    dump_frames_sparse, fasm2frames, find_pudc_b, read_roi_design, Fasm2FramesOptions, RoiDesign,
+};
 pub use frames::{FrameDifference, Frames, FrmError, FrmErrorKind};
 pub use part::{read_package_pins, BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};
 pub use segbits::{PpipType, SegBit, SegbitsEntry, SegbitsMatch, TileSegbits};
