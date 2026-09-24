@@ -11,7 +11,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T0.1 Sync fork `master` with upstream chipsalliance/fasm and merge into
       the working branch.
 - [x] T0.2 Write PLAN.md, WORKFLOW.md, TASKS.md, LOG.md, root AGENTS.md.
-- [~] T0.3 Cargo workspace skeleton: root `Cargo.toml`, empty crates `fasm`,
+- [x] T0.3 Cargo workspace skeleton: root `Cargo.toml`, empty crates `fasm`,
       `fasm-cli`, `fasm-xilinx`, `fasm-capi`, `fasm-python` with
       `cargo build --workspace` and `cargo test --workspace` passing;
       `rust-toolchain.toml`; `.gitignore` for `target/`; `deny.toml`/
@@ -28,7 +28,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 1: Core library crate `fasm`
 
-- [ ] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
+- [~] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
 - [ ] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
       `SetFasmFeature`, `Annotation`, `FasmLine` + tests.

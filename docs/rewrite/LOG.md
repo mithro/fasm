@@ -42,3 +42,10 @@ what happened, branch/commit references, open issues.
   repository has no FASM writer and no public bitstream package, so the
   RapidWright path for T7.5 will be RapidWright -> FPGA interchange physical
   netlist -> python-fpga-interchange `fasm_generators` (xc7) -> FASM.
+* T0.3 done: Cargo workspace skeleton (branch
+  `worktree-agent-ad78092928b7f4c17`, 4 commits) reviewed (APPROVE, no
+  required changes) and merged with --no-ff. `cargo build/test/fmt/clippy`
+  all pass on the merged tree. Optional reviewer nits (double blank line in
+  Makefile, redundant `[lib] name` in rust/fasm/Cargo.toml) left for a later
+  cleanup commit.
+* T1.1 (idstring design + implementation) started.
