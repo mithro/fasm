@@ -24,6 +24,9 @@
 //!   only hit the interner) and a breakdown (tile types, tilegrid);
 //! * resident memory growth of the first open (`/proc/self/statm`) and the
 //!   interner's heap;
+//! * [`Database::open_cached`] (the binary cache, T5.3): writing the cache
+//!   file in a fresh process, then loading it in fresh processes (empty
+//!   interner, like the command line tools), best of three;
 //! * feature lookup cost: with pre-split (tile, feature) handles
 //!   ([`Database::lookup_feature`]), from the whole FASM feature handle
 //!   ([`Database::lookup_fasm_feature`], which splits with `IdString::lookup`)
@@ -37,6 +40,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use fasm::idstring::{IdString, GLOBAL};
+use fasm_xilinx::cache::{self, CacheOptions, CacheOutcome};
 use fasm_xilinx::{Database, Grid};
 
 /// Resident set size in bytes (Linux), 0 elsewhere.
@@ -204,6 +208,63 @@ fn bench_part(root: &Path, part: &str) {
     );
 }
 
+/// One [`cache::open`] in this (fresh) process: prints the outcome and
+/// the time in ms, and checks the result against [`Database::open`].
+fn cached_open(root: &Path, part: &str, dir: &Path) {
+    let options = CacheOptions {
+        verbose: std::env::var_os(cache::VERBOSE_ENV).is_some(),
+        ..CacheOptions::in_directory(dir)
+    };
+    let start = Instant::now();
+    let (db, outcome) = cache::open(root, Some(part), &options).unwrap();
+    let time = ms(start.elapsed());
+    let kind = match outcome {
+        CacheOutcome::Hit { .. } => "hit",
+        CacheOutcome::Rebuilt { .. } => "rebuilt",
+        _ => "other",
+    };
+    assert!(db == Database::open(root, Some(part)).unwrap());
+    println!("{kind} {time:.3}");
+}
+
+/// Runs [`cached_open`] in a fresh process.
+fn cached_open_process(exe: &Path, root: &Path, part: &str, dir: &Path) -> (String, f64) {
+    let out = std::process::Command::new(exe)
+        .arg("--cached")
+        .arg(root)
+        .arg(part)
+        .arg(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{part}: {}", out.status);
+    let text = String::from_utf8(out.stdout).unwrap();
+    let (kind, time) = text.trim().split_once(' ').unwrap();
+    (kind.to_owned(), time.parse().unwrap())
+}
+
+fn bench_cached(exe: &Path, root: &Path, part: &str) {
+    let dir = std::env::temp_dir().join(format!("fasm-db-bench-{}", std::process::id()));
+    let (kind, build) = cached_open_process(exe, root, part, &dir);
+    assert_eq!(kind, "rebuilt");
+    let mut best = f64::MAX;
+    for _ in 0..3 {
+        let (kind, time) = cached_open_process(exe, root, part, &dir);
+        assert_eq!(kind, "hit");
+        best = best.min(time);
+    }
+    let size: u64 = cache::cache_files(&dir)
+        .unwrap()
+        .iter()
+        .map(|f| std::fs::metadata(f).unwrap().len())
+        .sum();
+    println!(
+        "  open_cached (fresh process): {best:.1} ms from the cache file ({:.1} MiB); \
+         {build:.1} ms to load the text files and write it",
+        mib(size as usize)
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Runs each part in a fresh process (`<exe> --part <root> <part>`) so
 /// that the first open starts with an empty interner and its memory
 /// growth is not hidden by a previous part.
@@ -211,6 +272,14 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--part") {
         bench_part(Path::new(&args[i + 1]), &args[i + 2]);
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--cached") {
+        cached_open(
+            Path::new(&args[i + 1]),
+            &args[i + 2],
+            Path::new(&args[i + 3]),
+        );
         return;
     }
     let cache = cache_dir();
@@ -244,5 +313,6 @@ fn main() {
             .status()
             .unwrap();
         assert!(status.success(), "{part}: {status}");
+        bench_cached(&exe, &root, part);
     }
 }
