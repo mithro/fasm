@@ -105,6 +105,8 @@ impl PyStr {
     }
 
     /// A `PyStr` from ASCII/Unicode text.
+    // Infallible, unlike `FromStr::from_str`.
+    #[allow(clippy::should_implement_trait)]
     #[must_use]
     pub fn from_str(s: &str) -> Self {
         PyStr(s.chars().map(u32::from).collect())

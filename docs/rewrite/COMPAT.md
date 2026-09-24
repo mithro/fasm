@@ -307,6 +307,78 @@ error that is not a value range error, if there is one
 (`tool::error_to_report` in `rust/fasm-cli/src/tool.rs`), and the first
 value range error otherwise.
 
+## `fasm2frames` (`rust/fasm-cli/src/fasm2frames.rs`, `rust/fasm-xilinx/`, T5.4/T5.5)
+
+### Rule
+
+The `fasm2frames` binary is a drop in replacement for f4pga-xc-fasm's
+`xc_fasm.fasm2frames` (`python -m xc_fasm.fasm2frames`, on prjxray's
+`fasm_assembler.py`; the oracle `tests/oracle/fasm2frames-oracle`):
+
+* the same arguments, parsed by the argparse emulation of the `fasm` tool
+  (all of its behaviour listed above carries over): `--db-root DB_ROOT`
+  (required, unless `XRAY_DATABASE_DIR` and `XRAY_DATABASE` are both set:
+  then it defaults to `os.path.join` of the two), `--part PART` (required
+  unless `XRAY_PART` is set), `--sparse`, `--roi ROI`,
+  `--emit_pudc_b_pullup`, `--debug`, `fn_in`, `fn_out` (default
+  `/dev/stdout`); the same help text, usage errors (exit code 2) and
+  argparse quirks (`fasm2frames a.fasm --sparse b.frm` is an error:
+  argparse gives `fn_out` its default before `--sparse`). The program name
+  is the base name of `argv[0]`, like argparse's: `fasm2frames` for the
+  installed binary, `fasm2frames.py` for the original run with `-m`
+  (`tests/cli/test_fasm2frames_compat.py` runs the binary through a link
+  of that name);
+* byte for byte the same `.frm` output (dense and `--sparse`, ROI,
+  required features, PUDC_B pullup, STEPDOWN propagation), the same
+  `--debug` dump, the same exit codes, and the same warnings on stderr
+  (`frame_set: invalid word address 101 in line: ...` for the bits that
+  the top `_SING` alias tiles place past the end of the frame);
+* the output file is opened (created, truncated) first, before the
+  database and the FASM file are read, like `open(args.fn_out, 'w')` in
+  `main()`: after an error the output file exists and is empty.
+
+`tools/difftest-xilinx.py` (`make xilinx-difftest`) runs both tools over
+every FASM file of `tests/corpus/xilinx/` (with the real databases) and
+`tests/corpus/f4pga-xc-fasm/` (miniature database) with the dense,
+`--sparse`, `--emit_pudc_b_pullup`, `--sparse --debug` and ROI variants,
+and compares the `.frm` files, stdout, exit codes and stderr modulo the
+normalisation rules below; `tests/cli/test_fasm2frames_compat.py` covers
+the command line (help at many widths, argparse errors, the `XRAY_*`
+variables, error cases).
+
+### Differences
+
+| Case | Original (`xc_fasm.fasm2frames`) | Rust |
+|---|---|---|
+| Any error (rule 1) | an uncaught exception: exit code 1, a traceback on stderr ending with `<exception type>: <message>` | exit code 1, only the last line(s) of that traceback on stderr: `prjxray.fasm_assembler.FasmLookupError: Segment DB ...` (all messages, one per line), `prjxray.fasm_assembler.FasmInconsistentBits: FASM line "..." wanted to set bit (frame, word, bit) but was cleared by FASM line "..."`, `KeyError: 'TILE'`, `Exception: Parse error at L:C - ...`, `FileNotFoundError: [Errno 2] No such file or directory: 'path'`, ... with the original's message text |
+| FASM syntax error (rule 2) | `Exception: Parse error at L:C - <ANTLR message>` | same `L:C`, the Rust parser's message (as for the `fasm` tool; the parser differences of "Parser" above apply, e.g. octal values and large decimal values the ANTLR parser misreads). The ANTLR precedence is emulated like in the `fasm` tool (`tool::error_to_report`): a syntax error anywhere in the text wins over an earlier value range error (`a = 2\nb c`: `2:2`), for the FASM file, the ROI's `required_features` and the part's `required_features.fasm` |
+| Value range error (`a = 2`, `a[3:0] = 5'h10`, `a[0:1]`) without a later syntax error (rule 4) | the parser's assertion fails inside a ctypes callback: `Exception ignored on calling ctypes callback function: ...` with an `AssertionError: (2, None, None)` traceback, then the tool dies with `TypeError: 'NoneType' object is not iterable`, exit code 1 | `Exception: Parse error at L:C - value 2 does not fit ...` at the value, exit code 1 |
+| FASM file with a non-ASCII comment or annotation value (`# café`) | the ANTLR wrapper returns `None`: `TypeError: 'NoneType' object is not iterable`, exit code 1 | assembled (exit code 0) |
+| A directory (or an unreadable file, `EIO`) as `fn_in` | the C++ parser aborts: `terminate called after throwing an instance of 'std::__ios_failure'`, SIGABRT, exit code 134 | `Exception: Parse error at 0:0 - Couldn't open file`, exit code 1 |
+| Database that cannot be opened: unknown part, missing or malformed files (rule 3) | various exceptions (`AssertionError: Part None not found in {...}`, `AssertionError: Mapping file ... does not exist`, `FileNotFoundError`, `KeyError`, `json.decoder.JSONDecodeError`, `yaml` errors, ...), some only when a tile type is first used (prjxray reads segbits lazily) | `fasm_xilinx.DbError: <file>:<line>: <message>`, when the database is opened (every tile type's segbits are read up front, so a malformed segbits file of an unused tile type is an error too) |
+| ROI `design.json` that is not valid JSON | `json.decoder.JSONDecodeError: <Python message>` | `json.decoder.JSONDecodeError: <path>: <serde_json message>` |
+| ROI bounds that are not numbers | a `TypeError` from the first comparison that fails, only if a tile is compared | `TypeError: '<=' not supported between instances of ...` when the ROI is read |
+| Order in which STEPDOWN features are added (and so of the messages of a `FasmLookupError`, or which conflict is reported, for them) | Python `set` iteration order (banks, tiles of a bank, tags; changes from run to run with the string hash seed) | first seen order: banks and tags in the order of the FASM lines, tiles in `part.json` `iobanks` then `package_pins.csv` order |
+| Several STEPDOWN features on IOB tiles without a package pin (unbonded IOBs, e.g. `LIOB33_X0Y101` on xc7a35tcsg324-1) | `KeyError` for the first such tile in `set` order (depends on `PYTHONHASHSEED`) | `KeyError` for the first such tile in file order |
+| `required_features.fasm` of the part | a `set`: arbitrary order | file order, duplicates dropped |
+| More than one PUDC_B pin in the part | `AssertionError: ((tile, site), (tile, site))` | the same text (`AssertionError: (('T1', 'IOB_Y0'), ('T2', 'IOB_X0Y1'))`) |
+| A feature that is exactly the PUDC_B tile name (no `.`), with `--emit_pudc_b_pullup` | `IndexError: list index out of range` (in the feature callback) | the same |
+| `--debug` with the `.frm` written to stdout (no `fn_out`) | the `.frm` goes through a second file object on `/dev/stdout`, the dump through `sys.stdout`: their order depends on Python's buffering (for a pipe: the `.frm` first unless the dump is larger than 8 KiB) | the `.frm` first, then the dump |
+| `.frm` output larger than the disk (`ENOSPC`), broken pipe | a traceback, exit code 1 | `OSError: [Errno 28] ...` / `BrokenPipeError: [Errno 32] Broken pipe`, exit code 1 |
+| Non-ASCII FASM file name | `UnicodeEncodeError` (the ANTLR wrapper encodes the name as ASCII) | the file is read |
+| Segbit whose frame address does not fit in 32 bits, or whose word is more than one frame before the frame start (impossible with the prjxray databases) | a 9+ digit frame address in the `.frm` / `IndexError` | `OverflowError: ...` / `IndexError: list index out of range` |
+| Architecture | Series7 only (101 words per frame; prjuray has its own `fasm2frames.py`) | the word count and the bit unit come from the database's architecture; UltraScale/UltraScale+ output is not verified yet (T6.x) |
+
+`tools/difftest-xilinx.py` applies rules 1 (drops the oracle's
+`Traceback (most recent call last):` line and the indented frame lines),
+2 (compares parse errors up to the message), 3 (a database error: the
+oracle fails with an exception outside the reproduced ones and the Rust
+tool with `fasm_xilinx.DbError`; only the exit codes, 1, are compared)
+and 4 (an ANTLR value range error on the oracle side, a parse error on
+the Rust side: both become `<value range error>`, exit code 1); every
+other stderr difference fails. `tests/cli/test_fasm2frames_compat.py`
+applies rules 1 to 3.
+
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);

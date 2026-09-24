@@ -14,36 +14,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `fasm` command line tool: a byte for byte compatible replacement for the
-//! original Python `fasm` console script (`fasm/tool.py`).
-//!
-//! ```text
-//! usage: FASM tool [-h] [--canonical] [--parser PARSER] file
-//! ```
-//!
-//! Same arguments (parsed by an emulation of Python's argparse, including
-//! its abbreviations, error messages and help text), same stdout/stderr
-//! output and exit codes: the FASM file is printed back (`--canonical`:
-//! one line per set bit, sorted and deduplicated) followed by an empty
-//! line, and errors reading or parsing it are printed as `Error: ...` on
-//! stdout with exit code 0. The known differences are listed in the CLI
-//! section of `docs/rewrite/COMPAT.md`.
+//! `fasm2frames` command line tool: a drop-in replacement for
+//! f4pga-xc-fasm's `xc_fasm.fasm2frames` (FASM -> `.frm` frames for
+//! Xilinx 7 series parts); see [`fasm_cli::fasm2frames`].
+
+#![forbid(unsafe_code)]
 
 use std::io;
 use std::process::ExitCode;
 
+use fasm_cli::fasm2frames::{prog_name, run, Environment};
 use fasm_cli::pystr::PyStr;
-use fasm_cli::{terminal, tool};
+use fasm_cli::terminal;
 
 fn main() -> ExitCode {
-    let args: Vec<PyStr> = std::env::args_os()
-        .skip(1)
-        .map(|arg| PyStr::from_os_str(&arg))
-        .collect();
+    let mut argv = std::env::args_os();
+    let prog = prog_name(argv.next().as_deref());
+    let args: Vec<PyStr> = argv.map(|arg| PyStr::from_os_str(&arg)).collect();
     let stdout = io::stdout();
     let stderr = io::stderr();
-    let code = tool::run(
+    let code = run(
+        &prog,
         &args,
+        &Environment::from_process(),
         terminal::columns,
         &mut stdout.lock(),
         &mut stderr.lock(),

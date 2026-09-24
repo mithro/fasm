@@ -2001,6 +2001,140 @@ types.
 4. `lookup_fasm_feature` or pre-split: the assembler gets whole
    `IdString` features from the parser; see the lookup numbers above.
 
+### 8.6 Implementation notes (T5.4/T5.5)
+
+What the assembler (`rust/fasm-xilinx/src/{assembler,fasm2frames,frames}.rs`)
+and the `fasm2frames` binary (`rust/fasm-cli/src/fasm2frames.rs`,
+`src/bin/fasm2frames.rs`) do, where they deviate, and measurements. The
+user visible differences are in the `fasm2frames` section of `COMPAT.md`.
+
+**Modules.**
+
+* `frames.rs`: `Frames`, one contiguous `Vec<u32>` of words plus the
+  sorted address list; the word count is a run time value
+  (`Architecture::words_per_frame`, so T6.2 can reuse it for 123/93 word
+  frames). `write_frm` is `dump_frm`; `read_frm` follows
+  `Frames::readFrames` (`std::stoul(s, nullptr, 16)` semantics: leading
+  space, sign, optional `0x`, trailing garbage ignored, 64-bit overflow is
+  an error, truncation to 32 bits; a line split at spaces with only the
+  first two fields used; a word count mismatch is skipped with prjxray's
+  warning; the first frame of an address wins; `#` lines skipped; an
+  empty line is an error because `stoul("")` throws). The reader returns
+  the words as read: the ECC recomputation of `readFrames` is left to the
+  bitstream writer (T5.6). `diff` and `set_bits` are comparison helpers.
+* `assembler.rs`: `FasmAssembler` (`prjxray.fasm_assembler`) and
+  `AssemblerError`, whose `python_exception()` names the exception the
+  reference raises and whose `Display` is its `str()`.
+* `fasm2frames.rs`: `fasm2frames()` (`xc_fasm.fasm2frames.fasm2frames`),
+  `find_pudc_b`, `read_roi_design`, `dump_frames_sparse`.
+
+**Bit state.** prjxray's `frames` dict (`(frame, word, bit) -> 0/1`) and
+`frames_line` dict are one `HashMap<u64, u32>`: the key packs the frame,
+the *unwrapped* word (`absolute_bit.div_euclid(32)`, negative for the
+`_SING` alias tiles, clamped to ±2^26, which only merges keys that can
+never be written) and the bit; the value is `line index << 1 | is_set`.
+This answers open question 1 of §8.5: keys are unwrapped exactly like
+prjxray's, so a wrapped `_SING` bit never conflicts with a direct write of
+word 99 (tested). `get_frames` applies the Python list wrap (`word + 101`
+for a negative word) and reports `IndexError` below `-101`. Frames in use
+are kept as `(base_address, frames)` bus blocks and expanded in
+`get_frames`; the frame of every stored bit (set *or cleared*) is added
+like `init_frame_at_address` in the loop.
+
+**Lines.** Every line given to the assembler is kept (`lines()`), the
+parsed file's `Vec<FasmLine>` moved in once; error messages are rendered
+from them (`fasm_line_to_string`) only when needed. Keeping the lines is
+what makes `set_features` (STEPDOWN, PUDC_B) available without a second
+data structure. The common path does not allocate: set bits of the value
+are enabled straight from `FeatureValue::iter_set_bits` (not
+`canonical_features`, which collects into a `Vec` and iterates over
+every address of the range, T1.4b), with `canonical_features`' rules and
+asserts (`AssertionError` for a width 1 value other than 1). The review
+measured 0.125 allocations per line on average over generated corpora,
+almost all on `_SING` alias tiles: `Database::lookup_feature` builds a
+string when an alias renames the site, and every bit dropped past the
+frame end gets its own warning string (the line text is now rendered
+once per feature, not once per bit). Interning, growing the bit map and
+the parser's own allocations (annotations, comments) come on top.
+
+**Semantics checked against the oracle** (all covered by
+`tests/assembler_mini_db.rs`, the difftest or the CLI test):
+
+1. An unknown tile, or a tile whose type has no `tile_type_*.json`, is a
+   `KeyError` raised at once (§8.5 item 2); lookup errors collected before
+   it are lost, like in Python. `MissingBitsBlock` and unknown features
+   are `FasmLookupError` messages `Segment DB <tilegrid tile type>, key
+   <tile type>.<feature> not found from line '<line>'` (the key is the
+   feature *without* `[address]`, one message per enabled bit, so a
+   missing 6 bit range gives 6 identical messages).
+2. A feature with value 0 (bare `= 0` or an all zero range) does nothing:
+   no lookup, so no error even for an unknown tile; the feature callback
+   still sees it (a `= 0` feature on the PUDC_B site counts as using it).
+3. Pseudo PIPs (always/default/hint alike) set no bits and mark nothing
+   in use. A feature marks its bus in use if it has any bit, even if all
+   its bits are dropped past the frame end (`any_bits` is filled before
+   `update_segbit`).
+4. Bits past the frame end (§8.5 item 3): dropped with
+   `frame_set: invalid word address <word> in line: <line>` (or
+   `frame_clear`) on stderr, e.g. `LIOB33_SING_X0Y49.IOB_Y0.*` on
+   xc7a35t (`tests/corpus/xilinx/artix7/synthetic/sing_out_of_frame.fasm`).
+5. `ff_int_op1.fasm` (upstream's skipped `test_ff_int_op1`) assembles
+   without any error in the oracle: it omits `SRUSEDMUX`, so its bits are
+   those of `ff_int/design.bits` minus one; it does *not* raise
+   `FasmInconsistentBits`. Upstream's skipped `test_sparse` would also
+   fail on its size assertion (dense is 3.3 times the sparse text, not 4).
+   `test_opkey_enum` expects a syntax error that no parser reports.
+6. STEPDOWN: `set_features` includes the extra (ROI, required) and PUDC_B
+   lines; an IOB tile that has a STEPDOWN feature but no package pin (an
+   unbonded IOB of the fabric, e.g. `LIOB33_X0Y101` on xc7a35tcsg324-1)
+   is a `KeyError`; `HCLK_IOI3_<loc>` tiles of `iobanks` get the bare
+   `STEPDOWN` feature; a bank's STEPDOWN is added even when every site of
+   the bank sets it itself. Python iterates sets here; the Rust order is
+   first seen (only visible in error messages).
+7. The output file is created before the database is opened; an error
+   leaves an empty file (both tools).
+8. The reference's ANTLR parser cannot read octal values and misreads
+   large decimal values (`Could not decode decimal number`), see the
+   parser section of `COMPAT.md`; the synthetic corpus avoids them.
+
+**Deviations** (see `COMPAT.md`): only the last traceback line is
+printed; database errors are `fasm_xilinx.DbError` with the Rust loader's
+message, reported when the database is opened (the loader is eager); the
+STEPDOWN order; `required_features.fasm` in file order; `--debug` with
+the `.frm` on stdout is not interleaved like Python's buffers.
+
+**argparse.** `rust/fasm-cli/src/argparse.rs` is now a declarative parser
+(`ArgumentParser` of `Argument`s: help, `store_true`, `store`, nullable
+`store`, positionals with `nargs=None` or `'?'`, required options,
+defaults) shared by `fasm` and `fasm2frames`; it implements
+`_match_arguments_partial` (the regular expressions of several
+positionals, with Python's backtracking order) and the `part_regexp`
+split of the usage (a required `--db-root DB_ROOT` wraps as two parts).
+The modules moved into a `fasm_cli` library for the two binaries.
+
+**Measurements** (release build, this machine, the same inputs for both
+tools and byte identical output; time and peak RSS from `getrusage`; the
+oracle is Python 3.11 with prjxray's lazy per-tile-type segbits loading):
+
+| input | part | oracle | Rust | speed-up |
+|---|---|---|---|---|
+| counter_test (781 lines), dense | xc7a35tcsg324-1 | 0.37-0.40 s, 59 MiB | 0.09-0.13 s, 32 MiB | 3-4x |
+| empty FASM, dense | xc7a35tcsg324-1 | 0.31 s, 52 MiB | 0.09 s, 32 MiB | 3.5x |
+| synthetic 1M lines (every segbits feature of the first non alias tiles, conflict free, 36 MB), dense | xc7a200tffg1156-1 | 28.2 s, 2291 MiB | 0.90 s, 234 MiB | 31x |
+| same, `--sparse` | xc7a200tffg1156-1 | 27.5 s, 2291 MiB | 0.91 s, 233 MiB | 30x |
+
+For small designs the run is dominated by opening the database (the Rust
+loader reads every tile type up front, 90 ms for xc7a35t, 170-190 ms for
+xc7a200t, where Python only reads the tile types the design uses), so
+the counter_test design is only 3-4x faster than the reference, short of
+the 10x target. This is accepted for now: making the database load cheap
+is exactly the job of the binary cache of T5.3 (a memory mapped, already
+indexed database), which should bring small designs to a few ms plus
+the assembly (1.4 ms for counter_test dense). Breakdown of the 1M line run
+(`cargo bench -p fasm-xilinx --bench assemble`): open 170 ms, parse
+150-170 ms, assemble 326 ms, `get_frames` dense 40-50 ms, `write_frm`
+20-25 ms (21.6 MiB).
+
 ## 9. Open questions / risks
 
 1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**

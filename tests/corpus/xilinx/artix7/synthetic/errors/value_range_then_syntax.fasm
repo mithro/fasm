@@ -1,0 +1,5 @@
+# A value range error followed by a syntax error: the reference's ANTLR
+# parser checks the syntax of the whole file first, so the error at 5:2
+# is reported.
+CLBLM_L_X8Y0.SLICEM_X0.AFFMUX.CY = 2
+b c

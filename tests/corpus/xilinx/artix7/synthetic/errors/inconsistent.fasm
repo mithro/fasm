@@ -1,0 +1,3 @@
+# Two features setting and clearing the same bit.
+LIOB33_X0Y3.IOB_Y0.PULLTYPE.PULLUP
+LIOB33_X0Y3.IOB_Y0.PULLTYPE.NONE { a = "b" }

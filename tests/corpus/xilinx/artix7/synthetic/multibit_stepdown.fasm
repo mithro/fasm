@@ -1,0 +1,44 @@
+# Synthetic FASM for the xc7a35tcsg324-1 (fabric xc7a50t) part of the
+# pinned prjxray-db artix7 database, exercising the assembler paths of
+# prjxray's fasm_assembler.py and f4pga-xc-fasm's fasm2frames.py on real
+# tile types (see ../README.md).
+
+# Multi bit features: full, partial and single bit ranges, hex, binary and
+# decimal values (no octal and no large decimal values: the reference's
+# ANTLR parser misreads them, see the parser section of COMPAT.md), an all
+# zero range (a no-op), a bare INIT bit.
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.INIT[63:0] = 64'hDEADBEEF0123CAFE
+CLBLM_L_X8Y0.SLICEM_X0.BLUT.INIT[31:16] = 16'b1010010110100101
+CLBLM_L_X8Y0.SLICEM_X0.CLUT.INIT[7:0] = 8'd200
+CLBLM_L_X8Y0.SLICEM_X0.CLUT.INIT[15:8] = 8'h0F
+CLBLM_L_X8Y0.SLICEM_X0.DLUT.INIT[63:0] = 64'h0
+CLBLM_L_X8Y0.SLICEM_X0.DLUT.INIT[5] = 1
+CLBLM_L_X8Y0.SLICEM_X0.DLUT.INIT[0]
+CLBLM_L_X8Y0.SLICEL_X1.ALUT.INIT[63:32] = 1000000
+CLBLM_L_X8Y0.SLICEL_X1.BLUT.INIT[1:0] = 2'b10 { note = "annotations are ignored" }
+
+# Features with cleared (!) bits, and the same feature twice.
+CLBLM_L_X8Y0.SLICEM_X0.AFFMUX.CY
+CLBLM_L_X8Y0.SLICEM_X0.AFFMUX.CY = 1
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.RAM
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.DI1MUX.AI = 0
+
+# BLOCK_RAM bus: 256 bit INIT/INITP words and CLB_IO_CLK features of the
+# same tile.
+BRAM_L_X6Y0.RAMB18_Y0.INIT_00[255:0] = 256'h0123456789ABCDEF_FEDCBA9876543210_00000000FFFFFFFF_A5A5A5A55A5A5A5A
+BRAM_L_X6Y0.RAMB18_Y0.INITP_01[255:128] = 128'hFFFF0000FFFF0000FFFF0000FFFF0000
+BRAM_L_X6Y0.RAMB18_Y0.ZINIT_A[4:0] = 5'b10101
+BRAM_L_X6Y0.RAMB18_Y0.IN_USE
+BRAM_L_X6Y0.RAMB18_Y0.READ_WIDTH_A_18
+
+# A pseudo PIP (no bits).
+INT_L_X8Y0.BYP_ALT0.VCC_WIRE
+
+# STEPDOWN on one IOB of bank 14: propagated to every unused IOB site of
+# the bank and to HCLK_IOI3_X1Y26.
+LIOB33_X0Y1.IOB_Y0.LVCMOS12_LVCMOS15_LVCMOS18_SSTL135_SSTL15.STEPDOWN
+LIOB33_X0Y1.IOB_Y0.LVCMOS12_LVCMOS15_LVCMOS18.IN
+LIOB33_X0Y3.IOB_Y1.PULLTYPE.PULLUP
+
+# An alias tile whose bits wrap to the end of the frame (negative word).
+LIOB33_SING_X0Y0.IOB_Y1.PULLTYPE.PULLUP

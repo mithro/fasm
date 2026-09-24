@@ -19,3 +19,27 @@ loader tests to check feature lookup and bit placement end to end on
 
 The FASM inputs are in `tests/corpus/f4pga-xc-fasm/` at the repository
 root.
+
+## Oracle `.frm` output (`frm/`)
+
+`frm/<fixture>.{dense,sparse}.txt` describe, byte for byte, the `.frm`
+files the reference `fasm2frames` (f4pga-xc-fasm
+`25dc605c9c0896204f0c3425b52a332034cf5e5c` + prjxray
+`c9f02d8576042325425824647ab5555b1bc77833`, run by
+`tests/oracle/fasm2frames-oracle`) writes for the seven f4pga-xc-fasm
+fixtures on `../mini-db`, without and with `--sparse`:
+
+```sh
+tests/oracle/fasm2frames-oracle --db-root rust/fasm-xilinx/testdata/mini-db \
+    --part xc7 [--sparse] tests/corpus/f4pga-xc-fasm/<fixture>.fasm out.frm
+```
+
+Instead of the 40-135 KB of mostly zero words per file they are stored as
+a compact summary (converted from the `.frm` with a throw away script):
+
+* `frames 0x<first address> <count>`: `count` frames with consecutive
+  addresses starting at `first address`, zero filled;
+* `word 0x<frame address> <word index> 0x<value>`: a non zero word.
+
+`tests/assembler_mini_db.rs` rebuilds the `.frm` text from the summary
+(101 words per frame) and compares it with the Rust output as a string.
