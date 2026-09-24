@@ -102,13 +102,19 @@ impl IdString {
         GLOBAL.intern(s)
     }
 
-    /// Interns UTF-8 `bytes` in [`GLOBAL`].
+    /// Interns UTF-8 `bytes` in [`GLOBAL`] (see [`Interner::intern_bytes`]).
+    ///
+    /// Validates `bytes` only if the string is not known yet, so this is
+    /// the fastest way to intern names read from a byte buffer: known
+    /// names cost the same as [`IdString::new`], without a separate
+    /// `std::str::from_utf8` pass.
     ///
     /// # Errors
     ///
     /// Returns the UTF-8 error if `bytes` is not valid UTF-8.
+    #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Utf8Error> {
-        std::str::from_utf8(bytes).map(Self::new)
+        GLOBAL.intern_bytes(bytes)
     }
 
     /// Returns the handle `s` would have in [`GLOBAL`], if it can be

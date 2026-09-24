@@ -60,6 +60,41 @@ fn from_bytes_rejects_invalid_utf8() {
 }
 
 #[test]
+fn intern_bytes_validates_unknown_names_only() {
+    for interner in [Interner::new(), Interner::with_level_limit(2)] {
+        let known = ["A.B.C", "\u{e9}.\u{e9}", "X", "Q.R.S.T"];
+        for s in known {
+            let id = interner.intern(s);
+            assert_eq!(interner.intern_bytes(s.as_bytes()), Ok(id), "{s:?}");
+        }
+        // Invalid UTF-8 is rejected whatever the tables hold, also when
+        // some levels are known, or when a multi byte character is split by
+        // a dot ("\u{e9}" is C3 A9).
+        for bytes in [
+            &b"A.\xff"[..],
+            b"\xff.B.C",
+            b"A.B.\xff",
+            b"A.B.C\xff",
+            b"\xc3.\xa9",
+            b"\xc3\xa9.\xc3",
+            b"Q.R.S.\xff",
+            b"\xed\xa0\x80",
+        ] {
+            let expected = std::str::from_utf8(bytes).map(|_| ());
+            assert!(expected.is_err());
+            assert_eq!(
+                interner.intern_bytes(bytes).map(|_| ()),
+                expected,
+                "{bytes:?}"
+            );
+        }
+        // New valid names are interned.
+        let id = interner.intern_bytes("A.\u{e9}".as_bytes());
+        assert_eq!(id.map(|id| interner.resolve(id)), Ok("A.\u{e9}".to_owned()));
+    }
+}
+
+#[test]
 fn private_interner_is_independent() {
     let interner = Interner::new();
     assert_eq!(interner.get("A.B"), None);
@@ -456,6 +491,28 @@ mod properties {
             prop_assert_eq!(id.resolve(), s.clone());
             prop_assert_eq!(IdString::get(&s), Some(id));
             prop_assert_eq!(id.len(), s.len());
+        }
+
+        #[test]
+        fn intern_bytes_matches_from_utf8(
+            known in proptest::collection::vec(dotted(), 0..8),
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b'a'), Just(b'b'), Just(b'.'), Just(0xc3), Just(0xa9), Just(0xff)
+                ],
+                0..12,
+            ),
+            limit in prop_oneof![Just(u32::MAX), 1u32..4],
+        ) {
+            let interner = Interner::with_level_limit(limit);
+            for s in &known {
+                interner.intern(s);
+            }
+            // First call: the name may be new; second call: known.
+            let first = interner.intern_bytes(&bytes);
+            let expected = std::str::from_utf8(&bytes).map(|s| interner.intern(s));
+            prop_assert_eq!(first, expected);
+            prop_assert_eq!(interner.intern_bytes(&bytes), expected);
         }
 
         #[test]

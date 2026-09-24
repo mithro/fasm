@@ -19,7 +19,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
-
+use std::str::Utf8Error;
 use std::sync::OnceLock;
 
 use foldhash::fast::RandomState;
@@ -247,6 +247,30 @@ impl Interner {
             Some(id) => id,
             None => self.intern_missing(state, s),
         }
+    }
+
+    /// Interns the UTF-8 string `bytes` and returns its handle.
+    ///
+    /// Equivalent to `intern(std::str::from_utf8(bytes)?)`, but the UTF-8
+    /// validation is only done when `bytes` is not known yet: a known
+    /// string equals interned text, which is valid UTF-8. So interning known
+    /// names from a byte buffer (a parser's input) costs the same as
+    /// [`Interner::intern`].
+    ///
+    /// # Errors
+    ///
+    /// Returns the UTF-8 error if `bytes` is not valid UTF-8.
+    ///
+    /// # Panics
+    ///
+    /// See [`Interner::intern`].
+    pub fn intern_bytes(&self, bytes: &[u8]) -> Result<IdString, Utf8Error> {
+        let state = self.hasher();
+        if let Some(id) = self.find_levels(state, bytes) {
+            return Ok(id);
+        }
+        let s = std::str::from_utf8(bytes)?;
+        Ok(self.intern_missing(state, s))
     }
 
     /// [`Interner::intern`] for a string with at least one level missing
