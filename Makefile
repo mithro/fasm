@@ -211,7 +211,9 @@ difftest:
 # cbindgen (`cargo install cbindgen --locked`): from PATH, else from the
 # default cargo bin directory.
 CBINDGEN ?= $(shell command -v cbindgen 2>/dev/null || echo $${CARGO_HOME:-$$HOME/.cargo}/bin/cbindgen)
-CAPI_BUILD_DIR ?= $(TOP_DIR)/target/capi-tests
+# The Cargo target directory (CARGO_TARGET_DIR when set, as cargo does).
+CAPI_CARGO_TARGET_DIR := $(abspath $(or $(CARGO_TARGET_DIR),$(TOP_DIR)/target))
+CAPI_BUILD_DIR ?= $(CAPI_CARGO_TARGET_DIR)/capi-tests
 
 # Regenerate the checked in C header from the fasm-capi sources.
 capi-header:
@@ -231,7 +233,7 @@ capi-header-check:
 # installed, failing on memory errors and leaks).
 capi-test:
 	cargo build -p fasm-capi
-	cmake -S $(TOP_DIR)/rust/fasm-capi/tests/c -B $(CAPI_BUILD_DIR) -DFASM_CARGO_PROFILE=debug
+	cmake -S $(TOP_DIR)/rust/fasm-capi/tests/c -B $(CAPI_BUILD_DIR) -DFASM_CARGO_PROFILE=debug -DFASM_CARGO_TARGET_DIR=$(CAPI_CARGO_TARGET_DIR)
 	cmake --build $(CAPI_BUILD_DIR)
 	cd $(CAPI_BUILD_DIR) && ctest --output-on-failure
 
