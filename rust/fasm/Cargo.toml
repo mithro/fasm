@@ -17,5 +17,8 @@ path = "src/lib.rs"
 foldhash = "0.2"
 hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 
+[dev-dependencies]
+proptest = { version = "1.11", default-features = false, features = ["std"] }
+
 [lints]
 workspace = true

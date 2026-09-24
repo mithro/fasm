@@ -204,3 +204,290 @@ fn more_than_u16_components_in_one_level() {
         assert_eq!(small.get(name), Some(id));
     }
 }
+
+/// Checks everything observable about `s` and its handle in `interner`.
+fn check_round_trip(interner: &Interner, s: &str) -> IdString {
+    let id = interner.intern(s);
+    assert_eq!(interner.resolve(id), s);
+    assert_eq!(interner.with_str(id, str::to_owned), s);
+    assert_eq!(interner.intern(s), id, "{s:?}: handle is canonical");
+    assert_eq!(interner.get(s), Some(id), "{s:?}");
+    let resolved = interner.resolved(id);
+    assert_eq!(resolved, s);
+    assert_eq!(resolved.to_string(), s);
+    assert_eq!(resolved.len(), s.len());
+    assert_eq!(resolved.is_empty(), s.is_empty());
+    assert_eq!(
+        resolved.components().collect::<Vec<_>>(),
+        s.split('.').collect::<Vec<_>>()
+    );
+    assert_eq!(
+        resolved.first_component(),
+        s.split('.').next().unwrap_or("")
+    );
+    id
+}
+
+fn edge_cases() -> Vec<String> {
+    let mut cases: Vec<String> = [
+        "",
+        ".",
+        "..",
+        "...",
+        "A",
+        "A.",
+        ".A",
+        ".A.",
+        "A..B",
+        "A.B",
+        "A.B.C",
+        "A.B.C.",
+        "A.B.C.D",
+        "A.B.C.D.E.F.G",
+        "..A..B..",
+        "CLBLL_L_X12Y124.SLICEL_X0.BLUT.INIT",
+        "INT_L_X10Y146.SW6BEG0.WW2END0",
+        "ü",
+        "ü.ß",
+        "漢字.かな.カナ.한글",
+        "🙂.🙃.🙂🙃",
+        "\0.\u{7f}.\u{10ffff}",
+        " A . B ",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    cases.push(vec!["C"; 1500].join("."));
+    cases.push(vec![""; 1200].join("."));
+    cases.push("X".repeat(100_000));
+    cases.push(format!(
+        "{}.{}.{}",
+        "A".repeat(5000),
+        "B".repeat(5000),
+        "C".repeat(5000)
+    ));
+    cases
+}
+
+#[test]
+fn edge_cases_round_trip() {
+    for interner in [Interner::new(), Interner::with_level_limit(3)] {
+        let cases = edge_cases();
+        let ids: Vec<IdString> = cases
+            .iter()
+            .map(|s| check_round_trip(&interner, s))
+            .collect();
+        for (a, &x) in cases.iter().zip(&ids) {
+            for (b, &y) in cases.iter().zip(&ids) {
+                assert_eq!(x == y, a == b);
+                assert_eq!(interner.cmp(x, y), a.cmp(b), "{a:?} vs {b:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn edge_cases_round_trip_global() {
+    for s in edge_cases() {
+        let id = IdString::new(&s);
+        assert_eq!(id.resolve(), s);
+        assert_eq!(id.to_string(), s);
+        assert_eq!(id.len(), s.len());
+        assert_eq!(id.is_empty(), s.is_empty());
+        assert_eq!(id.components().count(), s.split('.').count());
+        assert!(id.starts_with_component(id.first_component()));
+        assert!(id.starts_with_component(&s));
+        assert_eq!(id, s.as_str());
+    }
+}
+
+#[test]
+fn levels_per_component_count() {
+    let interner = Interner::new();
+    // 1, 2, exactly LEVELS (3) and more than LEVELS components.
+    for (s, levels) in [("A", 1), ("A.B", 2), ("A.B.C", 3), ("A.B.C.D", 3)] {
+        let id = check_round_trip(&interner, s);
+        match decode(id.raw()) {
+            Repr::Levels(fields) => {
+                assert_eq!(fields.iter().filter(|&&f| f != 0).count(), levels, "{s}");
+            }
+            Repr::Overflow(_) => panic!("{s} overflowed"),
+        }
+    }
+}
+
+#[test]
+fn get_does_not_intern() {
+    let interner = Interner::new();
+    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), None);
+    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), None);
+    let id = interner.intern("NEVER.SEEN.BEFORE");
+    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), Some(id));
+    assert_eq!(interner.get("NEVER.SEEN.AGAIN"), None);
+    assert_eq!(interner.get("NEVER.BEFORE"), None);
+    // Every level of these is known, so they have a handle already.
+    let never_seen = interner.get("NEVER.SEEN");
+    assert!(never_seen.is_some());
+    assert_eq!(never_seen, Some(interner.intern("NEVER.SEEN")));
+    assert_eq!(interner.get("NEVER"), Some(interner.intern("NEVER")));
+    assert_eq!(
+        IdString::get("idstring test: never interned anywhere"),
+        None
+    );
+}
+
+#[test]
+fn type_properties() {
+    fn assert_traits<T: Copy + Clone + Eq + std::hash::Hash + Ord + Send + Sync + 'static>() {}
+    assert_traits::<IdString>();
+    assert_eq!(std::mem::size_of::<IdString>(), 8);
+    assert_eq!(std::mem::size_of::<Option<IdString>>(), 8);
+    let set: std::collections::HashSet<IdString> = ["A.B", "A.B", "A.C", "A.B"]
+        .iter()
+        .map(|s| IdString::new(s))
+        .collect();
+    assert_eq!(set.len(), 2);
+    let mut sorted: Vec<IdString> = ["B", "A.C", "A.B.C", "A.B", "A", ""]
+        .iter()
+        .map(|s| IdString::new(s))
+        .collect();
+    sorted.sort();
+    let sorted: Vec<String> = sorted.into_iter().map(IdString::resolve).collect();
+    assert_eq!(sorted, ["", "A", "A.B", "A.B.C", "A.C", "B"]);
+}
+
+#[test]
+#[should_panic(expected = "was not created by this interner")]
+fn foreign_handle_panics() {
+    let big = Interner::new();
+    let small = Interner::new();
+    let _ = small.intern("A");
+    let id = (0..100).map(|i| big.intern(&format!("T{i}"))).last();
+    if let Some(id) = id {
+        let _ = small.resolve(id);
+    }
+}
+
+#[test]
+fn concurrent_interning_gives_equal_handles() {
+    const THREADS: usize = 8;
+    let names: Vec<String> = (0..10_000)
+        .map(|i| format!("TILE_X{}Y{}.SITE_{}.BEL{}.INIT", i % 97, i % 89, i % 7, i))
+        .chain(edge_cases())
+        .collect();
+    // A generous and a tiny level limit (the latter races on the overflow
+    // decision).
+    for interner in [Interner::new(), Interner::with_level_limit(50)] {
+        let results: Vec<Vec<IdString>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..THREADS)
+                .map(|t| {
+                    let names = &names;
+                    let interner = &interner;
+                    scope.spawn(move || {
+                        // Each thread visits the names in a different order.
+                        let n = names.len();
+                        let mut ids = vec![None; n];
+                        for k in 0..n {
+                            let rotated = (k + t * 997) % n;
+                            let i = if t % 2 == 0 { rotated } else { n - 1 - rotated };
+                            let id = interner.intern(&names[i]);
+                            if let Some(previous) = ids[i] {
+                                assert_eq!(previous, id);
+                            }
+                            ids[i] = Some(id);
+                        }
+                        ids.into_iter()
+                            .map(|id| id.expect("every name visited"))
+                            .collect()
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("interning thread panicked"))
+                .collect()
+        });
+        for ids in &results[1..] {
+            assert_eq!(ids, &results[0]);
+        }
+        for (name, &id) in names.iter().zip(&results[0]) {
+            assert_eq!(interner.resolve(id), *name);
+        }
+    }
+}
+
+#[test]
+fn concurrent_global_interning() {
+    let names: Vec<String> = (0..2000)
+        .map(|i| format!("GLOBAL_THREAD_X{i}.S.B.INIT"))
+        .collect();
+    let results: Vec<Vec<IdString>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..8)
+            .map(|_| scope.spawn(|| names.iter().map(|s| IdString::new(s)).collect::<Vec<_>>()))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("interning thread panicked"))
+            .collect()
+    });
+    for ids in &results {
+        assert_eq!(ids, &results[0]);
+    }
+}
+
+mod properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Strings made of few distinct characters so that dots, empty
+    /// components and shared components are frequent.
+    fn dotted() -> impl Strategy<Value = String> {
+        "[ab.é]{0,12}"
+    }
+
+    proptest! {
+        #[test]
+        fn round_trip_any_string(s in any::<String>()) {
+            let id = IdString::new(&s);
+            prop_assert_eq!(id.resolve(), s.clone());
+            prop_assert_eq!(IdString::get(&s), Some(id));
+            prop_assert_eq!(id.len(), s.len());
+        }
+
+        #[test]
+        fn round_trip_dotted(s in dotted()) {
+            check_round_trip(&GLOBAL, &s);
+        }
+
+        #[test]
+        fn equality_and_order_match_str(
+            strings in proptest::collection::vec(dotted(), 1..40),
+            limit in prop_oneof![Just(u32::MAX), 1u32..6],
+        ) {
+            let interner = Interner::with_level_limit(limit);
+            let ids: Vec<IdString> = strings.iter().map(|s| interner.intern(s)).collect();
+            for (a, &x) in strings.iter().zip(&ids) {
+                prop_assert_eq!(interner.resolve(x), a.clone());
+                prop_assert_eq!(interner.get(a), Some(x));
+                for (b, &y) in strings.iter().zip(&ids) {
+                    prop_assert_eq!(x == y, a == b);
+                    prop_assert_eq!(interner.cmp(x, y), a.cmp(b));
+                }
+            }
+        }
+
+        #[test]
+        fn global_order_matches_str(a in dotted(), b in dotted()) {
+            let (x, y) = (IdString::new(&a), IdString::new(&b));
+            prop_assert_eq!(x.cmp(&y), a.cmp(&b));
+            prop_assert_eq!(x == y, a == b);
+            prop_assert_eq!(x == b.as_str(), a == b);
+        }
+
+        #[test]
+        fn starts_with_component_matches_str(a in dotted(), p in dotted()) {
+            let expected = a == p || a.starts_with(&format!("{p}."));
+            prop_assert_eq!(IdString::new(&a).starts_with_component(&p), expected);
+        }
+    }
+}

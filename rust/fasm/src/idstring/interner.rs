@@ -147,8 +147,13 @@ impl Interner {
         }
     }
 
-    /// Returns the handle of `s` if it has already been interned, without
-    /// interning it.
+    /// Returns the handle of `s` if it can be produced without adding
+    /// anything to the tables, i.e. without interning `s`.
+    ///
+    /// This is the case for every string interned before, but also for a
+    /// string that was never interned whole when each of its levels is
+    /// already known (after interning `A.B.C` and `X.Y`, `get("A.Y")` is
+    /// `Some`). So `get` is a cheap lookup, not a set membership test.
     pub fn get(&self, s: &str) -> Option<IdString> {
         let hasher = self.hasher();
         let mut pos0 = 0;
