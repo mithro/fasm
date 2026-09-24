@@ -496,3 +496,523 @@ brief's "probably nothing". `site_type_*.json` (`{"site_pins": ..., "site_pips":
 ..., "type": ...}`) is likewise unused by this pipeline. **`fasm-xilinx`'s
 T5.2 loader should not parse any of these three formats.**
 
+## 4. Frame addressing
+
+### 4.1 Series7 (and, per the shim in the plain `prjxray` checkout, the
+    naive UltraScale/UltraScale+ path — see the correction in §4.2)
+
+32-bit frame address, from `lib/xilinx/xc7series/frame_address.cc:20-30`
+(`bit_field_set(value, top_bit, bottom_bit, field)`, both bounds inclusive):
+
+| Bits | Field | Width | Notes |
+|---|---|---|---|
+| 25:23 | `block_type` | 3 | `0=CLB_IO_CLK, 1=BLOCK_RAM, 2=CFG_CLB` (`prjxray/util.py:348-352`, `block_type_i2s`) |
+| 22 | `is_bottom_half_rows` | 1 | 0 = top half, 1 = bottom half |
+| 21:17 | `row` | 5 | up to 32 rows per half |
+| 16:7 | `column` | 10 | up to 1024 columns |
+| 6:0 | `minor` | 7 | up to 128 frames per column (matches observed max `frames: 128` for BRAM) |
+
+Python has the same encoding, independently, in
+`prjxray/util.py:360-370` (`addr2btype`) and `prjxray/bitstream.py:118-127`
+(`addr_bits2word`):
+```python
+def addr_bits2word(block_type, top_bottom, cfg_row, cfg_col, minor_addr):
+    ret = block_type_s2i[block_type] << 23
+    ret |= {"top": 0, "bottom": 1}[top_bottom] << 22
+    ret |= cfg_row << 17
+    ret |= cfg_col << 7
+    ret |= minor_addr
+    return ret
+```
+`FRAME_WORD_COUNT = 101` (32-bit words per frame),
+`WORD_SIZE_BITS = 32`, `FRAME_ALIGNMENT = 0x80`
+(`prjxray/bitstream.py:16-22` — alignment is a fuzzer/allocator convention,
+not part of the addressing math itself).
+
+**tilegrid → segbit → (frame, word, bit)** — the whole point of the
+`bits.<bus>` block (§3.1) is that a tile's segbits file stores small local
+offsets (`word_column`, `word_bit`), and the tilegrid supplies the two
+numbers that turn those into a real frame address and bit position:
+```python
+# prjxray/tile_segbits.py:161-167 (TileSegbits.map_bit_to_frame)
+frame     = bits.base_address + bit.word_column      # absolute frame address
+word_bit  = bits.offset * WORD_SIZE_BITS + bit.word_bit  # bit index in [0, frames*32)
+# prjxray/fasm_assembler.py:131-133 (FasmAssembler.enable_feature.update_segbit)
+frame_addr = bit.word_column          # (already absolute, see map_bit_to_frame above)
+word_addr  = bit.word_bit // 32
+bit_index  = bit.word_bit % 32
+```
+So: `frame_address = tilegrid.bits[bus].baseaddr + segbit.word_column`;
+`absolute_bit = tilegrid.bits[bus].offset * 32 + segbit.word_bit`;
+`word_index_in_frame = absolute_bit // 32`; `bit_in_word = absolute_bit %
+32`. `offset` (from tilegrid) is the tile's starting **word** inside the
+101-word frame (not a bit offset — it gets multiplied by 32 before adding
+`word_bit`); `words` (from tilegrid) bounds how many consecutive 32-bit
+words that bus occupies starting at `offset`, and is used by the
+*disassembler* (`bits_info.bits.words`, checking `word_idx + offset in
+bitdata[frame][0]`, `prjxray/fasm_disassembler.py:119-121`) and by
+`TileSegbitsAlias.match_filter` to bounds-check aliased bits
+(`prjxray/tile_segbits_alias.py:101-107`) — the assembler itself does not
+range-check against `words` (it trusts the segbits file).
+
+**HCLK row middle word**: as shown in §3.1, an HCLK tile's `bits` block has
+`offset: 50, words: 1` — i.e. its one word is exactly word index 50 of the
+101-word frame (the physical middle), shared between the tile logically
+"above" and "below" it in the row; the segbits file's `word_bit` for HCLK
+features is always < 32 (relative to that single word), so `absolute_bit =
+50*32 + word_bit` lands in `[1600, 1631]`, i.e. word 50 always.
+
+**Alias mechanism** (`TileSegbitsAlias`, `prjxray/tile_segbits_alias.py`) —
+used when a tile type (e.g. `HCLK_L_BOT_UTURN`, `LIOB33_SING`) shares its
+physical bit region with a different, more general tile type (`HCLK_L`,
+`LIOB33`) but starts at a **word offset into that other type's segbits**:
+```python
+# __init__ (per block_type present in the tile's `bits` map)
+alias_bits_map[block_type] = Bits(
+    base_address=bits_map[block_type].base_address,
+    frames=bits_map[block_type].frames,
+    offset=bits_map[block_type].offset - alias.start_offset,   # <-- the whole trick
+    words=bits_map[block_type].words, alias=None)
+```
+(`prjxray/tile_segbits_alias.py:46-55`). i.e. it *subtracts*
+`start_offset` from this tile's own `offset` so that, when the aliased
+tile type's segbits are looked up with the *aliased* feature name (built
+by `map_feature_to_segbits`, which swaps `parts[0]` = alias tile_type and
+remaps site names via `alias.sites`, `prjxray/tile_segbits_alias.py:75-86`),
+the resulting `word_bit` (computed against the *alias* tile's own
+`baseaddr`+`offset` convention) lands at the correct absolute frame
+position for *this* tile. `feature_to_bits` on `TileSegbitsAlias` simply
+delegates to the aliased tile type's `TileSegbits.feature_to_bits` with the
+adjusted `alias_bits_map` (`prjxray/tile_segbits_alias.py:119-126`).
+`Grid.get_tile_segbits_at_tilename` picks `TileSegbitsAlias` over the plain
+per-type segbits whenever **any** `bits.<bus>.alias` key is present on that
+tile (`prjxray/grid.py:137-149`).
+
+### 4.2 UltraScale / UltraScale+ (`xcuseries` / `xcupseries`) — bit layout differs from Series7
+
+**This is the single most important divergence for a from-scratch Rust
+implementation.** The plain `prjxray` checkout's `architectures.h`
+(`lib/include/prjxray/xilinx/architectures.h:68-78`) defines `UltraScale`
+and `UltraScalePlus` as C++ classes that simply **inherit** `Series7`'s
+`FrameAddress`/`Part` types unchanged (only overriding `words_per_frame`):
+```cpp
+class UltraScalePlus : public Series7 {
+  public: UltraScalePlus() : Series7("UltraScalePlus") {}
+  static constexpr int words_per_frame = 93;
+};
+class UltraScale : public Series7 {
+  public: UltraScale() : Series7("UltraScale") {}
+  static constexpr int words_per_frame = 123;
+};
+```
+This is **incorrect/incomplete** for the real UltraScale/+ bit layout — it
+was superseded in the separate `SymbiFlow/prjuray-tools` repo (the actual
+prjuray C++ core, §1), which defines dedicated `xcuseries` (plain
+UltraScale) and `xcupseries` (UltraScale+) namespaces with their own
+`FrameAddress`, `Part`, `Row`, `ConfigurationBus`, `ConfigurationColumn`,
+and correctly wires them into `architectures.h`:
+```cpp
+class UltraScale : public Series7 {
+  public: UltraScale() : Series7("UltraScale") {}
+  using Part = xcuseries::Part;
+  using FrameAddress = xcuseries::FrameAddress;
+  static constexpr int words_per_frame = 123;
+};
+class UltraScalePlus : public Series7 {
+  public: UltraScalePlus() : Series7("UltraScalePlus") {}
+  using Part = xcupseries::Part;
+  using FrameAddress = xcupseries::FrameAddress;
+  static constexpr int words_per_frame = 93;
+};
+```
+(`prjuray-tools/lib/include/prjxray/xilinx/architectures.h:65-79`).
+**`fasm-xilinx` must implement the `prjuray-tools` (xcuseries/xcupseries)
+bit layout, not the plain-`prjxray` shim** — the shim reusing Series7's
+`FrameAddress` for UltraScale/+ would decode wrong `column`/`minor` values
+because the field widths differ (below). `ConfRegType` (config register
+numbering) **is** shared with Series7 in both repos (`UltraScale`/
+`UltraScalePlus` do not override `ConfRegType`) — see §6.
+
+| | Series7 | UltraScale (`xcuseries`) | UltraScale+ (`xcupseries`) |
+|---|---|---|---|
+| `words_per_frame` | 101 (×32-bit) | 123 (×32-bit) | 93 (×32-bit) |
+| block_type bits | `[25:23]` (3b) | `[25:23]` (3b, same as Series7) | **`[26:24]`** (3b, shifted up 1) |
+| row+half bits | `[22:17]` (half=bit22, row=`[21:17]`, 5b) | `[22:17]` (same as Series7: half=bit22, row=`[21:17]`) | **`[23:18]`** (half=bit23, row=`[22:18]`, 5b) |
+| column bits | `[16:7]` (10b) | `[16:7]` (same as Series7) | **`[17:8]`** (10b) |
+| minor bits | `[6:0]` (**7b**, max 127) | `[6:0]` (same as Series7, **7b**) | **`[7:0]`** (**8b**, max 255) |
+| total address width | 26 bits | 26 bits (numerically identical layout to Series7) | 27 bits |
+| Python constant `FRAME_WORD_COUNT` | 101 | *(no separate constant found; the checked-out `prjuray` Python only ships `93*2`, see below)* | `93 * 2 = 186` (as 16-bit half-words) |
+| Python `WORD_SIZE_BITS` | 32 | — | **16** |
+| Python `FRAME_ALIGNMENT` | `0x80` | — | `0x100` |
+
+Sources: `prjuray-tools/lib/include/prjxray/xilinx/xcuseries/frame_address.h:18-30`
+(`BLOCK_TYPE_HIGH=25,LOW=23; ROW_HIGH=22,LOW=17; COLUMN_HIGH=16,LOW=7;
+MINOR_HIGH=6,LOW=0` — numerically the *same* bit ranges as Series7, i.e.
+plain UltraScale really does share Series7's address layout, just a
+different word count); `prjuray-tools/lib/include/prjxray/xilinx/xcupseries/frame_address.h:18-27`
+(`BLOCK_TYPE_HIGH=26,LOW=24; ROW_HIGH=23,LOW=18; COLUMN_HIGH=17,LOW=8;
+MINOR_HIGH=7,LOW=0` — everything shifted up one bit and minor widened to 8
+bits because UltraScale+ tiles can have up to 256 frames in one column,
+confirmed by the observed `"frames": 256` on `BRAM_X2Y0`'s `BLOCK_RAM` bus,
+§3.6); `prjuray-tools/prjuray/bitstream.py:20-27` (`WORD_SIZE_BITS = 16`,
+`FRAME_WORD_COUNT = 93 * 2`, `FRAME_ALIGNMENT = 0x100`, comment "How many
+16-bit words for frame in a US+ bitstream").
+
+**The prjuray Python side (`prjuray-tools/prjuray/*`, used by
+`fasm_assembler.py`/`fasm2frames.py`) models a frame as `186` **16-bit**
+half-words**, not `93` 32-bit words — i.e. `bitstream.WORD_SIZE_BITS=16`
+changes the `word_addr = bit.word_bit // WORD_SIZE_BITS; bit_index =
+bit.word_bit % WORD_SIZE_BITS` split in `fasm_assembler.py:129-130` to
+operate on 16-bit granularity. This is consistent with the `xcupseries` C++
+side working in native 32-bit words (`words_per_frame = 93`) — the Python
+`.frm`/assembler layer is simply using a finer-grained "word" unit than the
+C++ bitstream layer; a Rust `fasm-xilinx` should pick **one** canonical
+internal unit (32-bit words, matching the C++ bitstream format and Series7)
+and convert: a prjuray "16-bit word index" `w16` maps to 32-bit word
+`w16 / 2`, half-word position `w16 % 2` (upper/lower 16 bits) — this exact
+conversion is spelled out in `prjuray/utils/fasm2frames.py:78-88`
+(`output_bits`, converting frames-as-16-bit-words back to the `.bits`
+32-bit-word text format: `bit32_idx = bit_idx + (word_idx & 0x1) * 16;
+word32_idx = word_idx >> 1`). **Recommendation**: `fasm-xilinx`'s internal
+`Frames` container should always be arrays of 32-bit words (one array
+length per architecture: 101/123/93), and the loader for prjuray-style
+segbits (which store bit offsets in 16-bit-word units per `WORD_SIZE_BITS
+= 16`) should convert to 32-bit-word+bit at load time or at
+lookup time, consistently with how the Series7 path already does the
+`//32, %32` split — just parameterize the divisor per architecture
+(32 for Series7/xcuseries-as-used-by-plain-prjxray-shim, but see next
+paragraph: the *authoritative* prjuray Python explicitly uses 16).
+
+Frame address ECC/data-word semantics for the two UltraScale+ ECC words
+(word 45 + low 16 bits of word 46, replacing Series7's single-word ECC at
+word 50) are covered in §6 (bitstream, not FASM assembly — the ECC is
+computed only when writing/reading the actual `.bit`, not when building
+`.frm`).
+
+### 4.3 Citations for the code that implements addressing (all read; line
+    numbers as of the commits in §1)
+
+| What | prjxray (7 series) | prjuray-tools (UltraScale/+) |
+|---|---|---|
+| `FrameAddress` bit-field layout | `lib/xilinx/xc7series/frame_address.cc:20-49` | `lib/xilinx/xcuseries/frame_address.cc` (same ranges as Series7) and `lib/xilinx/xcupseries/frame_address.cc:11-41` |
+| tilegrid `bits` → segbit → bit position | `prjxray/tile_segbits.py:161-167`, `prjxray/fasm_assembler.py:128-138` | `prjuray-tools/prjuray/tile_segbits.py` (verified structurally identical to prjxray's — same function names/line shapes), `prjuray-tools/prjuray/fasm_assembler.py` not separately re-derived (uses same `prjuray.bitstream.WORD_SIZE_BITS`) |
+| next-frame-address iteration (row/column/minor rollover, used by frame padding, §6) | `lib/xilinx/xc7series/{part,global_clock_region,configuration_row,configuration_bus,configuration_column}.cc` | `lib/xilinx/xcupseries/{part,configuration_row,configuration_bus,configuration_column}.cc` (same shape, no `global_clock_region` level — `Part::rows_` is a flat `std::map<unsigned int, Row>`, `lib/include/prjxray/xilinx/xcupseries/part.h:44-45`) |
+
+## 5. FASM → frames algorithm
+
+This is `prjxray.fasm_assembler.FasmAssembler` (`prjxray/fasm_assembler.py`,
+byte-identical in `prjuray-tools/prjuray/fasm_assembler.py` modulo the
+import of a local `bitstream` module and the loss of the `word_addr >= 101`
+sanity print — see the diff notes inline below) driven by
+`xc_fasm.fasm2frames.fasm2frames` (`xc_fasm/fasm2frames.py:119-282`) /
+`prjuray/utils/fasm2frames.py:91-139` (`run`). A Rust port must reproduce
+this exactly:
+
+1. **Parse** the FASM file with the `fasm` crate's parser
+   (`fasm.parse_fasm_filename`, `xc_fasm/fasm2frames.py:194`/
+   `prjuray/utils/fasm2frames.py:129`), yielding `FasmLine` records.
+2. **Per line**, `FasmAssembler.add_fasm_line` (`prjxray/fasm_assembler.py:165-192`):
+   - Skip lines with `set_feature is None` (comments/annotations only).
+   - Invoke the `feature_callback` (used by `fasm2frames.py` to build
+     `set_features`, the STEPDOWN/PUDC_B tracking set — **not** part of the
+     bit-setting logic itself).
+   - `line_str = fasm.fasm_line_to_string(line)` — reconstruct the
+     canonical single-line text, used only for error messages / dedup keys
+     (must byte-match the `fasm` crate's own `fasm_line_to_string`; this is
+     covered by Phase 1's `output` module, not re-specified here).
+   - Split `line.set_feature.feature` on `.`: `tile = parts[0]`, `feature =
+     '.'.join(parts[1:])` (`prjxray/fasm_assembler.py:175-177`).
+   - **Canonicalize**: `for flat_set_feature in fasm.canonical_features(line.set_feature):`
+     — this is the `fasm` crate's `output::canonical_features` /
+     `merge_features` machinery (Phase 1) applied to a *single* line: it
+     expands a `TAG[a:b] = value` multi-bit assignment into one
+     `flat_set_feature` per **set** bit (bits that are 0 in `value` are
+     dropped — **`value == 0` bits are simply not emitted as
+     `flat_set_feature`s at all**, so a multi-bit feature assigned all-zero
+     produces zero `enable_feature` calls for that tag, i.e. is a complete
+     no-op — matches `db_dev_process`/`segmaker` conventions that
+     "clearing" a multi-bit field is inferred from the *absence* of a set
+     bit, not from an explicit `!` list the way single-bit `!TAG` works).
+     For a bare (single-bit, `start=None`) feature, `canonical_features`
+     yields it unchanged (one flat feature, `address = 0` since
+     `flat_set_feature.start is None`).
+   - For each flat feature: `address = flat_set_feature.start or 0`; call
+     `self.enable_feature(tile, feature, address, line_str)`, catching
+     `FasmLookupError` into a `missing_features` list (**not** raised
+     immediately — all lines are processed first, then a single combined
+     `FasmLookupError('\n'.join(missing_features))` is raised at the very
+     end of `parse_fasm_filename`**, `prjxray/fasm_assembler.py:194-203`**
+     — i.e. one FASM file with 3 unknown features produces **one** raised
+     exception whose message has 3 newline-joined lines, not 3 separate
+     exceptions).
+3. **`enable_feature(tile, feature, address, line)`** (`prjxray/fasm_assembler.py:125-163`):
+   - `gridinfo = grid.gridinfo_at_tilename(tile)` — **KeyError here is not
+     caught specially** (propagates as a raw `KeyError`, not
+     `FasmLookupError`) if `tile` does not exist in the tilegrid at all.
+   - `segbits = grid.get_tile_segbits_at_tilename(tile)` — picks
+     `TileSegbitsAlias` or plain `TileSegbits` per §4.1.
+   - `db_k = f"{gridinfo.tile_type}.{feature}"` — the lookup key is
+     **tile-type-qualified**, e.g. `CLBLM_L.SLICEM_X0.ALUT.INIT[00]` with
+     the tile-type prefix `CLBLM_L` substituted for the *tile instance*
+     name.
+   - `for block_type, bit in segbits.feature_to_bits(gridinfo.bits, db_k, address):`
+     — iterates **all** `(block_type, Bit)` pairs the feature resolves to
+     (usually exactly the bits on one bus, but a feature name could in
+     principle exist verbatim on more than one bus — `feature_to_bits`
+     (`prjxray/tile_segbits.py:169-184`) checks ppips first (return nothing,
+     no error), then, if `address == 0`, checks every `block_type` in
+     `self.segbits` for an exact-name match and returns on the **first**
+     match found (dict iteration order = insertion order = `CLB_IO_CLK`
+     before `BLOCK_RAM`, since that's the order `TileSegbits.__init__`
+     populates `self.segbits`); only if `address != 0` (multi-bit `[N]`
+     addressing) does it fall through to `self.feature_addresses[feature][address]`,
+     which **raises `KeyError`** (→ `FasmLookupError` at the call site) if
+     neither the feature nor that specific `[address]` slot exists.
+   - Each yielded `Bit` is turned into `(frame_addr, word_addr, bit_index)`
+     via the `//32,%32` split (§4.1) and passed to `frame_set`/`frame_clear`
+     depending on `bit.isset` (the `!` flag from the segbits line, §3.2 —
+     **not** the FASM line's own value; a `!` bit in the segbits DB means
+     "clear this physical config bit when this feature is enabled",
+     independent of whether the FASM feature itself was written with `=0`
+     or bare).
+   - Any `KeyError` from the whole `feature_to_bits` generator (either the
+     "not in `feature_addresses`" case above, or the tile-type not being in
+     the loaded `db.tile_types` at all, `KeyError` from
+     `self.tile_types[tile_type.upper()]` inside `Database.get_tile_segbits`)
+     is caught and re-raised as `FasmLookupError("Segment DB %s, key %s not
+     found from line '%s'" % (gridinfo.tile_type, db_k, line))`
+     (`prjxray/fasm_assembler.py:153-156`) — **this exact message format
+     must be reproduced** if `fasm-xilinx`'s CLI is to be diff-compatible
+     with `fasm2frames.py`'s stderr/exception text.
+   - After the bit loop, **for every `block_type` that contributed at
+     least one bit**, all frames of that bus are marked "in use":
+     `for frame in range(bits.base_address, bits.base_address +
+     bits.frames): frames_in_use.add(frame)` (`prjxray/fasm_assembler.py:158-163`)
+     — this is what makes `--sparse` output still zero-fill *every* frame
+     of a tile's bus once *any* bit on that bus was touched (§5, sparse
+     semantics below), even frames whose bits were all left at their
+     default 0.
+4. **`frame_set`/`frame_clear`** (`prjxray/fasm_assembler.py:81-123`):
+   maintain `self.frames: dict[(frame_addr, word_addr, bit_index), 0|1]`
+   and `self.frames_line[key] = line` (the FASM line text that last touched
+   that bit, for error messages). Both check `word_addr >= 101` first and,
+   if true, **print a warning to stderr and silently drop the write**
+   (`prjxray/fasm_assembler.py:86-88,108-110` — **not** an exception; this
+   is dead code for Series7 since no segbit ever produces `word_addr>=101`
+   from a 101-word frame, but is a real hazard if `fasm-xilinx` reuses this
+   constant unmodified for UltraScale's 123-word frames — the check must be
+   parameterized per architecture, and **is absent entirely** in the
+   prjuray fork's copy of `frame_set`/`frame_clear`,
+   `prjuray-tools/prjuray/fasm_assembler.py:84-120` has no such guard at
+   all). If the key was already set to a *different* value by an earlier
+   line, raise `FasmInconsistentBits('FASM line "{line}" wanted to
+   {set|clear} bit {key} but was {cleared|set} by FASM line
+   "{frames_line[key]}"')` (`prjxray/fasm_assembler.py:90-97,111-119`) —
+   **this is how `!` vs. non-`!` conflicts across two different FASM
+   features that happen to touch the same physical bit are detected**; if
+   the same value is written again (idempotent), it's a silent no-op.
+   `FasmInconsistentBits` **propagates uncaught** all the way out of
+   `parse_fasm_filename` (unlike `FasmLookupError`, which is batched) —
+   i.e. the *first* inconsistent-bit conflict aborts the whole run
+   immediately with a Python traceback (`fasm2frames.py`'s CLI has no
+   try/except around `assembler.parse_fasm_filename`, so this becomes an
+   uncaught exception → non-zero exit + traceback on stderr; `fasm-xilinx`
+   should reproduce "first conflict aborts immediately" but can choose a
+   cleaner error type/message as long as behavior — abort, not batch — matches).
+5. **Duplicate features / idempotent re-enable**: enabling the exact same
+   feature+address twice (e.g. FASM has the same line twice, or two
+   different lines that expand to the same segbits) is fine — `frame_set`/
+   `frame_clear` treat re-writing the same value as a no-op (step 4). There
+   is no separate "duplicate feature" detection beyond the bit-level
+   consistency check — i.e. `fasm-xilinx` should **not** implement a
+   feature-name-level duplicate check; the semantics are entirely bit-level.
+6. **Extra/required features**: `fasm2frames()` builds `extra_features`
+   from two independent sources, both parsed as extra `FasmLine`s and fed
+   through the *same* `add_fasm_line` path (so they get the identical
+   conflict-checking as user FASM lines):
+   - ROI's `required_features` list, if `--roi design.json` was given and
+     the JSON has a `"required_features"` key (list of FASM feature
+     strings) — `xc_fasm/fasm2frames.py:184-187`.
+   - `db.get_required_fasm_features(part)` — the part's
+     `required_features.fasm` file (§2.1/§3, one feature per non-blank
+     line) — `xc_fasm/fasm2frames.py:190-192`,
+     `prjxray/db.py:222-233` (`get_required_fasm_features`, returns
+     `set()` if the part has none — **the checked-out artix7 slice of
+     prjxray-db has no `required_features.fasm` anywhere** —
+     `find . -iname "required_features*"` found nothing — so this path is
+     unexercised by the available test data; implement per spec but note
+     as untested against real data, §9).
+   `extra_features` are appended (not prepended) to `assembler.parse_fasm_filename(filename_in,
+   extra_features=extra_features)` — order: **all lines from the input
+   FASM file first, then all `extra_features`**
+   (`xc_fasm/fasm2frames.py:194`, `FasmAssembler.parse_fasm_filename`,
+   `prjxray/fasm_assembler.py:194-203`, loops `for line in
+   fasm.parse_fasm_filename(filename): ...` then `for line in
+   extra_features: ...`). This ordering matters for `FasmInconsistentBits`
+   messages (which line is "the earlier" one) but not for the final bit
+   values.
+7. **ROI** (`prjxray.roi.Roi`, `xc_fasm/fasm2frames.py:175-183`): when
+   `--roi design.json` is given, `Roi(db, x1, x2, y1, y2)` (grid coordinate
+   bounding box, inclusive on both ends — `Roi.tile_in_roi`,
+   `prjxray/roi.py:25-29`, `x1<=x<=x2 and y1<=y<=y2`) is built from the
+   ROI JSON's `info.GRID_X_MIN/MAX/GRID_Y_MIN/MAX` keys, then
+   `assembler.mark_roi_frames(roi)` is called **before** parsing the FASM
+   file: for every tile inside the ROI box (regardless of whether the FASM
+   file sets any feature on it), every frame of every bus that tile has is
+   added to `frames_in_use` (`prjxray/fasm_assembler.py:205-213`,
+   identical logic to the "mark bus frames in use" step in `enable_feature`,
+   §step 3 above). **Effect**: with `--sparse`, ROI tiles' frames are
+   always zero-filled in the output even if nothing in the FASM file
+   touches them, but non-ROI tiles outside the box that also weren't
+   touched are omitted entirely. `--roi` does **not** filter/reject FASM
+   features whose tile lies outside the ROI box — it is purely additive to
+   `frames_in_use` for sparse-output purposes; there is no "features
+   outside ROI are errors" check anywhere in this code path.
+8. **PUDC_B pullup** (`--emit_pudc_b_pullup`, Series7-only feature — absent
+   from prjuray's `fasm2frames.py` entirely, confirmed by reading
+   `prjuray/utils/fasm2frames.py:91-139` top to bottom, no PUDC_B mention):
+   - `find_pudc_b(db)` (`xc_fasm/fasm2frames.py:82-104`) scans every tile's
+     `gridinfo.pin_functions` for a site whose pin-function string contains
+     `'PUDC_B'`; **asserts there is at most one such site in the whole
+     part** (`assert pudc_b_tile_site == None`, i.e. a part with two PUDC_B
+     pins would crash `fasm2frames.py` with an `AssertionError` — a latent
+     bug/assumption to preserve or deliberately fix, §9). Computes `iob_y =
+     int(site[-1]) % 2` and returns `(tile, f"IOB_Y{iob_y}")`.
+   - If `--emit_pudc_b_pullup` is set and a PUDC_B site was found, the
+     assembler's feature callback is wrapped
+     (`check_for_pudc_b`, `xc_fasm/fasm2frames.py:162-172`) to notice if
+     the user's own FASM already sets a feature on that exact
+     `(tile, site)` — if so, `pudc_b_in_use = True` and the synthetic
+     pullup lines below are **skipped**.
+   - After parsing the main FASM file (and only if `pudc_b_in_use` is still
+     `False` and a PUDC_B site exists), three synthetic FASM lines are fed
+     through `assembler.add_fasm_line` (`xc_fasm/fasm2frames.py:196-214`),
+     literal template (Artix-50T/Zynq-10 specific per the code's own
+     comment, **known wrong for K70T**):
+     ```
+     {tile}.{site}.LVCMOS12_LVCMOS15_LVCMOS18_LVCMOS25_LVCMOS33_LVDS_25_LVTTL_SSTL135_SSTL15_TMDS_33.IN_ONLY
+     {tile}.{site}.LVCMOS25_LVCMOS33_LVTTL.IN
+     {tile}.{site}.PULLTYPE.PULLUP
+     ```
+     Any `FasmLookupError` from these synthetic lines is collected the same
+     way and re-raised as a combined `FasmLookupError` immediately (not
+     deferred with the main parse) — `xc_fasm/fasm2frames.py:213-214`.
+9. **STEPDOWN propagation over IO banks** (`xc_fasm/fasm2frames.py:216-272`,
+   Series7-only — absent from prjuray, no `iobanks`/STEPDOWN code in
+   `prjuray/utils/fasm2frames.py`). Runs unconditionally (not gated by a
+   flag) whenever `part is not None`, **after** the main FASM parse (so it
+   sees `set_features`, the full set of `SetFasmFeature`s observed via the
+   `feature_callback`, §step 2):
+   - Build `used_iob_sites: set[(tile, site)]` — every `(tile, site)` pair
+     seen in `set_features` where `set_feature.value != 0` and `"IOB33" in
+     tile` (feature split on `.` with `maxsplit` implied by plain `.split(".")`
+     then `tile, site, tag = feature.split(".", maxsplit=2)` only when
+     `len(parts) >= 3`).
+   - Build `stepdown_tags: dict[bank -> set[tag]]` and `stepdown_banks:
+     set[bank]` from every `set_feature` (again `value != 0` only) whose
+     3rd-level tag contains the substring `"STEPDOWN"`: `bank =
+     tile_to_bank[tile]` (from the `package_pins.csv`+`iobanks` maps built
+     at the top of `fasm2frames()`, §3.7); `stepdown_tags[bank].add(tag)`.
+   - For every bank that had a STEPDOWN tag, for every tile in
+     `bank_to_tile[bank]` (both IOB33 tiles from `package_pins.csv` *and*
+     the synthetic `"HCLK_IOI3_" + iobanks[bank]` tile, §3.5's `iobanks`
+     map):
+     - If the tile name contains `"IOB33"`: for every site
+       `get_iob_sites(db, tile)` yields (`IOB_Y{int(site[-1]) % 2}` for
+       every site in that tile's `gridinfo.sites`,
+       `xc_fasm/fasm2frames.py:107-116`) that is **not** already in
+       `used_iob_sites`, and for every STEPDOWN tag recorded for that bank,
+       synthesize the FASM feature string `f"{tile}.{site}.{tag}"` and feed
+       it through `assembler.add_fasm_line` (parsed via
+       `fasm.parse_fasm_string`).
+     - If the tile name contains `"HCLK_IOI3"`: synthesize
+       `f"{tile}.STEPDOWN"` (bare, tile-level feature, no site) and feed it
+       through the same path.
+   - Any `FasmLookupError`s from this synthetic-feature pass are batched
+     and raised once at the end, same pattern as step 8.
+   - **Effect in plain English**: if *any* used IOB in a bank sets a
+     `STEPDOWN` feature, every *other*, otherwise-unused IOB33 site in the
+     same bank (plus that bank's `HCLK_IOI3` tile) gets the same STEPDOWN
+     tag(s) enabled too — because STEPDOWN is a per-bank analog trim that
+     must be consistently configured across the whole bank even for pins
+     the design doesn't otherwise use. Confirmed against the miniature test
+     fixture `f4pga-xc-fasm/tests/test_data/iob/liob_stepdown.fasm`:
+     ```
+     LIOB33_X0Y1.IOB_Y0.SOMETHING.IN
+     LIOB33_X0Y1.IOB_Y0.SOMETHING.STEPDOWN
+     RIOB33_X43Y1.IOB_Y1.SOMETHING.OUT
+     ```
+     (only `LIOB33_X0Y1.IOB_Y0` explicitly sets STEPDOWN; the test's
+     `.bits` golden file — not inspected byte-for-byte here, but the test
+     `test_stepdown_1`/`test_stepdown_2` in `tests/test_fasm2frames.py:186-192`
+     exists precisely to check the propagation reaches `RIOB33_X43Y1`'s
+     *other* Y-site).
+10. **`get_frames(sparse=False)`** (`prjxray/fasm_assembler.py:47-68`):
+    - `sparse=False` (default): start from `frames_init()` — **every**
+      frame of **every** tile in the whole grid, zero-filled
+      (`for bits_info in grid.iter_all_frames(): for coli in
+      range(bits_info.bits.frames): init_frame_at_address(frames,
+      base_address+coli)` — this is O(whole part), i.e. the non-sparse
+      output always has one entry per frame address that exists anywhere
+      in the tilegrid, e.g. tens of thousands of frames for a real part).
+    - `sparse=True`: start from `{}`, then zero-init only the frames in
+      `self.frames_in_use` (populated by steps 3/7 above — every bus that
+      had *any* bit touched, or every tile inside an ROI). **"Sparse" does
+      not mean "only frames with a nonzero word"** — it means "only frames
+      belonging to a tile-bus that was touched at all", still zero-filled
+      in full (all `FRAME_WORD_COUNT` words) for that bus. A completely
+      untouched tile contributes zero frames to sparse output; a
+      partially-touched tile (one bit set) contributes **all** its bus's
+      frames, still mostly zero.
+    - Then, regardless of `sparse`, every `(frame_addr, word_addr,
+      bit_index) -> is_set` entry in `self.frames` is applied:
+      `init_frame_at_address(frames, frame_addr)` (defensive — ensures the
+      frame exists even if it wasn't already, e.g. a bit set on a frame
+      whose bus wasn't "in use" for some reason) then `if is_set:
+      frames[frame_addr][word_addr] |= 1 << bit_index` (bits already
+      default to 0, so only `is_set=1` entries do anything — explicit
+      `frame_clear` calls are a no-op here, their only effect was the
+      conflict-check in step 4). Returns `dict[frame_addr -> list[FRAME_WORD_COUNT
+      ints]]`.
+    - `xc_fasm/fasm2frames.py:62` prints a warning (not an error) to
+      stderr, `f"get_frames: invalid word address {word_addr}..."` /
+      `f"...invalid frame address {frame_addr:x8}"`, if a stored key
+      somehow has `word_addr >= 101` or an address not in `frames` — dead
+      code in practice for the reasons in step 4 above, but note the
+      `{frame_addr:x8}` format spec is itself a bug (should be `:08x`;
+      Python accepts `x8` as "hex, min-width 8 via the wrong flag order"
+      and it silently does **not** zero-pad — reproduce the *behavior*
+      byte-for-byte only if `fasm-xilinx`'s CLI needs identical stderr
+      output for diff-testing, otherwise fix it).
+
+### 5.1 `.frm` text format
+
+Writer: `dump_frm(f, frames)` (`xc_fasm/fasm2frames.py:74-79` /
+`prjuray/utils/fasm2frames.py:70-75`, identical): iterate `sorted(frames.keys())`
+(numeric ascending frame address order), one line per frame:
+```
+0x%08X <word0>,<word1>,...,<wordN>\n
+```
+where each `<wordK>` is `0x%08X` (Series7: N=100, i.e. exactly 101 comma-
+separated `0x`-prefixed 8-hex-digit words; prjuray's own `.frm` writer is
+architecture-agnostic — it just writes `len(words)` words, whatever that
+list's length is for the loaded architecture). No trailing comma; `\n`
+after each line; file ends after the last frame's line (no trailing blank
+line beyond the final `\n`).
+
+Reader (C++, used by `xc7frames2bit`/`xcframes2bit`):
+`Frames<ArchType>::readFrames` (`lib/xilinx/frames.h:53-109`, identical
+in `prjuray-tools/lib/include/prjxray/xilinx/frames.h`): skip lines
+starting with `#` (comment support the Python writer never emits but the
+reader tolerates); split on the first space into `<addr> <csv-words>`;
+`addr = std::stoul(addr_str, nullptr, 16)`; split the CSV on `,`; **for
+every non-Spartan6 architecture, if the parsed word count doesn't exactly
+equal `ArchType::words_per_frame`, the whole line is skipped with a stderr
+warning** (`"Frame <hex>: found <n> words instead of <words_per_frame>"`,
+`lib/xilinx/frames.h:79-90`) — i.e. a malformed `.frm` line is silently
+dropped, not a hard error. Each word is `std::stoul(val, nullptr, 16)`.
+After parsing a frame's words, `updateECC(frame_data)` is called
+immediately (**the `.frm` reader always recomputes and overwrites the ECC
+word(s) before storing the frame** — see §6; this means the ECC word(s) in
+a hand-written `.frm` file are ignored/replaced, not validated).
+
