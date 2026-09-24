@@ -24,11 +24,11 @@
 //!   `parse_fasm_bytes(b: bytes) -> list[FasmLine]` and
 //!   `parse_fasm_filename(path: str | bytes | os.PathLike) -> list[FasmLine]`,
 //!   returning the existing namedtuples of `fasm.model` (never parallel
-//!   types; see [`convert`]);
+//!   types; see `src/convert.rs`);
 //! * `fasm_tuple_to_string(model, canonical=False) -> str | None`, a fast
 //!   path for `fasm.fasm_tuple_to_string` that returns `None` for any
 //!   input it does not handle exactly like the Python function (see
-//!   [`output`]);
+//!   `src/output.rs`);
 //! * `FasmParseError`, the exception raised for parse and I/O errors,
 //!   whose `str()` is `Parse error at L:C - message` (the format of the
 //!   original ANTLR based parser's exception), with `line` and `column`
