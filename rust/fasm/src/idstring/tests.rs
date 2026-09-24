@@ -495,3 +495,38 @@ mod properties {
         }
     }
 }
+
+#[test]
+fn concurrent_lookups_while_tables_grow() {
+    let names: Vec<String> = (0..20_000)
+        .map(|i| format!("TILE_X{i}Y{}.SITE{}.BEL{}.INIT", i % 13, i % 5, i % 3))
+        .collect();
+    for interner in [Interner::new(), Interner::with_level_limit(3000)] {
+        std::thread::scope(|scope| {
+            for t in 0..4 {
+                let (names, interner) = (&names, &interner);
+                scope.spawn(move || {
+                    for name in names.iter().skip(t).step_by(4) {
+                        assert_eq!(interner.resolve(interner.intern(name)), *name);
+                    }
+                });
+            }
+            for _ in 0..4 {
+                let (names, interner) = (&names, &interner);
+                scope.spawn(move || {
+                    for name in names.iter().rev() {
+                        // Any handle found must be the right one, even while
+                        // the index is being grown by the writers.
+                        if let Some(id) = interner.get(name) {
+                            assert_eq!(interner.resolve(id), *name);
+                        }
+                    }
+                });
+            }
+        });
+        for name in &names {
+            let id = interner.get(name);
+            assert_eq!(id.map(|id| interner.resolve(id)), Some(name.clone()));
+        }
+    }
+}
