@@ -464,3 +464,11 @@ what happened, branch/commit references, open issues.
   the pinned f4pga/prjxray-db, where both the oracle and Rust reject the
   file identically). With the snap database Rust matches all 18. The
   corpus must name that database; in review.
+* T7.2 review: REQUEST CHANGES. Confirmed 18/18 sparse and 7/7 dense goldens
+  match Rust with the snap database; the pinned f4pga db lacks 6 segbits
+  entries and 3 ppips files (CFG_CENTER_STARTUP_*) that spi-flash-id needs.
+  Required: name the database in every README (snap 0.8.2, Info.md
+  "Project X-Ray 4c157493, 2021-12-14"), point the e2e test at the snap db,
+  fix a `find | head` under pipefail that aborts run-fpgas-online.sh on a
+  fresh setup, and commit the yosys `$buf` techmap workaround as a patch.
+  Recorded T5.8b (fetch-db.sh openxc7 source). Fixes in progress.

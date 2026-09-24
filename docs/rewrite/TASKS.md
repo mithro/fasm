@@ -121,6 +121,10 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T5.8 Reference tool setup `tests/oracle/setup-xilinx.sh` (prjxray
       python package, f4pga-xc-fasm, prjxray C++ tools build) and database
       fetch script `tools/fetch-db.sh` (sparse clone per family) (after T0.4).
+- [ ] T5.8b `tools/fetch-db.sh openxc7`: expose the openXC7 snap's bundled
+      prjxray-db (a snapshot with STARTUP/CFG_CENTER ppips that the pinned
+      f4pga/prjxray-db lacks) at a stable, checksummed cache path so tests
+      can select it without the full toolchain install (after T5.8, T7.2).
 - [ ] T5.9 `tools/gen-corpus.py`: synthetic FASM exercising every segbits
       feature of every tile type in a database; `tools/difftest-xilinx.py`
       comparing frames and bitstreams against the reference tools for every
