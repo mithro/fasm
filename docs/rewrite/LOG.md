@@ -104,3 +104,8 @@ what happened, branch/commit references, open issues.
   byte reproducible; tests compare `.frm` and bitread output. Sent for
   review. Implementer reported the base oracle ANTLR build is flaky across
   runs: recorded as T0.4b.
+* T1.2 implemented on branch `worktree-agent-a7483256a8644b3ab` (5 commits,
+  docs/rewrite/DESIGN-model.md): FeatureValue inline [u64;4] / heap enum
+  with canonical representation (40 bytes), SetFasmFeature 72 bytes,
+  FasmLine 112 bytes, 126 tests incl. proptest vs num-bigint. Sent for
+  review.
