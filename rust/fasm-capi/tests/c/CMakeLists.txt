@@ -52,6 +52,11 @@ set_target_properties(fasm_capi_shared PROPERTIES
     IMPORTED_LOCATION "${FASM_SHARED_LIB}"
     IMPORTED_NO_SONAME TRUE
     INTERFACE_INCLUDE_DIRECTORIES "${FASM_REPO_ROOT}/include")
+if(WIN32)
+    # Not exercised in CI: cargo names the import library fasm_capi.dll.lib.
+    set_target_properties(fasm_capi_shared PROPERTIES
+        IMPORTED_IMPLIB "${FASM_LIB_DIR}/fasm_capi.dll.lib")
+endif()
 
 # The Rust staticlib needs the system libraries the Rust standard library
 # uses (`cargo rustc -p fasm-capi -- --print native-static-libs`).
@@ -61,10 +66,15 @@ set_target_properties(fasm_capi_static PROPERTIES
     IMPORTED_LOCATION "${FASM_STATIC_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${FASM_REPO_ROOT}/include"
     INTERFACE_COMPILE_DEFINITIONS "FASM_STATIC")
-if(UNIX)
-    set_property(TARGET fasm_capi_static PROPERTY INTERFACE_LINK_LIBRARIES
-        Threads::Threads ${CMAKE_DL_LIBS} m)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(FASM_NATIVE_LIBS Threads::Threads ${CMAKE_DL_LIBS} m rt util)
+elseif(WIN32)
+    # Not exercised in CI.
+    set(FASM_NATIVE_LIBS ws2_32 userenv ntdll bcrypt advapi32 kernel32)
+else()
+    set(FASM_NATIVE_LIBS Threads::Threads ${CMAKE_DL_LIBS} m)
 endif()
+set_property(TARGET fasm_capi_static PROPERTY INTERFACE_LINK_LIBRARIES ${FASM_NATIVE_LIBS})
 
 foreach(variant shared static)
     set(exe "test_capi_${variant}")
@@ -80,6 +90,10 @@ enable_testing()
 foreach(variant shared static)
     add_test(NAME capi_${variant} COMMAND test_capi_${variant} "${FASM_REPO_ROOT}")
 endforeach()
+if(WIN32)
+    # There is no RPATH on Windows: find the DLL through PATH.
+    set_tests_properties(capi_shared PROPERTIES ENVIRONMENT "PATH=${FASM_LIB_DIR};$ENV{PATH}")
+endif()
 
 # Memory checking: every error and every definitely or indirectly lost
 # block fails the test. The global feature name interner (fasm::idstring)
