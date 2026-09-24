@@ -80,7 +80,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T3.2 Replace setup.py/ANTLR build with maturin based build; update
       `tests/test_simple.py` and add parity tests between `rust` and `textx`
       parsers over the corpus; `tox.ini`; wheel build workflow (after T3.1).
-- [ ] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
+- [~] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
       `merge_and_sort` exposed and tested for identical results (after T3.1).
 
 ## Phase 4: C and C++ wrappers

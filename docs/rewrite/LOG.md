@@ -389,3 +389,4 @@ what happened, branch/commit references, open issues.
   (check_license.sh scans .hpp/.pc.in). Merged with --no-ff; `make
   capi-test` 12/12 incl. valgrind and the compiler matrix; worktree
   removed. Phase 4 (C and C++ wrappers) complete.
+* T3.3 (Python fast paths: fasm_tuple_to_string, merge_and_sort) started.
