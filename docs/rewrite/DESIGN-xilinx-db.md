@@ -560,7 +560,15 @@ range-check against `words` (it trusts the segbits file).
 101-word frame (the physical middle), shared between the tile logically
 "above" and "below" it in the row; the segbits file's `word_bit` for HCLK
 features is always < 32 (relative to that single word), so `absolute_bit =
-50*32 + word_bit` lands in `[1600, 1631]`, i.e. word 50 always.
+50*32 + word_bit` lands in `[1600, 1631]`, i.e. word 50 always. **Word 50
+is also the exact word Series7's per-frame ECC lives in** (`kECCFrameNumber
+= 0x32 = 50`, §6.5) — every HCLK-row tile's segbits therefore necessarily
+share a word with the ECC value. §6.5 verifies, across every real
+artix7 tile type whose bus can reach word 50 (not just the three HCLK
+types), that no segbit ever touches the 13 low bits `updateECC` reserves;
+this is a database-content fact, not something the addressing math itself
+guarantees, so it is re-verified there per-architecture rather than
+asserted here.
 
 **Alias mechanism** (`TileSegbitsAlias`, `prjxray/tile_segbits_alias.py`) —
 used when a tile type (e.g. `HCLK_L_BOT_UTURN`, `LIOB33_SING`) shares its
@@ -1325,6 +1333,100 @@ odd-parity + nibble-expansion) copied verbatim from the two `.cc` files
 quoted above; UltraScale (xcuseries) needs its own file read before coding
 — do not assume it matches either.
 
+**No real segbit ever writes into the ECC-reserved bits — verified across
+every tile type that can reach the ECC word, not just HCLK.** §4.1 already
+notes that HCLK-row tiles (`offset: 50, words: 1`) share word 50 with
+Series7's ECC value by construction; the collision-avoidance property that
+makes this safe is a fact about the *segbits database contents*, not about
+the addressing scheme, so it needed its own check rather than an assumed
+argument from the tilegrid shape alone. Scanning the whole `xc7a50t`
+tilegrid (`prjxray-db/artix7/xc7a50t/tilegrid.json`) for every `bits`
+block whose `[offset, offset+words)` range includes word 50 — not only the
+three tile types whose block *starts* at offset 50 — finds **13** tile
+types: `HCLK_IOI3`, `HCLK_L`, `HCLK_R` (offset 50, words 1 — the
+directly-owning types; `HCLK_L_BOT_UTURN`/`HCLK_R_BOT_UTURN` alias to
+`HCLK_L`/`HCLK_R` with `start_offset: 0`, so they reuse the identical
+segbits file at the identical effective offset and need no separate
+check), `CLK_HROW_BOT_R`/`CLK_HROW_TOP_R` (offset 42, words 18, i.e. words
+42–59), `HCLK_CMT`/`HCLK_CMT_L` (offset 45, words 10, i.e. words 45–54),
+and `CFG_CENTER_MID`/`GTP_COMMON`/`MONITOR_BOT`/`PCIE_BOT` (offset 0, words
+101 — these four span the *entire* frame, trivially including word 50).
+Checking each corresponding `segbits_<type>.db` (computing, for every bit
+entry, `absolute_word = offset + word_bit // 32` and
+`bit_in_word = word_bit % 32`, and keeping only entries where
+`absolute_word == 50`) gives, for the minimum `bit_in_word` observed among
+hits — i.e. how close any real segbit comes to the 13 reserved low bits
+(`0..12`, since `updateECC`'s `data[50] &= 0xFFFFE000` clears exactly
+those):
+
+| Tile type | segbits file | min `bit_in_word` at word 50 |
+|---|---|---|
+| `HCLK_IOI3` | `segbits_hclk_ioi3.db` | 14 |
+| `HCLK_L` (+ `HCLK_L_BOT_UTURN` alias) | `segbits_hclk_l.db` | 14 |
+| `HCLK_R` (+ `HCLK_R_BOT_UTURN` alias) | `segbits_hclk_r.db` | 14 |
+| `CLK_HROW_BOT_R` | `segbits_clk_hrow_bot_r.db` | 14 |
+| `CLK_HROW_TOP_R` | `segbits_clk_hrow_top_r.db` | 14 |
+| `HCLK_CMT` | `segbits_hclk_cmt.db` | 14 |
+| `HCLK_CMT_L` | `segbits_hclk_cmt_l.db` | 14 |
+| `GTP_COMMON` | `segbits_gtp_common.db` | 13 (i.e. also clear of `0..12`) |
+| `CFG_CENTER_MID` | `segbits_cfg_center_mid.db` | no entry lands on word 50 at all |
+| `PCIE_BOT` | `segbits_pcie_bot.db` | no entry lands on word 50 at all |
+| `MONITOR_BOT` | *(no `segbits_monitor_bot.db` exists)* | trivially safe — no segbits for this type at all |
+
+**Every single real Series7 segbit that can possibly land on word 50
+avoids bits 0–12** (minimum observed `bit_in_word` is 13, everything else
+is ≥14) — the reviewer's spot-check of `segbits_hclk_l.db` alone
+generalizes to the full set of 10 distinct segbits files (plus one type
+with no segbits file, and two alias types that reuse an already-checked
+file) that can reach the ECC word in this database.
+
+The same check for **UltraScale+**: `xcupseries::updateECC`'s 48-bit ECC
+occupies 32-bit words 45 (fully) and the low 16 bits of word 46. Since
+`prjuray`'s Python layer (and the zynqusp tilegrid's `offset`/`words`
+fields) work in **16-bit word units** (`WORD_SIZE_BITS = 16`, §4.2), that
+48-bit span is exactly three consecutive 16-bit words: `2*45=90`,
+`2*45+1=91` (word 45's low and high halves) and `2*46=92` (word 46's low
+16 bits — the part `updateECC` actually writes); 16-bit word `93` (word
+46's *high* 16 bits) is real data, outside the ECC span — confirmed by
+`prjuray/utils/fasm2frames.py:78-88`'s `output_bits` conversion,
+`bit32_idx = bit_idx + (word_idx & 0x1) * 16; word32_idx = word_idx >> 1`
+(odd 16-bit word index ⇒ upper half of the 32-bit word). Scanning
+`prjuray-db/zynqusp/xczu3eg-sfvc784-1-e/tilegrid.json` for every `bits`
+block whose `[offset, offset+words)` range includes 16-bit word 90, 91 or
+92 finds: `CMT_RIGHT` (offset 84, words 10, i.e. 16-bit words 84–93 —
+checked `segbits_cmt_right.db` against words 90–92, **zero hits**);
+`PSS_ALTO` (offset 0, words 186 — spans the whole frame, but **no
+`segbits_pss_alto.db` exists in this database**, so trivially safe); and
+the `RCLK_*` row tiles (`RCLK_INT_L`, `RCLK_INT_R`, `RCLK_CLEM_L`,
+`RCLK_CLEM_R`, `RCLK_CLEL_L_L`, `RCLK_BRAM_INTF_L`, `RCLK_BRAM_INTF_TD_L`,
+`RCLK_BRAM_INTF_TD_R`, `RCLK_DSP_INTF_L`, `RCLK_DSP_INTF_R`,
+`RCLK_DSP_INTF_CLKBUF_L`, `RCLK_HDIO`, `RCLK_AMS_CFGIO`,
+`RCLK_XIPHY_OUTER_RIGHT`, `RCLK_INTF_LEFT_TERM_ALTO`, all `offset: 93,
+words: 3`, i.e. 16-bit words 93–95) which — unlike Series7's HCLK tiles —
+**do not overlap the ECC span at all**: UltraScale+'s horizontal-clock-row
+tiles are positioned to start exactly *after* the 3-word ECC block (at the
+first free 16-bit word, 93), rather than sitting *on* the ECC word the way
+Series7's HCLK tiles do. **No real segbit in either checked-out database
+(prjxray-db/artix7 or prjuray-db/zynqusp) ever touches an ECC-reserved
+bit.**
+
+**ECC must be computed after every segbit write to a frame has landed.**
+This is not just a performance ordering — it is required for correctness:
+`updateECC` (both variants) folds over the *current* contents of every
+data word in the frame (masking out the ECC word's own old value first,
+so it never self-references), so it must run once, after the frame's
+final word contents are known, not incrementally per-bit or before the
+FASM assembler has finished setting bits into that frame. This matches
+where the reference tools actually call it: `Frames<ArchType>::readFrames`
+calls `updateECC(frame_data)` immediately after parsing **all** of a
+frame's words from one `.frm` line (§5.1) — i.e. after `fasm2frames`/
+`FasmAssembler` has already finished writing every bit for that frame
+into the word array that got serialized to `.frm`. A `fasm-xilinx`
+bitstream writer that instead computed ECC per-bit, or before all FASM
+lines for a design had been processed, could compute a stale value if any
+later-processed FASM line happens to touch the same frame — the per-frame
+"finalize, then compute ECC once" ordering must be preserved exactly.
+
 ### 6.6 Bitstream reader (`bitread` / `BitstreamReader<ArchType>`)
 
 `BitstreamReader<ArchType>::InitWithBytes` (`lib/include/prjxray/xilinx/bitstream_reader.h:144-170`):
@@ -1565,6 +1667,25 @@ of these, using the miniature `f4pga-xc-fasm/tests/test_data/db` fixture
     (bt,bottom,row,col,minor)`) for the boundary values (`minor=127` for
     Series7/UltraScale, `minor=255` for UltraScale+, `block_type` at the
     shifted bit position for UltraScale+).
+19. **ECC-word collision invariant** (§6.5): for every loaded part database
+    (every tile type, every segbits entry, for both prjxray-db and
+    prjuray-db parts as they become available), assert that no segbit's
+    computed `(absolute_word, bit_in_word)` position ever falls inside the
+    architecture's ECC-reserved span — Series7/UltraScale: word 50, bits
+    0–12; UltraScale+: 32-bit words 45 (all 32 bits) and the low 16 bits
+    of word 46 (equivalently, 16-bit words 90–92 in the `prjuray`
+    tilegrid's own units). §6.5 verified this holds for every tile type in
+    the two databases checked out for this research pass (13 Series7 types
+    that can reach word 50, 2 UltraScale+ types that can reach words
+    45/46 — one of which has no segbits file at all); the reference Python
+    tools never check this themselves (a future prjxray-db/prjuray-db
+    update could introduce a colliding segbit without any upstream test
+    catching it), so `fasm-xilinx` should run this as a standing
+    build-time or CI-time assertion over the full loaded database — not
+    just a one-off test against the corpus checked in today — so a
+    database update that silently breaks the invariant is caught
+    immediately rather than producing a bitstream with a corrupted or
+    ECC-clobbered configuration bit.
 
 ### 8.4 CLI flags to reproduce (drop-in compatibility, PLAN.md goal)
 
@@ -1717,7 +1838,23 @@ reader (§6.6) instead of shelling out, but keep the same flags.
    address math and appears in `part.yaml`'s `configuration_buses` in
    principle, but no concrete example was found to quote. Do not special
    case it away — just note that it is untested against real data in this
-   research pass.
+   research pass. **Note the asymmetry this creates for a Rust loader**:
+   the Python `grid_types.BlockType` enum (`prjxray/grid_types.py:15-21`)
+   has **only** `CLB_IO_CLK` and `BLOCK_RAM` members — no `CFG_CLB` — while
+   the C++ `xc7series::BlockType` enum (§3.5) has all three. A tilegrid
+   `bits` block naming a bus the Python side doesn't know about would
+   currently raise a Python `ValueError` from `grid_types.BlockType(k)`
+   (`prjxray/grid.py:44`, `BlockType(k)` constructing the enum from the
+   JSON key) if it ever appeared — i.e. today's Python pipeline cannot
+   actually load a tilegrid with a `CFG_CLB` bus at all. `fasm-xilinx`'s
+   tilegrid loader should decide **explicitly** whether to (a) mirror this
+   and treat an unrecognized/`CFG_CLB` bus name as a hard load error, or
+   (b) support all three block types uniformly (matching the C++ side,
+   which the frame-address math and bitstream writer already do support)
+   — rather than silently doing whichever a generic enum-from-string
+   deserializer happens to do; either choice is defensible, but it must be
+   a conscious one made and documented at T5.2 time, not an accident of
+   whatever serde/enum crate is used.
 7. **The PUDC_B `assert pudc_b_tile_site == None`
    (`xc_fasm/fasm2frames.py:98`) will crash on any part with more than one
    PUDC_B-labeled pin.** No such part was observed in the checked-out
