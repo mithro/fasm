@@ -625,36 +625,93 @@ mod properties {
     }
 }
 
+/// Publication: once a writer has interned a name and published that with
+/// a `Release` store, a reader that `Acquire`s the store must find the
+/// name with `lookup` (and get the writer's handle), even while the level
+/// tables, their index generations and the overflow table keep growing.
 #[test]
-fn concurrent_lookups_while_tables_grow() {
+fn published_names_are_found_while_tables_grow() {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    const WRITERS: usize = 4;
+    const READERS: usize = 4;
+    // Every level grows (20,000 / 977 / 1,511 distinct texts).
     let names: Vec<String> = (0..20_000)
-        .map(|i| format!("TILE_X{i}Y{}.SITE{}.BEL{}.INIT", i % 13, i % 5, i % 3))
+        .map(|i| format!("TILE_X{i}Y{}.SITE{}.BEL{}.INIT", i % 13, i % 977, i % 1511))
         .collect();
+    // The second interner overflows after 3,000 tiles, so the overflow
+    // table grows concurrently too.
     for interner in [Interner::new(), Interner::with_level_limit(3000)] {
+        // Writer `t` interns names `t`, `t + WRITERS`, ... and publishes
+        // how many it has done in `progress[t]`, after storing the handle.
+        let progress: [AtomicUsize; WRITERS] = Default::default();
+        let handles: Vec<AtomicU64> = names.iter().map(|_| AtomicU64::new(0)).collect();
+        let own: [usize; WRITERS] =
+            std::array::from_fn(|t| (t..names.len()).step_by(WRITERS).count());
+        let checked = AtomicUsize::new(0);
         std::thread::scope(|scope| {
-            for t in 0..4 {
-                let (names, interner) = (&names, &interner);
+            for t in 0..WRITERS {
+                let (names, interner, progress, handles) = (&names, &interner, &progress, &handles);
                 scope.spawn(move || {
-                    for name in names.iter().skip(t).step_by(4) {
-                        assert_eq!(interner.resolve(interner.intern(name)), *name);
+                    for (k, i) in (t..names.len()).step_by(WRITERS).enumerate() {
+                        let id = interner.intern(&names[i]);
+                        handles[i].store(id.raw().get(), Ordering::Relaxed);
+                        progress[t].store(k + 1, Ordering::Release);
                     }
                 });
             }
-            for _ in 0..4 {
-                let (names, interner) = (&names, &interner);
+            for r in 0..READERS {
+                let (names, interner, progress, handles, checked, own) =
+                    (&names, &interner, &progress, &handles, &checked, &own);
                 scope.spawn(move || {
-                    for name in names.iter().rev() {
-                        // Any handle found must be the right one, even while
-                        // the index is being grown by the writers.
-                        if let Some(id) = interner.lookup(name) {
-                            assert_eq!(interner.resolve(id), *name);
+                    let mut state = 0x9e37_79b9_7f4a_7c15_u64 ^ r as u64;
+                    loop {
+                        let mut finished = true;
+                        for (t, published) in progress.iter().enumerate() {
+                            let done = published.load(Ordering::Acquire);
+                            finished &= done == own[t];
+                            if done == 0 {
+                                continue;
+                            }
+                            // The latest published name and a random earlier one.
+                            state = state
+                                .wrapping_mul(6_364_136_223_846_793_005)
+                                .wrapping_add(1);
+                            for k in [done - 1, (state >> 33) as usize % done] {
+                                let i = t + k * WRITERS;
+                                let id = interner.lookup(&names[i]);
+                                let expected = handles[i].load(Ordering::Relaxed);
+                                assert_eq!(
+                                    id.map(|id| id.raw().get()),
+                                    Some(expected),
+                                    "published name {:?} not found",
+                                    names[i]
+                                );
+                                if let Some(id) = id {
+                                    assert_eq!(interner.resolve(id), names[i]);
+                                }
+                                checked.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        // Names not published yet: a handle found for one
+                        // must still be the right one.
+                        let i = (state >> 17) as usize % names.len();
+                        if let Some(id) = interner.lookup(&names[i]) {
+                            assert_eq!(interner.resolve(id), names[i]);
+                        }
+                        if finished {
+                            break;
                         }
                     }
                 });
             }
         });
-        for name in &names {
+        assert!(checked.load(Ordering::Relaxed) >= READERS * WRITERS);
+        for (name, handle) in names.iter().zip(&handles) {
             let id = interner.lookup(name);
+            assert_eq!(
+                id.map(|id| id.raw().get()),
+                Some(handle.load(Ordering::Relaxed))
+            );
             assert_eq!(id.map(|id| interner.resolve(id)), Some(name.clone()));
         }
     }
