@@ -38,20 +38,35 @@
  *  - callbacks handed to the C API (`fasm_file_merge_and_sort_ex`,
  *    `fasm_parse_string_cb`) are given as `std::function`s; a small
  *    "trampoline" `extern "C"`-callable function pointer catches any
- *    exception thrown by the C++ callback with `catch (...)`, stores it
- *    with `std::current_exception()` and returns a neutral value to the C
- *    API (unwinding a C++ exception through the Rust `extern "C"`
- *    boundary is undefined behaviour: see fasm.h and
- *    docs/rewrite/DESIGN-capi.md). Once the C call returns, the wrapper
- *    checks for a stored exception and rethrows it with
+ *    exception thrown by the C++ callback with `catch (...)`, stores the
+ *    FIRST one with `std::current_exception()` (later ones, if the C API
+ *    keeps calling the trampoline after that, are discarded) and returns
+ *    a value the caller cannot observe (unwinding a C++ exception through
+ *    the Rust `extern "C"` boundary is undefined behaviour: see fasm.h
+ *    and docs/rewrite/DESIGN-capi.md). Once the C call returns, the
+ *    wrapper checks for a stored exception and rethrows it with
  *    `std::rethrow_exception`, so from the caller's point of view the
  *    exception propagates out of `merge_and_sort` / `parse_each` exactly
- *    as if no C boundary were involved.
+ *    as if no C boundary were involved. Note the two callback protocols
+ *    differ: `parse_each`'s `fasm_line_callback` stops being called as
+ *    soon as the trampoline returns `false` (its early-stop protocol), so
+ *    only one exception can ever occur there, but `merge_and_sort`'s
+ *    `fasm_zero_fn` / `fasm_sort_key_fn` have no such protocol and keep
+ *    being invoked for the rest of the model after one has thrown — only
+ *    the first exception raised is kept and rethrown.
  *
  * Thread safety follows fasm.h: a `fasm::File` may be read (including
  * iterated, and have views taken from it) from any number of threads at
  * once; `push_line` needs exclusive access to that `File`. `fasm::String`
  * and `fasm::Error` are immutable and may be used from any thread.
+ *
+ * This header requires C++ exceptions (and RTTI, for `catch (...)` and
+ * `std::current_exception`/`std::rethrow_exception` to work): every
+ * failure is a thrown `fasm::Error`, with no non-throwing alternative.
+ * It is not usable, and does not attempt to degrade gracefully, when
+ * built with `-fno-exceptions` (or the equivalent on other compilers). A
+ * caller in that situation uses `fasm.h` directly instead; both are
+ * always available side by side (see "Errors" below).
  */
 
 #ifndef FASM_HPP_INCLUDED
@@ -91,6 +106,24 @@ enum class Status : int {
     Output = FASM_ERR_OUTPUT,
 };
 
+// Each enumerator is defined directly in terms of its fasm_status macro
+// above, so these are redundant with that definition today; they are
+// still asserted explicitly so that a future edit accidentally breaking
+// the 1:1 mapping (e.g. copy-pasting the wrong macro) fails to compile
+// instead of silently miscompiling `to_c`/`from_c`.
+static_assert(static_cast<int>(Status::Ok) == FASM_OK, "Status::Ok must equal FASM_OK");
+static_assert(static_cast<int>(Status::ParseError) == FASM_ERR_PARSE,
+              "Status::ParseError must equal FASM_ERR_PARSE");
+static_assert(static_cast<int>(Status::Io) == FASM_ERR_IO, "Status::Io must equal FASM_ERR_IO");
+static_assert(static_cast<int>(Status::InvalidArg) == FASM_ERR_INVALID_ARG,
+              "Status::InvalidArg must equal FASM_ERR_INVALID_ARG");
+static_assert(static_cast<int>(Status::Utf8) == FASM_ERR_UTF8,
+              "Status::Utf8 must equal FASM_ERR_UTF8");
+static_assert(static_cast<int>(Status::Panic) == FASM_ERR_PANIC,
+              "Status::Panic must equal FASM_ERR_PANIC");
+static_assert(static_cast<int>(Status::Output) == FASM_ERR_OUTPUT,
+              "Status::Output must equal FASM_ERR_OUTPUT");
+
 /** @brief Converts a `fasm_status` to `Status`. */
 constexpr Status from_c(fasm_status status) noexcept { return static_cast<Status>(status); }
 
@@ -112,6 +145,24 @@ enum class ValueFormat : std::int32_t {
     VerilogBinary = FASM_VALUE_FORMAT_VERILOG_BINARY,
     VerilogOctal = FASM_VALUE_FORMAT_VERILOG_OCTAL,
 };
+
+// See the note above Status's static_asserts: redundant with the direct
+// initializers above today, kept as an explicit regression guard.
+static_assert(static_cast<std::int32_t>(ValueFormat::Plain) == FASM_VALUE_FORMAT_PLAIN,
+              "ValueFormat::Plain must equal FASM_VALUE_FORMAT_PLAIN");
+static_assert(static_cast<std::int32_t>(ValueFormat::VerilogDecimal) ==
+                  FASM_VALUE_FORMAT_VERILOG_DECIMAL,
+              "ValueFormat::VerilogDecimal must equal FASM_VALUE_FORMAT_VERILOG_DECIMAL");
+static_assert(static_cast<std::int32_t>(ValueFormat::VerilogHex) == FASM_VALUE_FORMAT_VERILOG_HEX,
+              "ValueFormat::VerilogHex must equal FASM_VALUE_FORMAT_VERILOG_HEX");
+static_assert(static_cast<std::int32_t>(ValueFormat::VerilogBinary) ==
+                  FASM_VALUE_FORMAT_VERILOG_BINARY,
+              "ValueFormat::VerilogBinary must equal FASM_VALUE_FORMAT_VERILOG_BINARY");
+static_assert(static_cast<std::int32_t>(ValueFormat::VerilogOctal) ==
+                  FASM_VALUE_FORMAT_VERILOG_OCTAL,
+              "ValueFormat::VerilogOctal must equal FASM_VALUE_FORMAT_VERILOG_OCTAL");
+static_assert(static_cast<std::int32_t>(FASM_VALUE_FORMAT_NONE) == -1,
+              "FASM_VALUE_FORMAT_NONE must be -1 (std::nullopt stands for it, see from_c/to_c)");
 
 /** @brief Converts a `fasm_value_format`, `FASM_VALUE_FORMAT_NONE` becoming `std::nullopt`. */
 constexpr std::optional<ValueFormat> from_c(fasm_value_format format) noexcept {
@@ -797,6 +848,15 @@ public:
 
     /**
      * @brief Reads and parses a FASM file (Python: `fasm.parse_fasm_filename`).
+     *
+     * `path` reaches `fasm_parse_file` as `path.string().c_str()`: on
+     * POSIX, `fasm.h` accepts any byte sequence for a path (matching
+     * `std::filesystem::path`'s native, encoding-agnostic representation
+     * there) and this is exact; on Windows, `fasm.h` requires UTF-8 but
+     * `path.string()` instead uses the active code page, so a path with
+     * characters outside it would not round trip correctly (not exercised
+     * by this wrapper's tests, which run on POSIX only).
+     *
      * @throws Error `Status::Io` if the file cannot be read (no position),
      * else as `parse`.
      */
@@ -897,8 +957,12 @@ public:
      * An empty (default constructed) `ZeroFn` / `SortKeyFn` means "none".
      *
      * If a callback throws, the exception is caught inside its C
-     * trampoline (see the file level documentation), the C call is
-     * unwound, and the same exception is rethrown here.
+     * trampoline (see the file level documentation) and rethrown here
+     * once `fasm_file_merge_and_sort_ex` returns. Unlike `parse_each`,
+     * `zero_fn` / `sort_key_fn` have no early-stop protocol, so they keep
+     * being called for the rest of the model after one has thrown; only
+     * the FIRST exception raised is kept and rethrown, every later one is
+     * discarded.
      */
     File merge_and_sort(const ZeroFn &zero_fn, const SortKeyFn &sort_key_fn) const {
         struct Context {
@@ -913,8 +977,15 @@ public:
             try {
                 return (*ctx->zero)(std::string_view(feature, len));
             } catch (...) {
-                ctx->pending = std::current_exception();
-                return true; // value is discarded once `pending` is rethrown.
+                // fasm_zero_fn has no early-stop protocol: the C side keeps
+                // calling this trampoline for the rest of the model even
+                // after an exception, so only the FIRST one is kept (a
+                // later one is silently discarded, matching "the first
+                // exception raised wins", not "the last one seen").
+                if (!ctx->pending) {
+                    ctx->pending = std::current_exception();
+                }
+                return true; // return value is otherwise unused (see above).
             }
         };
         static const fasm_sort_key_fn sort_key_trampoline =
@@ -923,8 +994,12 @@ public:
             try {
                 return (*ctx->sort_key)(std::string_view(group_id, len));
             } catch (...) {
-                ctx->pending = std::current_exception();
-                return 0; // value is discarded once `pending` is rethrown.
+                // Same "first exception wins" rule as zero_trampoline above:
+                // fasm_sort_key_fn also has no early-stop protocol.
+                if (!ctx->pending) {
+                    ctx->pending = std::current_exception();
+                }
+                return 0; // return value is otherwise unused (see above).
             }
         };
 
@@ -1027,7 +1102,15 @@ private:
             try {
                 return invoke_line_callback(ctx->func, Line(line), line_number);
             } catch (...) {
-                ctx->pending = std::current_exception();
+                // Returning false does stop fasm_parse_*_cb from calling
+                // this trampoline again (unlike the merge_and_sort
+                // callbacks above), so only one exception can ever be
+                // stored here; guarded the same way regardless, for
+                // consistency and in case that early-stop contract ever
+                // changes.
+                if (!ctx->pending) {
+                    ctx->pending = std::current_exception();
+                }
                 return false;
             }
         };
