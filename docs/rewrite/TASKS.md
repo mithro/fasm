@@ -78,7 +78,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 5: Xilinx 7 series bitstream generation
 
-- [r] T5.1 Database format study: `docs/rewrite/DESIGN-xilinx-db.md`
+- [x] T5.1 Database format study: `docs/rewrite/DESIGN-xilinx-db.md`
       describing prjxray-db and prjuray-db layouts, segbits/ppips/mask
       formats, part.yaml, tilegrid.json bits blocks, ROI, required
       features, and how `fasm_assembler.py` + `fasm2frames.py` +

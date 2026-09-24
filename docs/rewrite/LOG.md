@@ -81,3 +81,7 @@ what happened, branch/commit references, open issues.
   identical `.bit` output; prjuray-db only ships `zynqusp` (2 parts), keyed
   per part, without ppips/mask files or iobanks. Sent for fact checking
   review.
+* T5.1 done: fact check review verified 40+ claims, found 2 errors (UltraScale
+  NOP count; prjuray fasm_assembler.py path) and 1 gap (ECC word 50 vs HCLK
+  tiles) which were corrected (commits f8aac80, e1998d4; invariant test
+  added as item 19 of §8.3). Merged with --no-ff.
