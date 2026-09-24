@@ -216,3 +216,7 @@ what happened, branch/commit references, open issues.
   and the `fasm` lib (cargo bug 6313); harmless, consider renaming the doc
   target later.
 * T1.1b (idstring follow ups + hit path speed) started.
+* T1.3 re-review: annotation lookahead emulation verified on 1444 files (0
+  different from ANTLR), corpus 0 unexplained, stress inputs all fast except
+  ONE remaining quadratic case: decimals with millions of leading zeros on a
+  wide address (heap limb sizing counts leading zeros). Fix requested.
