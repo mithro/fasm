@@ -594,6 +594,109 @@ void test_merge_and_sort_counter_key() {
     CHECK(merged.to_string(false) == expected, "counter key order");
 }
 
+// merge_and_sort's zero_fn / sort_key_fn have no early-stop protocol:
+// fasm_file_merge_and_sort_ex keeps calling them for the rest of the
+// model after one has thrown, so the trampoline must keep only the
+// FIRST exception raised (a bug fixed after review: it originally kept
+// overwriting `pending` on every throwing call, so the LAST exception
+// silently won instead of the first).
+void test_merge_and_sort_throwing_callbacks() {
+    // 26 groups A.F .. Z.F, like test_merge_and_sort_counter_key: each is
+    // visited by the callback several times during the sort, so a naive
+    // "store the exception" trampoline would end up storing the exception
+    // from one of the later calls, not the first.
+    std::string text;
+    for (char c = 'A'; c <= 'Z'; ++c) {
+        text += c;
+        text += ".F\n";
+    }
+    fasm::File file = fasm::File::parse(text);
+
+    // zero_fn: throws a different int on the 2nd and the 25th call; the
+    // caller must see the 2nd call's exception (111), not the 25th's
+    // (222), and the callback must still have been invoked for every
+    // group (the C side has no way to know a C++ exception happened).
+    {
+        int calls = 0;
+        bool caught = false;
+        try {
+            file.merge_and_sort(
+                fasm::File::ZeroFn{[&](std::string_view) -> bool {
+                    calls++;
+                    if (calls == 2) {
+                        throw 111;
+                    }
+                    if (calls == 25) {
+                        throw 222;
+                    }
+                    return false;
+                }},
+                fasm::File::SortKeyFn{});
+            CHECK(false, "expected an exception from zero_fn");
+        } catch (int v) {
+            caught = true;
+            CHECK(v == 111, "the FIRST exception (111) propagates, got " << v);
+        } catch (...) {
+            CHECK(false, "wrong exception type propagated from zero_fn");
+        }
+        CHECK(caught, "an exception was caught");
+        CHECK(calls == 26, "zero_fn is still called for every group (" << calls << " calls)");
+    }
+
+    // sort_key_fn: same "first exception wins, callback keeps running"
+    // check, with a distinct exception type (std::runtime_error) to also
+    // confirm the exact object/dynamic type propagates, not just a value.
+    {
+        int calls = 0;
+        bool caught = false;
+        try {
+            file.merge_and_sort(
+                fasm::File::ZeroFn{},
+                fasm::File::SortKeyFn{[&](std::string_view) -> std::int64_t {
+                    calls++;
+                    if (calls == 3) {
+                        throw std::runtime_error("first");
+                    }
+                    if (calls == 10) {
+                        throw std::runtime_error("second");
+                    }
+                    return 0;
+                }});
+            CHECK(false, "expected an exception from sort_key_fn");
+        } catch (const std::runtime_error &e) {
+            caught = true;
+            CHECK(std::string(e.what()) == "first",
+                  "the FIRST exception propagates, got \"" << e.what() << "\"");
+        }
+        CHECK(caught, "an exception was caught");
+        CHECK(calls == 26, "sort_key_fn is still called for every group (" << calls << " calls)");
+    }
+
+    // Both callbacks throwing at once: exactly one exception propagates
+    // (the one whichever callback the C side happens to call first for
+    // the first group raises; which of zero_fn/sort_key_fn that is is an
+    // implementation detail of fasm_file_merge_and_sort_ex, not part of
+    // this wrapper's contract, so this only checks that a single,
+    // well-defined `int` value (1 or 2) comes out, not which one), and
+    // the call does not crash/UB despite both trampolines sharing one
+    // `Context::pending`.
+    {
+        bool caught = false;
+        int got = 0;
+        try {
+            file.merge_and_sort(
+                fasm::File::ZeroFn{[](std::string_view) -> bool { throw 1; }},
+                fasm::File::SortKeyFn{[](std::string_view) -> std::int64_t { throw 2; }});
+            CHECK(false, "expected an exception");
+        } catch (int v) {
+            caught = true;
+            got = v;
+        }
+        CHECK(caught, "an exception was caught");
+        CHECK(got == 1 || got == 2, "one well-defined exception propagates, got " << got);
+    }
+}
+
 void test_build() {
     fasm::File file;
     CHECK(file.size() == 0, "new file is empty");
@@ -810,6 +913,7 @@ int main(int argc, char **argv) {
     test_streaming();
     test_merge_and_sort();
     test_merge_and_sort_counter_key();
+    test_merge_and_sort_throwing_callbacks();
     test_build();
     test_move_semantics();
     test_iterators_and_algorithms();
