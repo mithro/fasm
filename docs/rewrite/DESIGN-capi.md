@@ -95,7 +95,11 @@ includes the panic payload), infallible accessors return their neutral
 value (0, `false`, `NULL`). No panic is expected: the core crate reports
 all invalid input as errors, and the C API validates everything it passes
 on (for example it builds `SetFasmFeature`s with the checking `new`, never
-`new_unchecked`).
+`new_unchecked`). A caught panic is still printed to stderr by Rust's
+default panic hook (the library does not install its own hook, which is
+process global state the host program may own). Running out of memory is
+not caught: like the Rust standard library, the library aborts the
+process on allocation failure.
 
 **`NULL` handles.** Every function accepts `NULL` for every handle and
 out-parameter: accessors return 0 / `false` / `NULL` / an empty string,
@@ -166,8 +170,12 @@ not grow with the file (the file itself is read into memory by
 function then returns `FASM_OK`); lines before a parse error are
 delivered, then the error is returned. Callbacks (also the merge
 callbacks) must not unwind (throw a C++ exception) or `longjmp` through
-the library: Rust frames cannot be unwound by foreign code, and an unwind
-reaching an `extern "C"` Rust frame aborts the process.
+the library: the callbacks are declared `extern "C"`, and a foreign
+exception unwinding into (or a `longjmp` across) Rust frames through an
+`extern "C"` boundary is undefined behaviour; it is not guaranteed to be
+caught or to abort. C++ callers must catch everything inside the callback
+(and can, for example, return `false` to stop parsing and rethrow after
+the call returns).
 
 ## Building models
 
@@ -189,9 +197,13 @@ cloned and left unchanged). `fasm_file_merge_and_sort_ex` adds Python's
 optional callbacks: a `zero_fn(feature, len, user) -> bool` and a
 `sort_key_fn(group_id, len, user) -> int64_t` (Python's `sort_key` returns
 any comparable object; a C integer key covers the realistic uses, such as
-sorting tiles by grid coordinates). Groups with equal keys are ordered by
-group id, so the output does not depend on hash map order. The strings
-passed to the callbacks are NUL terminated copies valid during the call.
+sorting tiles by grid coordinates). The key callback is called exactly
+once per group and its result cached (the core sort asks for a key at
+every comparison), so it may be non-deterministic (a counter) without
+upsetting the sort. Groups with equal keys are ordered by group id, so the
+output does not depend on hash map order (Python keeps their order of
+first appearance; recorded in `COMPAT.md`). The strings passed to the
+callbacks are NUL terminated copies valid during the call.
 
 ## Thread safety
 
@@ -265,6 +277,20 @@ building and printing a model, and `NULL` handling.
 the static library from the Cargo target directory (`-Wall -Wextra
 -Werror -std=c99`) and registers ctest tests, plus valgrind variants when
 valgrind is installed. `make capi-test` runs `cargo build -p fasm-capi`,
-configures and builds in `target/capi-tests`, and runs ctest. The same
-behaviour is also tested from Rust (`rust/fasm-capi/src/tests.rs`,
-`cargo test -p fasm-capi`).
+configures and builds in `target/capi-tests` (under `$CARGO_TARGET_DIR`
+when set), and runs ctest. The same behaviour is also tested from Rust
+(`rust/fasm-capi/src/tests.rs`, `cargo test -p fasm-capi`), including the
+layout of the public structs (`struct_layout`, matched by the C test's
+`sizeof`/`offsetof` checks).
+
+The Rust tests also run under Miri, which checks the unsafe code (pointer
+casts, borrowed views, the callbacks' `user` pointers) for undefined
+behaviour:
+
+```
+cargo +nightly miri test -p fasm-capi --lib
+```
+
+Under Miri's default isolation there is no file system access: the tests
+parse the embedded `examples/many.fasm` with `fasm_parse_string` instead
+of `fasm_parse_file`, and skip the file error tests.

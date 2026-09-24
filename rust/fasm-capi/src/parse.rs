@@ -37,7 +37,8 @@ use crate::file::{fasm_file, fasm_line, line_ptr, FileInner};
 ///
 /// Return `true` to continue, `false` to stop parsing (the parse function
 /// then returns `FASM_OK` without looking at the rest of the input). The
-/// callback must not unwind (throw a C++ exception) or `longjmp` out.
+/// callback must not unwind (throw a C++ exception) or `longjmp` out:
+/// that is undefined behaviour.
 pub type fasm_line_callback = Option<
     unsafe extern "C" fn(line: *const fasm_line, line_number: usize, user: *mut c_void) -> bool,
 >;

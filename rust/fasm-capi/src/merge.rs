@@ -33,7 +33,8 @@ use crate::file::{fasm_file, file_ref, FileInner};
 ///
 /// `feature` is the feature name (NUL terminated, `len` bytes, valid only
 /// during the call); `user` is the `user` pointer given to
-/// `fasm_file_merge_and_sort_ex`. Must not unwind or `longjmp`.
+/// `fasm_file_merge_and_sort_ex`. Must not unwind (throw)
+/// or `longjmp` out: that is undefined behaviour.
 pub type fasm_zero_fn =
     Option<unsafe extern "C" fn(feature: *const c_char, len: usize, user: *mut c_void) -> bool>;
 
@@ -44,8 +45,8 @@ pub type fasm_zero_fn =
 /// feature names, e.g. the tile name; NUL terminated, `len` bytes, valid
 /// only during the call). It is called exactly once per group (the result
 /// is cached), so it need not be deterministic. Groups are sorted by
-/// increasing key, groups with equal keys by `group_id`. Must not unwind or
-/// `longjmp`.
+/// increasing key, groups with equal keys by `group_id`. Must not unwind
+/// (throw) or `longjmp` out: that is undefined behaviour.
 pub type fasm_sort_key_fn =
     Option<unsafe extern "C" fn(group_id: *const c_char, len: usize, user: *mut c_void) -> i64>;
 
