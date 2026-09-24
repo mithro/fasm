@@ -190,6 +190,27 @@ fn canonical_range_yields_several_strings() {
     );
 }
 
+/// Regression test (review finding on T1.4, second pass): the canonical
+/// path used to call the panicking `canonical_features` iterator, so a
+/// malformed `set_feature` (only reachable via `new_unchecked`) panicked
+/// instead of propagating an `OutputError`, even though
+/// `fasm_line_to_string` already returns `Result`. `end` given without a
+/// `start`.
+#[test]
+fn canonical_propagates_error_for_end_without_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        None,
+        Some(5),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_line_to_string(&line, true),
+        Err(OutputError::EndWithoutStart)
+    );
+}
+
 // --- fasm_tuple_to_string --------------------------------------------------
 
 #[test]
@@ -238,6 +259,24 @@ fn tuple_to_string_propagates_error_for_end_before_start_instead_of_panicking() 
     assert_eq!(
         fasm_tuple_to_string([&line], false),
         Err(OutputError::EndBeforeStart { start: 10, end: 3 })
+    );
+}
+
+/// Regression test (review finding on T1.4, second pass): same as
+/// `canonical_propagates_error_for_end_without_start_instead_of_panicking`,
+/// through `fasm_tuple_to_string` in canonical mode.
+#[test]
+fn tuple_to_string_canonical_propagates_error_for_end_without_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        None,
+        Some(5),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_tuple_to_string([&line], true),
+        Err(OutputError::EndWithoutStart)
     );
 }
 

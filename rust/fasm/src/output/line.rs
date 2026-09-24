@@ -20,7 +20,7 @@
 use std::fmt::Write as _;
 
 use super::super::model::FasmLine;
-use super::canonical::canonical_features;
+use super::canonical::try_canonical_features;
 use super::error::OutputError;
 use super::format::set_feature_to_str;
 
@@ -29,7 +29,7 @@ use super::format::set_feature_to_str;
 /// Mirrors Python's `fasm_line_to_string` generator in `fasm/__init__.py`:
 ///
 /// * `canonical = true`: yields the canonical form of `line.set_feature`
-///   (see [`canonical_features`]), zero, one or several strings, and
+///   (see [`super::canonical_features`]), zero, one or several strings, and
 ///   ignores annotations/comments entirely. A line with no `set_feature`
 ///   (or whose value is `0`) yields nothing.
 /// * `canonical = false`: yields exactly one string, the space joined
@@ -45,16 +45,13 @@ use super::format::set_feature_to_str;
 ///
 /// # Errors
 ///
-/// `canonical = false` propagates any [`OutputError`] from
-/// [`super::set_feature_to_str`] and never panics, even for a `set_feature`
-/// built with [`super::super::model::SetFasmFeature::new_unchecked`] from
-/// inconsistent inputs. `canonical = true` also propagates
-/// [`OutputError`]s from `set_feature_to_str`, but can still panic via
-/// [`canonical_features`]'s documented panics for that same kind of
-/// inconsistent input (see that function's docs, and
-/// [`try_canonical_features`] for the fallible equivalent it wraps).
-///
-/// [`try_canonical_features`]: super::try_canonical_features
+/// Never panics for any `set_feature`, including one built with
+/// [`super::super::model::SetFasmFeature::new_unchecked`] from inconsistent
+/// inputs: `canonical = false` propagates any [`OutputError`] from
+/// [`super::set_feature_to_str`], and `canonical = true` propagates any
+/// [`OutputError`] from [`try_canonical_features`] (used directly here,
+/// rather than the panicking [`super::canonical_features`] iterator, for
+/// exactly this reason) or from `set_feature_to_str`.
 pub fn fasm_line_to_string(line: &FasmLine, canonical: bool) -> Result<Vec<String>, OutputError> {
     if canonical {
         let Some(set_feature) = &line.set_feature else {
@@ -62,7 +59,7 @@ pub fn fasm_line_to_string(line: &FasmLine, canonical: bool) -> Result<Vec<Strin
         };
 
         let mut out = Vec::new();
-        for feature in canonical_features(set_feature) {
+        for feature in try_canonical_features(set_feature)? {
             out.push(set_feature_to_str(&feature, true)?);
         }
         return Ok(out);

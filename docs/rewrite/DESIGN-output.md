@@ -31,11 +31,19 @@ with `new` (or by the parser, T1.3) never triggers any of these — see
 `canonical_features` (as opposed to `try_canonical_features`) is the one
 exception: the task brief asked for it to return a plain
 `impl Iterator<Item = SetFasmFeature>`, so it is a thin, `expect`-based
-wrapper for the common case (a `SetFasmFeature` already known valid); see
-its doc comment for why this is safe for anything the parser or
-`SetFasmFeature::new` produces.
+wrapper for a caller that wants that plain iterator and is willing to
+accept a panic instead of a `Result` for the invalid-input case; see its
+doc comment for why this is safe for anything the parser or
+`SetFasmFeature::new` produces. **`fasm_line_to_string`'s canonical path
+does not use it** — it calls `try_canonical_features` directly and
+propagates any `OutputError`, so a malformed `SetFasmFeature` (only
+reachable via `new_unchecked`) can never make `fasm_line_to_string` or
+`fasm_tuple_to_string` panic, in either canonical or non-canonical mode
+(this was a review finding: an earlier version called the panicking
+`canonical_features` from the canonical branch, defeating the point of
+`fasm_line_to_string` already returning `Result`).
 
-## `canonical_features` collects eagerly
+## `canonical_features`/`try_canonical_features` collect eagerly
 
 The Python generator is lazy; `try_canonical_features` collects into a
 `Vec` up front instead. Every real FASM feature is at most a few hundred
@@ -44,11 +52,12 @@ small, bounded allocation in the overwhelmingly common case. A
 `SetFasmFeature` with a deliberately huge range (nothing in the grammar
 caps `u32` addresses) would allocate and iterate proportionally to its
 width either way — laziness would only change *when* that cost is paid,
-not the total work, since the caller (`fasm_line_to_string`) always
-exhausts the iterator. Given `output` is not the hot path called out in
-`PLAN.md` (that is the parser and the `set_feature`/value formatting used
-per-feature during frame assembly), the simpler `Vec`-backed
-implementation was chosen over a hand written lazy iterator/state machine.
+not the total work, since the caller (`fasm_line_to_string`, via
+`try_canonical_features`) always exhausts the result. Given `output` is
+not the hot path called out in `PLAN.md` (that is the parser and the
+`set_feature`/value formatting used per-feature during frame assembly),
+the simpler `Vec`-backed implementation was chosen over a hand written
+lazy iterator/state machine.
 
 ## `merge_and_sort` split into two functions
 

@@ -122,7 +122,12 @@ fn single_bit_feature(set_feature: &SetFasmFeature, address: u32) -> SetFasmFeat
 /// Infallible counterpart of [`try_canonical_features`] for a `set_feature`
 /// already known to uphold the `SetFasmFeature` invariants (i.e. built with
 /// [`super::super::model::SetFasmFeature::new`], or produced by the parser,
-/// T1.3): the common case in [`super::fasm_line_to_string`].
+/// T1.3), for a caller that wants a plain iterator and is willing to accept
+/// a panic instead of a `Result` for the invalid-input case.
+/// [`super::fasm_line_to_string`] calls `try_canonical_features` directly
+/// instead, so a malformed `set_feature` (only reachable via
+/// `new_unchecked`) is reported as an `OutputError` there rather than
+/// panicking.
 ///
 /// Note this collects eagerly into a `Vec` rather than truly streaming like
 /// the Python generator (see `docs/rewrite/DESIGN-output.md`): every real
