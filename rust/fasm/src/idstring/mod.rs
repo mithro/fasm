@@ -118,14 +118,14 @@ impl IdString {
     }
 
     /// Returns the handle `s` would have in [`GLOBAL`], if it can be
-    /// produced without interning anything (see [`Interner::get`]).
+    /// produced without interning anything (see [`Interner::lookup`]).
     ///
     /// **Not a membership test**: this is also `Some` for strings that were
     /// never interned whole but whose levels are all known (after `A.B.C`
-    /// and `X.Y`, `IdString::get("A.Y")` is `Some`).
+    /// and `X.Y`, `IdString::lookup("A.Y")` is `Some`).
     #[inline]
-    pub fn get(s: &str) -> Option<Self> {
-        GLOBAL.get(s)
+    pub fn lookup(s: &str) -> Option<Self> {
+        GLOBAL.lookup(s)
     }
 
     /// Returns the interned pieces of the string, on which several string

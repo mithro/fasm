@@ -321,7 +321,7 @@ impl Interner {
     /// **This is not a membership test.** It returns `Some` for every
     /// string interned before, but also for strings that were never
     /// interned whole when each of their levels is already known: after
-    /// interning `A.B.C` and `X.Y`, `get("A.Y")` and `get("X.B.C")`
+    /// interning `A.B.C` and `X.Y`, `lookup("A.Y")` and `lookup("X.B.C")`
     /// are `Some`. Use it to avoid growing the tables (e.g. to look a name
     /// up in a map keyed by `IdString`: a `None` means that no key can
     /// equal `s`), not to ask whether `s` was seen.
@@ -330,8 +330,8 @@ impl Interner {
     /// interning at the same moment (there is no happens-before relation
     /// with that insertion); once the interning call has returned and that
     /// is visible to this thread (thread join, a lock, a `Release` store
-    /// read with `Acquire`, ...), `get` finds it.
-    pub fn get(&self, s: &str) -> Option<IdString> {
+    /// read with `Acquire`, ...), `lookup` finds it.
+    pub fn lookup(&self, s: &str) -> Option<IdString> {
         let state = self.hasher();
         let bytes = s.as_bytes();
         self.find_levels(state, bytes)
@@ -503,7 +503,8 @@ mod tests {
                     .iter()
                     .filter_map(|s| interner.intern_bytes(s.as_bytes()).ok())
                     .collect();
-                let found: Vec<Option<IdString>> = names.iter().map(|s| interner.get(s)).collect();
+                let found: Vec<Option<IdString>> =
+                    names.iter().map(|s| interner.lookup(s)).collect();
                 // The receiver may have given up already.
                 let _ = tx.send((again, bytes, found));
             });

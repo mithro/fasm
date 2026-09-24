@@ -38,7 +38,7 @@ fn global_round_trip_and_equality() {
         assert_eq!(id, s);
         assert_eq!(s, id);
         assert_eq!(id, IdString::new(s));
-        assert_eq!(IdString::get(s), Some(id));
+        assert_eq!(IdString::lookup(s), Some(id));
         assert_eq!(IdString::from(s), id);
         assert_eq!(s.parse::<IdString>(), Ok(id));
         assert_eq!(IdString::from_bytes(s.as_bytes()), Ok(id));
@@ -97,10 +97,10 @@ fn intern_bytes_validates_unknown_names_only() {
 #[test]
 fn private_interner_is_independent() {
     let interner = Interner::new();
-    assert_eq!(interner.get("A.B"), None);
+    assert_eq!(interner.lookup("A.B"), None);
     let id = interner.intern("A.B.C.D");
-    assert_eq!(interner.get("A.B.C.D"), Some(id));
-    assert_eq!(interner.get("A.B.C"), None);
+    assert_eq!(interner.lookup("A.B.C.D"), Some(id));
+    assert_eq!(interner.lookup("A.B.C"), None);
     assert_eq!(interner.resolve(id), "A.B.C.D");
     assert_eq!(interner.with_str(id, str::len), 7);
     assert_eq!(interner.resolved(id), "A.B.C.D");
@@ -156,7 +156,7 @@ fn full_level_tables_fall_back_to_overflow() {
     for (i, (name, &id)) in names.iter().zip(&ids).enumerate() {
         assert_eq!(interner.resolve(id), *name);
         assert_eq!(interner.intern(name), id, "canonical handle");
-        assert_eq!(interner.get(name), Some(id));
+        assert_eq!(interner.lookup(name), Some(id));
         let resolved = interner.resolved(id);
         assert_eq!(
             resolved.first_component(),
@@ -172,7 +172,7 @@ fn full_level_tables_fall_back_to_overflow() {
             assert_eq!(interner.cmp(id, other_id), name.cmp(other));
         }
     }
-    assert_eq!(interner.get("TILE_X99Y0.SITE0.BEL.INIT"), None);
+    assert_eq!(interner.lookup("TILE_X99Y0.SITE0.BEL.INIT"), None);
     let stats = interner.stats();
     assert_eq!(stats.level_entries, [4, 3, 1]);
     assert_eq!(stats.overflow_entries, 16 * 3);
@@ -202,7 +202,7 @@ fn overflow_at_each_level() {
     let ids: Vec<IdString> = inputs.iter().map(|s| interner.intern(s)).collect();
     for (s, &id) in inputs.iter().zip(&ids) {
         assert_eq!(interner.resolve(id), *s);
-        assert_eq!(interner.get(s), Some(id));
+        assert_eq!(interner.lookup(s), Some(id));
         assert_eq!(interner.intern(s), id);
     }
     for (a, &x) in inputs.iter().zip(&ids) {
@@ -230,7 +230,7 @@ fn more_than_u16_components_in_one_level() {
     for (name, &id) in names.iter().zip(&ids) {
         assert!(!is_overflow(id));
         assert_eq!(interner.resolve(id), *name);
-        assert_eq!(interner.get(name), Some(id));
+        assert_eq!(interner.lookup(name), Some(id));
     }
     // The same with a 16 bit sized table: the excess goes to the overflow
     // table and still round trips.
@@ -240,7 +240,7 @@ fn more_than_u16_components_in_one_level() {
     assert!(is_overflow(ids[65_535]));
     for (name, &id) in names.iter().zip(&ids) {
         assert_eq!(small.resolve(id), *name);
-        assert_eq!(small.get(name), Some(id));
+        assert_eq!(small.lookup(name), Some(id));
     }
 }
 
@@ -250,7 +250,7 @@ fn check_round_trip(interner: &Interner, s: &str) -> IdString {
     assert_eq!(interner.resolve(id), s);
     assert_eq!(interner.with_str(id, str::to_owned), s);
     assert_eq!(interner.intern(s), id, "{s:?}: handle is canonical");
-    assert_eq!(interner.get(s), Some(id), "{s:?}");
+    assert_eq!(interner.lookup(s), Some(id), "{s:?}");
     let resolved = interner.resolved(id);
     assert_eq!(resolved, s);
     assert_eq!(resolved.to_string(), s);
@@ -356,21 +356,21 @@ fn levels_per_component_count() {
 }
 
 #[test]
-fn get_does_not_intern() {
+fn lookup_does_not_intern() {
     let interner = Interner::new();
-    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), None);
-    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), None);
+    assert_eq!(interner.lookup("NEVER.SEEN.BEFORE"), None);
+    assert_eq!(interner.lookup("NEVER.SEEN.BEFORE"), None);
     let id = interner.intern("NEVER.SEEN.BEFORE");
-    assert_eq!(interner.get("NEVER.SEEN.BEFORE"), Some(id));
-    assert_eq!(interner.get("NEVER.SEEN.AGAIN"), None);
-    assert_eq!(interner.get("NEVER.BEFORE"), None);
+    assert_eq!(interner.lookup("NEVER.SEEN.BEFORE"), Some(id));
+    assert_eq!(interner.lookup("NEVER.SEEN.AGAIN"), None);
+    assert_eq!(interner.lookup("NEVER.BEFORE"), None);
     // Every level of these is known, so they have a handle already.
-    let never_seen = interner.get("NEVER.SEEN");
+    let never_seen = interner.lookup("NEVER.SEEN");
     assert!(never_seen.is_some());
     assert_eq!(never_seen, Some(interner.intern("NEVER.SEEN")));
-    assert_eq!(interner.get("NEVER"), Some(interner.intern("NEVER")));
+    assert_eq!(interner.lookup("NEVER"), Some(interner.intern("NEVER")));
     assert_eq!(
-        IdString::get("idstring test: never interned anywhere"),
+        IdString::lookup("idstring test: never interned anywhere"),
         None
     );
 }
@@ -489,7 +489,7 @@ mod properties {
         fn round_trip_any_string(s in any::<String>()) {
             let id = IdString::new(&s);
             prop_assert_eq!(id.resolve(), s.clone());
-            prop_assert_eq!(IdString::get(&s), Some(id));
+            prop_assert_eq!(IdString::lookup(&s), Some(id));
             prop_assert_eq!(id.len(), s.len());
         }
 
@@ -529,7 +529,7 @@ mod properties {
             let ids: Vec<IdString> = strings.iter().map(|s| interner.intern(s)).collect();
             for (a, &x) in strings.iter().zip(&ids) {
                 prop_assert_eq!(interner.resolve(x), a.clone());
-                prop_assert_eq!(interner.get(a), Some(x));
+                prop_assert_eq!(interner.lookup(a), Some(x));
                 for (b, &y) in strings.iter().zip(&ids) {
                     prop_assert_eq!(x == y, a == b);
                     prop_assert_eq!(interner.cmp(x, y), a.cmp(b));
@@ -574,7 +574,7 @@ fn concurrent_lookups_while_tables_grow() {
                     for name in names.iter().rev() {
                         // Any handle found must be the right one, even while
                         // the index is being grown by the writers.
-                        if let Some(id) = interner.get(name) {
+                        if let Some(id) = interner.lookup(name) {
                             assert_eq!(interner.resolve(id), *name);
                         }
                     }
@@ -582,7 +582,7 @@ fn concurrent_lookups_while_tables_grow() {
             }
         });
         for name in &names {
-            let id = interner.get(name);
+            let id = interner.lookup(name);
             assert_eq!(id.map(|id| interner.resolve(id)), Some(name.clone()));
         }
     }
