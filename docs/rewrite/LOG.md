@@ -109,3 +109,18 @@ what happened, branch/commit references, open issues.
   with canonical representation (40 bytes), SetFasmFeature 72 bytes,
   FasmLine 112 bytes, 126 tests incl. proptest vs num-bigint. Sent for
   review.
+* T5.8 done: review APPROVE (reviewer regenerated the smoke `.frm` and
+  bitread output byte identically, confirmed the venv's fasm comes from the
+  pinned pristine tree, confirmed clean skips without the db). Merged with
+  --no-ff; setup-xilinx.sh run in the main tree (183 s, prjxray and
+  prjuray-tools C++ tools built), artix7 db fetched (181 MiB), 4 smoke tests
+  pass. Reviewer's evidence on the ANTLR flakiness (T0.4b): setup.py swallows
+  the CMake build failure (`except BaseException`) so nothing is logged;
+  likely resource contention during the unbounded `-j` build. Optional:
+  make the `test_badkey` deselect conditional on `antlr_built`.
+* T1.2 review: REQUEST CHANGES. Real bug: unchecked u32 arithmetic in
+  `SetFasmFeature::new`/`width()` overflows for `[4294967295:0]`. Also wrong
+  citations (`fasm/__init__.py`, not `fasm/output.py`). Reviewer confirmed
+  a textX vs ANTLR divergence the parser (T1.3) must decide on: textX
+  rejects a declared width wider than the address width (`a.b[0] = 3'b001`),
+  ANTLR accepts it. Fix in progress.
