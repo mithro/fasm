@@ -185,9 +185,10 @@ rust-check: rust-lint rust-doc rust-test
 # tool (tests/cli/test_cli_compat.py): identical stdout, stderr and exit
 # code over the FASM corpus and argparse edge cases; and of the Rust
 # `fasm2frames` command line against f4pga-xc-fasm's
-# (tests/cli/test_fasm2frames_compat.py, needs tests/oracle/setup-xilinx.sh). Needs the oracle venv
-# (tests/oracle/setup.sh); to use another checkout's oracle (e.g. from a git
-# worktree) set ORACLE_DIR to its tests/oracle directory.
+# (tests/cli/test_fasm2frames_compat.py, needs tests/oracle/setup-xilinx.sh).
+# Needs the oracle venv (tests/oracle/setup.sh); to use another checkout's
+# oracle (e.g. from a worktree) set ORACLE_DIR to its tests/oracle
+# directory.
 ORACLE_DIR ?= $(TOP_DIR)/tests/oracle
 
 cli-difftest:
