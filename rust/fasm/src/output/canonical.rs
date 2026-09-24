@@ -44,10 +44,9 @@ use super::error::OutputError;
 /// the parser, T1.3). They are only reachable for one built with
 /// [`super::super::model::SetFasmFeature::new_unchecked`] from
 /// inconsistent inputs, in which case this returns
-/// [`OutputError::CanonicalEndWithoutStart`],
-/// [`OutputError::CanonicalValueNotOne`] or
-/// [`OutputError::CanonicalEndBeforeStart`] instead of panicking (unlike
-/// the Python `assert`, which raises `AssertionError`).
+/// [`OutputError::EndWithoutStart`], [`OutputError::CanonicalValueNotOne`]
+/// or [`OutputError::EndBeforeStart`] instead of panicking (unlike the
+/// Python `assert`, which raises `AssertionError`).
 pub fn try_canonical_features(
     set_feature: &SetFasmFeature,
 ) -> Result<Vec<SetFasmFeature>, OutputError> {
@@ -60,7 +59,7 @@ pub fn try_canonical_features(
     match (set_feature.start, set_feature.end) {
         (None, end) => {
             if end.is_some() {
-                return Err(OutputError::CanonicalEndWithoutStart);
+                return Err(OutputError::EndWithoutStart);
             }
             if !set_feature.value.is_one() {
                 return Err(OutputError::CanonicalValueNotOne);
@@ -79,7 +78,7 @@ pub fn try_canonical_features(
         }
         (Some(start), Some(end)) => {
             if end < start {
-                return Err(OutputError::CanonicalEndBeforeStart { start, end });
+                return Err(OutputError::EndBeforeStart { start, end });
             }
             for address in start..=end {
                 if set_feature.value.bit(address - start) {

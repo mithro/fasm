@@ -143,16 +143,22 @@ Python dicts preserve insertion order, which two places in `MergeModel`
 rely on for tie-breaking in a stable sort (`sorted(..., key=...)` when two
 groups share a sort key): `MergeModel.merge_addresses`'s
 `eligable_address_features` dict, and `output_sorted_lines`'s
-`feature_groups[group_id]` lists. `merge_addresses` uses a
-`Vec<(IdString, Vec<SetFasmFeature>)>` (linear lookup) instead of a
-`HashMap` for `eligible_address_features` specifically to preserve this
-insertion order faithfully; `output_sorted_lines` can use a plain
+`feature_groups[group_id]` lists. `merge_addresses` keeps a
+`Vec<(IdString, Vec<SetFasmFeature>)>` for `eligible_address_features`
+specifically to preserve this insertion order faithfully (a plain
+`HashMap`'s key order is not stable/meaningful across runs); it is paired
+with a `HashMap<IdString, usize>` index into that `Vec` so finding an
+existing feature name is `O(1)` rather than an `O(n)` linear scan — an
+earlier version of this code used the linear scan alone, which made
+`merge_addresses` overall `O(G^2)` in the number of distinct eligible
+feature names `G` (a real cost flagged in review on a full-chip model with
+thousands of distinct features; see
+`output::merge::tests::merge_and_sort_handles_many_distinct_feature_names`
+for a regression test). `output_sorted_lines` can use a plain
 `HashMap<IdString, Vec<&[FasmLine]>>` for `feature_groups` since only each
 key's own `Vec` order matters (preserved by `Vec::push`), not the
 iteration order of the map's keys (those are always explicitly sorted
-before use). Neither of these is a hot path (see the `PLAN.md` note above),
-so the linear lookup's `O(n)` cost per distinct feature name was accepted
-for exact behavioural parity over a `HashMap`'s `O(1)`.
+before use).
 
 ## Oracle-verified test fixtures
 

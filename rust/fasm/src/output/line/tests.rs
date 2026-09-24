@@ -113,6 +113,43 @@ fn empty_annotations_vec_is_falsy_like_none() {
     assert_eq!(fasm_line_to_string(&line, false).unwrap(), vec!["A.B"]);
 }
 
+/// Regression test (review finding on T1.4): a malformed `set_feature`
+/// (only reachable via `new_unchecked`) used to panic instead of
+/// propagating an `OutputError` through `fasm_line_to_string`'s
+/// non-canonical path (`set_feature_to_str` called
+/// `SetFasmFeature::width()` before validating). `end` given without a
+/// `start`.
+#[test]
+fn non_canonical_propagates_error_for_end_without_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        None,
+        Some(5),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_line_to_string(&line, false),
+        Err(OutputError::EndWithoutStart)
+    );
+}
+
+/// Same regression, for `end < start`.
+#[test]
+fn non_canonical_propagates_error_for_end_before_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        Some(10),
+        Some(3),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_line_to_string(&line, false),
+        Err(OutputError::EndBeforeStart { start: 10, end: 3 })
+    );
+}
+
 // --- fasm_line_to_string: canonical -----------------------------------
 
 #[test]
@@ -168,6 +205,40 @@ fn canonical_dedupes_and_sorts() {
     let a_again = feature_line(feature("B", None, None, 1, None));
     let lines = [a, b, a_again];
     assert_eq!(fasm_tuple_to_string(&lines, true).unwrap(), "A\nB\n");
+}
+
+/// Regression test (review finding on T1.4): same as
+/// `non_canonical_propagates_error_for_end_without_start_instead_of_panicking`,
+/// through `fasm_tuple_to_string`.
+#[test]
+fn tuple_to_string_propagates_error_for_end_without_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        None,
+        Some(5),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_tuple_to_string([&line], false),
+        Err(OutputError::EndWithoutStart)
+    );
+}
+
+/// Same regression, for `end < start`.
+#[test]
+fn tuple_to_string_propagates_error_for_end_before_start_instead_of_panicking() {
+    let line = feature_line(SetFasmFeature::new_unchecked(
+        IdString::new("X"),
+        Some(10),
+        Some(3),
+        crate::model::FeatureValue::from_u64(1),
+        None,
+    ));
+    assert_eq!(
+        fasm_tuple_to_string([&line], false),
+        Err(OutputError::EndBeforeStart { start: 10, end: 3 })
+    );
 }
 
 /// The full `examples/many.fasm` model, built by hand (the `parser` module,

@@ -76,23 +76,22 @@ pub fn write_fasm_value(
 ///
 /// # Errors
 ///
+/// * [`OutputError::EndWithoutStart`], [`OutputError::EndBeforeStart`],
+///   [`OutputError::AddressRangeTooWide`] if `set_feature` violates the
+///   `SetFasmFeature` invariants in a way that would otherwise make
+///   [`super::super::model::SetFasmFeature::width`] panic (only reachable
+///   for a `set_feature` built with
+///   [`super::super::model::SetFasmFeature::new_unchecked`], since
+///   [`super::super::model::SetFasmFeature::new`] rejects all three at
+///   construction).
 /// * [`OutputError::ValueTooWideForFeature`] if `set_feature.value` needs
 ///   more bits than `set_feature.width()` allows (Python: `assert
-///   set_feature.value < 2**width`; this can only happen for a
-///   `set_feature` built with
-///   [`super::super::model::SetFasmFeature::new_unchecked`], since
-///   [`super::super::model::SetFasmFeature::new`] rejects it at
-///   construction).
+///   set_feature.value < 2**width`; likewise only reachable via
+///   `new_unchecked`).
 /// * [`OutputError::NotCanonicalWidth`], [`OutputError::NotCanonicalHasEnd`],
 ///   [`OutputError::NotCanonicalStartZero`],
 ///   [`OutputError::NotCanonicalHasValueFormat`] if `check_if_canonical` is
 ///   `true` and the corresponding Python `assert` would have failed.
-///
-/// # Panics
-///
-/// Panics if `set_feature` violates the `SetFasmFeature` invariants in a
-/// way [`super::super::model::SetFasmFeature::width`] panics on (only
-/// reachable via `new_unchecked`); see that method's docs.
 pub fn set_feature_to_str(
     set_feature: &SetFasmFeature,
     check_if_canonical: bool,
@@ -102,22 +101,41 @@ pub fn set_feature_to_str(
     Ok(s)
 }
 
+/// [`super::super::model::SetFasmFeature::width`], without the panics that
+/// method documents: it assumes the `SetFasmFeature` invariants
+/// [`super::super::model::SetFasmFeature::new`] enforces (`end.is_some()`
+/// implies `start.is_some()`, `end >= start`, and `end - start + 1` fits in
+/// a `u32`) instead of relying on the caller to have upheld them. Only a
+/// `set_feature` built with
+/// [`super::super::model::SetFasmFeature::new_unchecked`] from
+/// inconsistent inputs can fail these checks.
+fn checked_width(set_feature: &SetFasmFeature) -> Result<u32, OutputError> {
+    match set_feature.end {
+        None => Ok(1),
+        Some(end) => {
+            let start = set_feature.start.ok_or(OutputError::EndWithoutStart)?;
+            if end < start {
+                return Err(OutputError::EndBeforeStart { start, end });
+            }
+            end.checked_sub(start)
+                .and_then(|diff| diff.checked_add(1))
+                .ok_or(OutputError::AddressRangeTooWide { start, end })
+        }
+    }
+}
+
 /// Allocation-free (beyond what `w` itself needs) counterpart of
 /// [`set_feature_to_str`], writing directly into `w`.
 ///
 /// # Errors
 ///
 /// See [`set_feature_to_str`]; also propagates any error from `w`.
-///
-/// # Panics
-///
-/// See [`set_feature_to_str`].
 pub fn write_set_feature(
     w: &mut impl fmt::Write,
     set_feature: &SetFasmFeature,
     check_if_canonical: bool,
 ) -> Result<(), OutputError> {
-    let width = set_feature.width();
+    let width = checked_width(set_feature)?;
 
     if !set_feature.value.fits_in_bits(width) {
         return Err(OutputError::ValueTooWideForFeature {

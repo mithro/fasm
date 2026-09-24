@@ -191,6 +191,58 @@ fn value_too_wide_is_an_error_not_a_panic() {
     );
 }
 
+/// Regression test (review finding on T1.4): `write_set_feature` used to
+/// call `SetFasmFeature::width()` before validating `start`/`end`, so a
+/// malformed `set_feature` (only reachable via `new_unchecked`) panicked
+/// instead of returning an `OutputError`. `end` given without a `start`.
+#[test]
+fn end_without_start_is_an_error_not_a_panic() {
+    let f =
+        SetFasmFeature::new_unchecked(feature("X"), None, Some(5), FeatureValue::from_u64(1), None);
+    assert_eq!(
+        set_feature_to_str(&f, false),
+        Err(OutputError::EndWithoutStart)
+    );
+}
+
+/// Same regression as `end_without_start_is_an_error_not_a_panic`, for
+/// `end < start`.
+#[test]
+fn end_before_start_is_an_error_not_a_panic() {
+    let f = SetFasmFeature::new_unchecked(
+        feature("X"),
+        Some(10),
+        Some(3),
+        FeatureValue::from_u64(1),
+        None,
+    );
+    assert_eq!(
+        set_feature_to_str(&f, false),
+        Err(OutputError::EndBeforeStart { start: 10, end: 3 })
+    );
+}
+
+#[test]
+fn address_range_too_wide_is_an_error_not_a_panic() {
+    // [u32::MAX:0] would need a width of 2^32, which does not fit in a u32
+    // (mirrors `SetFasmFeature::new`'s own `AddressRangeTooWide` check,
+    // only reachable here via `new_unchecked`).
+    let f = SetFasmFeature::new_unchecked(
+        feature("X"),
+        Some(0),
+        Some(u32::MAX),
+        FeatureValue::from_u64(1),
+        None,
+    );
+    assert_eq!(
+        set_feature_to_str(&f, false),
+        Err(OutputError::AddressRangeTooWide {
+            start: 0,
+            end: u32::MAX
+        })
+    );
+}
+
 // --- set_feature_to_str(check_if_canonical = true) ------------------------
 
 #[test]

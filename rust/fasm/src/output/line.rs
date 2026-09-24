@@ -45,13 +45,14 @@ use super::format::set_feature_to_str;
 ///
 /// # Errors
 ///
-/// Propagates any [`OutputError`] from [`super::set_feature_to_str`]
-/// (`check_if_canonical = canonical`) or [`try_canonical_features`] (via
-/// [`canonical_features`]'s documented panics, only reachable for a
-/// `set_feature` built with
-/// [`super::super::model::SetFasmFeature::new_unchecked`] from
-/// inconsistent inputs — see that function's docs for why this can also
-/// panic instead of erroring in the canonical case).
+/// `canonical = false` propagates any [`OutputError`] from
+/// [`super::set_feature_to_str`] and never panics, even for a `set_feature`
+/// built with [`super::super::model::SetFasmFeature::new_unchecked`] from
+/// inconsistent inputs. `canonical = true` also propagates
+/// [`OutputError`]s from `set_feature_to_str`, but can still panic via
+/// [`canonical_features`]'s documented panics for that same kind of
+/// inconsistent input (see that function's docs, and
+/// [`try_canonical_features`] for the fallible equivalent it wraps).
 ///
 /// [`try_canonical_features`]: super::try_canonical_features
 pub fn fasm_line_to_string(line: &FasmLine, canonical: bool) -> Result<Vec<String>, OutputError> {

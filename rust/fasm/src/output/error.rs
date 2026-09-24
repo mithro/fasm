@@ -56,22 +56,43 @@ pub enum OutputError {
     /// `check_if_canonical = true` and the feature has a `value_format`
     /// (canonical features never print `= value`).
     NotCanonicalHasValueFormat,
-    /// [`super::canonical_features`] / [`super::try_canonical_features`]:
-    /// the feature has `end.is_some()` but `start.is_none()`, which
-    /// [`super::super::SetFasmFeature::new`] never produces.
-    CanonicalEndWithoutStart,
+    /// A [`super::super::SetFasmFeature`] has `end.is_some()` but
+    /// `start.is_none()`, which [`super::super::SetFasmFeature::new`] never
+    /// produces (only reachable via `new_unchecked`). Used by
+    /// [`super::canonical_features`] / [`super::try_canonical_features`]
+    /// and by [`super::write_set_feature`] / [`super::set_feature_to_str`]
+    /// (both would otherwise reach this through
+    /// [`super::super::SetFasmFeature::width`], which panics on it).
+    EndWithoutStart,
     /// [`super::canonical_features`] / [`super::try_canonical_features`]:
     /// the feature has no `end` (a single implicit or explicit bit) but a
     /// value other than 1 (only reachable for a feature whose width is not
     /// really 1, i.e. built with `new_unchecked`).
     CanonicalValueNotOne,
-    /// [`super::canonical_features`] / [`super::try_canonical_features`]:
-    /// the feature's `end` is before its `start` (`new` never produces
-    /// this).
-    CanonicalEndBeforeStart {
+    /// A [`super::super::SetFasmFeature`]'s `end` is before its `start`
+    /// (`new` never produces this; only reachable via `new_unchecked`).
+    /// Used by [`super::canonical_features`] /
+    /// [`super::try_canonical_features`] and by
+    /// [`super::write_set_feature`] / [`super::set_feature_to_str`] (both
+    /// would otherwise reach this through
+    /// [`super::super::SetFasmFeature::width`], which panics on it).
+    EndBeforeStart {
         /// The given start.
         start: u32,
         /// The given end, smaller than `start`.
+        end: u32,
+    },
+    /// A [`super::super::SetFasmFeature`]'s `FeatureAddress` range (`end -
+    /// start + 1`) does not fit in a `u32` (only possible for `start == 0`
+    /// and `end == u32::MAX`; only reachable via `new_unchecked`, since
+    /// [`super::super::SetFasmFeature::new`] rejects it). Used by
+    /// [`super::write_set_feature`] / [`super::set_feature_to_str`], which
+    /// would otherwise reach this through
+    /// [`super::super::SetFasmFeature::width`], which panics on it.
+    AddressRangeTooWide {
+        /// The given start.
+        start: u32,
+        /// The given end.
         end: u32,
     },
     /// [`super::merge_features`]: `features` was empty, or its entries do
@@ -132,15 +153,20 @@ impl fmt::Display for OutputError {
             OutputError::NotCanonicalHasValueFormat => {
                 write!(f, "not canonical: feature has a value_format")
             }
-            OutputError::CanonicalEndWithoutStart => {
+            OutputError::EndWithoutStart => {
                 write!(f, "invalid SetFasmFeature: end given without a start")
             }
             OutputError::CanonicalValueNotOne => {
                 write!(f, "invalid SetFasmFeature: single bit value is not 0 or 1")
             }
-            OutputError::CanonicalEndBeforeStart { start, end } => write!(
+            OutputError::EndBeforeStart { start, end } => write!(
                 f,
                 "invalid SetFasmFeature: end ({end}) is before start ({start})"
+            ),
+            OutputError::AddressRangeTooWide { start, end } => write!(
+                f,
+                "invalid SetFasmFeature: [{end}:{start}] is 2^32 bits wide, which does not fit \
+                 in a u32 width"
             ),
             OutputError::MergeFeaturesNotSingleFeature => write!(
                 f,

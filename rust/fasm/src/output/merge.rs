@@ -334,11 +334,19 @@ impl MergeModel {
             line.set_feature.as_ref()
         }
 
-        // Preserves insertion order (Python dict semantics), matching
-        // `sorted(..., key=feature_group_key)`'s stability when two groups
-        // share the same feature name (rare, but the tie break depends on
-        // insertion order into this structure exactly as in Python).
+        // `eligible_address_features` preserves insertion order (Python
+        // dict semantics), matching `sorted(..., key=feature_group_key)`'s
+        // stability when two groups share the same feature name (rare, but
+        // the tie break depends on insertion order into this structure
+        // exactly as in Python). `eligible_index` is an order-preserving
+        // indexed map (`HashMap<IdString, usize>` alongside the `Vec`) so
+        // finding an existing feature name is `O(1)` rather than the `O(n)`
+        // linear scan an earlier version of this code used, which made
+        // `merge_addresses` overall `O(G^2)` in the number of distinct
+        // eligible feature names `G` — a real cost on a full-chip model
+        // with thousands of distinct features.
         let mut eligible_address_features: Vec<(IdString, Vec<SetFasmFeature>)> = Vec::new();
+        let mut eligible_index: HashMap<IdString, usize> = HashMap::new();
         let mut non_eligible_groups: Vec<Vec<FasmLine>> = Vec::new();
         let mut non_eligible_features: HashSet<IdString> = HashSet::new();
 
@@ -354,13 +362,11 @@ impl MergeModel {
                 }
                 Some(feature) => {
                     let feature_name = feature.feature;
-                    match eligible_address_features
-                        .iter_mut()
-                        .find(|(name, _)| *name == feature_name)
-                    {
-                        Some((_, features)) => features.push(feature.clone()),
+                    match eligible_index.get(&feature_name) {
+                        Some(&idx) => eligible_address_features[idx].1.push(feature.clone()),
                         None => {
-                            eligible_address_features.push((feature_name, vec![feature.clone()]))
+                            eligible_index.insert(feature_name, eligible_address_features.len());
+                            eligible_address_features.push((feature_name, vec![feature.clone()]));
                         }
                     }
                 }

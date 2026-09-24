@@ -265,6 +265,53 @@ fn merge_and_sort_of_empty_model_is_empty() {
     assert!(out.is_empty());
 }
 
+/// Regression/correctness test (review finding on T1.4) for
+/// `merge_addresses`'s order-preserving indexed map: many distinct
+/// eligible feature names, each split across two single-bit lines that
+/// must be merged, exercises the `HashMap<IdString, usize>` lookup (rather
+/// than the earlier `O(n)` linear scan) finding the right, previously seen
+/// entry for every one of them.
+#[test]
+fn merge_and_sort_handles_many_distinct_feature_names() {
+    const N: usize = 500;
+
+    let mut lines = Vec::with_capacity(2 * N);
+    let mut names = Vec::with_capacity(N);
+    for i in 0..N {
+        let name = format!("TILE_{i}.A");
+        lines.push(feature_line(&name, Some(0)));
+        lines.push(feature_line(&name, Some(2)));
+        names.push(name);
+    }
+
+    let out = merge_and_sort(lines, None).unwrap();
+
+    // N merged feature lines, separated by N - 1 blank lines.
+    assert_eq!(out.len(), 2 * N - 1);
+
+    let mut seen = std::collections::HashSet::new();
+    for (idx, line) in out.iter().enumerate() {
+        if idx % 2 == 1 {
+            assert!(line.is_blank());
+            continue;
+        }
+        let sf = line.set_feature.as_ref().unwrap();
+        // Bits 0 and 2 set, bit 1 absent (never mentioned): [2:0] = 3'b101.
+        assert_eq!(sf.start, Some(0));
+        assert_eq!(sf.end, Some(2));
+        assert_eq!(sf.value, FeatureValue::from_u64(0b101));
+        assert_eq!(sf.value_format, Some(ValueFormat::VerilogBinary));
+        assert!(seen.insert(sf.feature));
+    }
+
+    // Every distinct name was merged exactly once, none dropped or
+    // conflated with another.
+    assert_eq!(seen.len(), N);
+    for name in &names {
+        assert!(seen.contains(&IdString::new(name)));
+    }
+}
+
 // --- comment/annotation grouping, including the duplicate-group quirk -----
 
 #[test]

@@ -170,7 +170,7 @@ fn invalid_end_without_start_is_an_error() {
     );
     assert_eq!(
         try_canonical_features(&f),
-        Err(OutputError::CanonicalEndWithoutStart)
+        Err(OutputError::EndWithoutStart)
     );
 }
 
