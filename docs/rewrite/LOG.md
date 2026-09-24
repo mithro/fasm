@@ -531,3 +531,5 @@ what happened, branch/commit references, open issues.
   fuzz runs clean). Merged 79e66ea with --no-ff; on the merged tree: fmt,
   clippy -D warnings clean, all workspace tests pass (229 in fasm),
   difftest.py 100/100 explained. Worktree removed.
+* T5.3 (binary database cache + fasm-db-cache tool) started (Opus) in the
+  slot freed by the hardening merge; T6.2 still running.
