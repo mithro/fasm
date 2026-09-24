@@ -46,10 +46,20 @@ the `.frm` to a file, and the results are compared:
   2. parse errors (`Exception: Parse error at L:C - <message>`) are
      compared up to the message: the position must be identical, the
      message texts are the Rust parser's own (like the `fasm` CLI);
-  3. for an exception type outside `EXACT_EXCEPTIONS` (the database
-     loading errors, which the reference reports with various Python
-     exceptions and the Rust tool as `fasm_xilinx.DbError`), only the
-     exit code (1) and a non-empty stderr are compared.
+  3. database errors: when the oracle fails with an exception outside
+     `EXACT_EXCEPTIONS` (it reports a database that cannot be opened with
+     assorted Python exceptions, the Rust tool with
+     `fasm_xilinx.DbError`), and the Rust tool with
+     `fasm_xilinx.DbError`, only the exit codes (1 on both sides) are
+     compared;
+  4. value range errors (`a = 2`, `a[3:0] = 5'h10`, `a[0:1]`) of the
+     reference's ANTLR parser: its assertion fails inside a ctypes
+     callback (`Exception ignored on calling ctypes callback function`,
+     an `AssertionError` traceback) and the tool then dies with
+     `TypeError: 'NoneType' object is not iterable`; the Rust tool reports
+     `Exception: Parse error at L:C - <message>` at the value. Both become
+     `<value range error>` (like rule 2 of the `fasm` CLI difftest).
+  Any other difference of stderr is a failure.
 
 Exit status: 0 if every run matches, 1 if any differs, 3 if a tool is
 missing. `make xilinx-difftest` builds the Rust tool and runs this.
@@ -103,6 +113,10 @@ EXIT_OK = 0
 EXIT_DIFFERENCES = 1
 EXIT_NOT_SET_UP = 3
 
+RULES = ('1-traceback', '2-parse-message', '3-db-error', '4-value-range')
+CTYPES_MARKER = 'Exception ignored on calling ctypes callback function'
+NONE_TYPE = "TypeError: 'NoneType' object is not iterable"
+
 PARSE_ERROR_RE = re.compile(r'^Exception: Parse error at (\d+):(\d+) - .*$',
                             re.S)
 
@@ -134,7 +148,7 @@ def exception_type(stderr):
 
 
 def normalise(stderr, rules):
-    """Rules 2: parse error messages."""
+    """Rule 2: parse error messages."""
     head, sep, tail = stderr.partition('Exception: Parse error at ')
     if sep:
         m = PARSE_ERROR_RE.match(sep + tail)
@@ -167,7 +181,7 @@ def compare(case, oracle, rust, tmpdir):
     tag = re.sub(r'[^\w.-]', '_', name)
     o = run(oracle, args, os.path.join(tmpdir, tag + '.oracle.frm'))
     r = run(rust, args, os.path.join(tmpdir, tag + '.rust.frm'))
-    rules = {'1-traceback': 0, '2-parse-message': 0, '3-db-error': 0}
+    rules = dict.fromkeys(RULES, 0)
     problems = []
     if o[0] != r[0]:
         problems.append('exit code %d (oracle) != %d (rust)' % (o[0], r[0]))
@@ -182,11 +196,19 @@ def compare(case, oracle, rust, tmpdir):
         rules['1-traceback'] += 1
         o_err = strip_traceback(o_err)
     o_type, _ = exception_type(o_err)
-    if o_type is not None and o_type not in EXACT_EXCEPTIONS:
+    if (CTYPES_MARKER in o_err and o_err.rstrip('\n').endswith(NONE_TYPE)
+            and PARSE_ERROR_RE.match(r[2])):
+        # Rule 4: ANTLR value range error.
+        rules['4-value-range'] += 1
+        if o[0] != 1 or r[0] != 1:
+            problems.append('value range error: expected exit code 1')
+    elif (o_type is not None and o_type not in EXACT_EXCEPTIONS
+          and r[2].startswith('fasm_xilinx.DbError: ')):
+        # Rule 3: database errors.
         rules['3-db-error'] += 1
-        if o[0] != 1 or r[0] != 1 or not r[2]:
-            problems.append('stderr: expected a failure on both sides')
-    elif normalise(o_err, rules) != normalise(r[2], {'2-parse-message': 0}):
+        if o[0] != 1 or r[0] != 1:
+            problems.append('database error: expected exit code 1')
+    elif normalise(o_err, rules) != normalise(r[2], dict.fromkeys(RULES, 0)):
         problems.append('stderr differs:\n--- oracle\n%s--- rust\n%s' %
                         (o_err, r[2]))
     return (not problems, '%s: %s' % (name, '; '.join(problems)), rules)
@@ -259,7 +281,7 @@ def main():
     cases, notes = corpus(args.db_cache, args.filter)
     for note in notes:
         print(note)
-    totals = {'1-traceback': 0, '2-parse-message': 0, '3-db-error': 0}
+    totals = dict.fromkeys(RULES, 0)
     failures = []
     files = set(case[1] for case in cases)
     with tempfile.TemporaryDirectory(prefix='difftest-xilinx-') as tmpdir:

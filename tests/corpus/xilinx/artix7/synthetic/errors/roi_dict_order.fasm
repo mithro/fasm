@@ -1,0 +1,4 @@
+# Valid; its .roi.json has required_features as a JSON object: Python joins
+# its keys in file order (XOR before CY), which decides which line the
+# FasmInconsistentBits message names.
+CLBLM_L_X8Y0.SLICEM_X0.ALUT.INIT[0]
