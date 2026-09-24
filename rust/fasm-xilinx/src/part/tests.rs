@@ -137,6 +137,25 @@ fn series7_frame_enumeration() {
         Some(addr(0, true, 0, 0, 0))
     );
     assert_eq!(part.next_frame_address(addr(1, true, 0, 0, 0)), None);
+    // A minor beyond its column: ConfigurationColumn gives nothing and the
+    // bus continues with the next column (then the next row, ...).
+    assert_eq!(
+        part.next_frame_address(addr(0, false, 0, 0, 9)),
+        Some(addr(0, false, 0, 1, 0))
+    );
+    assert_eq!(
+        part.next_frame_address(addr(0, false, 0, 2, 9)),
+        Some(addr(0, false, 1, 0, 0))
+    );
+}
+
+#[test]
+fn from_frame_addresses() {
+    let yaml = Part::from_yaml_str(SERIES7_YAML, Architecture::Series7).unwrap();
+    let addresses: Vec<FrameAddress> = yaml.iter_frame_addresses().collect();
+    let part = Part::from_frame_addresses(Architecture::Series7, yaml.idcode, addresses).unwrap();
+    assert_eq!(part, yaml);
+    assert!(Part::from_frame_addresses(Architecture::Series7, 1, [FrameAddress(7 << 23)]).is_err());
 }
 
 #[test]

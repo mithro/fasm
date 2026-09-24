@@ -155,6 +155,60 @@ impl Part {
         })
     }
 
+    /// The C++ `Part(idcode, addresses)` constructor (used by prjxray's
+    /// unit tests): the rows, buses and columns of the given frame
+    /// addresses, each column with `max(minor) + 1` frames.
+    ///
+    /// # Errors
+    ///
+    /// A message for an address with a reserved block type, or see
+    /// [`Part::new`].
+    pub fn from_frame_addresses(
+        architecture: Architecture,
+        idcode: u32,
+        addresses: impl IntoIterator<Item = FrameAddress>,
+    ) -> Result<Self, String> {
+        use std::collections::BTreeMap;
+        type Buses = BTreeMap<BlockType, BTreeMap<u32, u32>>;
+        let mut tree: BTreeMap<(bool, u32), Buses> = BTreeMap::new();
+        for address in addresses {
+            let block_type = address
+                .block_type(architecture)
+                .ok_or_else(|| format!("{address}: reserved block type"))?;
+            let key = if architecture.has_global_clock_regions() {
+                (
+                    address.is_bottom_half(architecture),
+                    u32::from(address.row(architecture)),
+                )
+            } else {
+                (false, u32::from(address.row_index(architecture)))
+            };
+            let count = tree
+                .entry(key)
+                .or_default()
+                .entry(block_type)
+                .or_default()
+                .entry(u32::from(address.column(architecture)))
+                .or_insert(0);
+            *count = (*count).max(u32::from(address.minor(architecture)) + 1);
+        }
+        let rows = tree
+            .into_iter()
+            .map(|((bottom, row), buses)| ConfigRow {
+                bottom,
+                row,
+                buses: buses
+                    .into_iter()
+                    .map(|(block_type, columns)| ConfigBus {
+                        block_type,
+                        columns: columns.into_iter().collect(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        Part::new(architecture, idcode, rows)
+    }
+
     /// Reads a `part.yaml` file. The architecture is taken from the tag
     /// (`!<xilinx/xc7series/part>`, `xcuseries`, `xcupseries`), or is
     /// `default_arch` for an untagged document.
@@ -309,8 +363,10 @@ impl Part {
     /// 2. (Series7) from the top region, row 0 of the bottom region;
     /// 3. `BLOCK_RAM`, then `CFG_CLB`, row 0 column 0 of the top region.
     ///
-    /// Returns `None` after the last frame (or for an address that is not
-    /// in a known row/bus/column).
+    /// Returns `None` after the last frame. Addresses that are not in the
+    /// part get the reference's answer too: a minor beyond its column
+    /// continues with the next column, an unknown row, bus or column with
+    /// steps 2 and 3.
     pub fn next_frame_address(&self, address: FrameAddress) -> Option<FrameAddress> {
         let arch = self.architecture;
         let block_type = u32::from(address.block_type_raw(arch));
@@ -365,9 +421,9 @@ impl Part {
         let j = bus.column_index(u32::from(address.column(arch)))?;
         let minor = u32::from(address.minor(arch));
         let frame_count = bus.columns[j].1;
-        if minor >= frame_count {
-            return None;
-        }
+        // `ConfigurationColumn::GetNextFrameAddress` returns nothing for a
+        // minor beyond the column, and the bus then tries the next column
+        // like for the last minor.
         if minor + 1 < frame_count {
             return Some(FrameAddress(address.0 + 1));
         }
