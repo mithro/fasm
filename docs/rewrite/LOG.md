@@ -85,3 +85,4 @@ what happened, branch/commit references, open issues.
   NOP count; prjuray fasm_assembler.py path) and 1 gap (ECC word 50 vs HCLK
   tiles) which were corrected (commits f8aac80, e1998d4; invariant test
   added as item 19 of §8.3). Merged with --no-ff.
+* T5.8 (reference Xilinx tools + database fetch scripts) started.

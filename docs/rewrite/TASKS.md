@@ -98,7 +98,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       packets, CRC, part idcode) + reader; `xc7frames2bit` compatible CLI;
       tests vs prjxray test bitstreams (after T5.5).
 - [ ] T5.7 `xcfasm` compatible one shot CLI (fasm -> bit) (after T5.6).
-- [ ] T5.8 Reference tool setup `tests/oracle/setup-xilinx.sh` (prjxray
+- [~] T5.8 Reference tool setup `tests/oracle/setup-xilinx.sh` (prjxray
       python package, f4pga-xc-fasm, prjxray C++ tools build) and database
       fetch script `tools/fetch-db.sh` (sparse clone per family) (after T0.4).
 - [ ] T5.9 `tools/gen-corpus.py`: synthetic FASM exercising every segbits
