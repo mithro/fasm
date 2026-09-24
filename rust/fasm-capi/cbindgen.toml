@@ -43,7 +43,7 @@ autogen_warning = """/*
  * SPDX-License-Identifier: Apache-2.0
  */"""
 header = """/*
- * libfasm: C API of the Rust FASM (FPGA Assembly) library.
+ * libfasm_capi: C API of the Rust FASM (FPGA Assembly) library.
  *
  * See docs/rewrite/DESIGN-capi.md for ownership, lifetime, error and
  * thread safety rules. In short:

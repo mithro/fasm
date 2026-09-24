@@ -1,5 +1,5 @@
 /*
- * libfasm: C API of the Rust FASM (FPGA Assembly) library.
+ * libfasm_capi: C API of the Rust FASM (FPGA Assembly) library.
  *
  * See docs/rewrite/DESIGN-capi.md for ownership, lifetime, error and
  * thread safety rules. In short:
@@ -265,7 +265,8 @@ typedef struct fasm_annotation {
  *
  * `feature` is the feature name (NUL terminated, `len` bytes, valid only
  * during the call); `user` is the `user` pointer given to
- * `fasm_file_merge_and_sort_ex`. Must not unwind or `longjmp`.
+ * `fasm_file_merge_and_sort_ex`. Must not unwind (throw)
+ * or `longjmp` out: that is undefined behaviour.
  */
 typedef bool (*fasm_zero_fn)(const char *feature, size_t len, void *user);
 
@@ -277,8 +278,8 @@ typedef bool (*fasm_zero_fn)(const char *feature, size_t len, void *user);
  * feature names, e.g. the tile name; NUL terminated, `len` bytes, valid
  * only during the call). It is called exactly once per group (the result
  * is cached), so it need not be deterministic. Groups are sorted by
- * increasing key, groups with equal keys by `group_id`. Must not unwind or
- * `longjmp`.
+ * increasing key, groups with equal keys by `group_id`. Must not unwind
+ * (throw) or `longjmp` out: that is undefined behaviour.
  */
 typedef int64_t (*fasm_sort_key_fn)(const char *group_id, size_t len, void *user);
 
@@ -294,7 +295,8 @@ typedef int64_t (*fasm_sort_key_fn)(const char *group_id, size_t len, void *user
  *
  * Return `true` to continue, `false` to stop parsing (the parse function
  * then returns `FASM_OK` without looking at the rest of the input). The
- * callback must not unwind (throw a C++ exception) or `longjmp` out.
+ * callback must not unwind (throw a C++ exception) or `longjmp` out:
+ * that is undefined behaviour.
  */
 typedef bool (*fasm_line_callback)(const struct fasm_line *line, size_t line_number, void *user);
 

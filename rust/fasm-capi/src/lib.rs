@@ -14,7 +14,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! C ABI (`libfasm`) for the [`fasm`] crate.
+//! C ABI (`libfasm_capi`) for the [`fasm`] crate.
 //!
 //! This crate builds a C library (cdylib + staticlib, library name
 //! `fasm_capi`) whose header, `include/fasm/fasm.h`, is generated from

@@ -6,12 +6,12 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "C ABI (libfasm) for the fasm crate: header include/fasm/fasm.h generated with cbindgen, plus the header-only C++ wrapper include/fasm/fasm.hpp."
+description = "C ABI (libfasm_capi) for the fasm crate: header include/fasm/fasm.h generated with cbindgen, plus the header-only C++ wrapper include/fasm/fasm.hpp."
 
 [lib]
 # `fasm` is already taken by the core crate in this workspace, so the
-# library is named `fasm_capi` (it still builds/installs as `libfasm`,
-# see task T4.1).
+# library is named `fasm_capi`: `libfasm_capi.so` / `.a` / `.dylib`,
+# `fasm_capi.dll` (see docs/rewrite/DESIGN-capi.md).
 name = "fasm_capi"
 path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
