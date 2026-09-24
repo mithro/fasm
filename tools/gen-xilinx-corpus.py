@@ -98,7 +98,8 @@ ANNOTATION_KEYS = ('src', 'net', 'cell', 'note')
 # ---------------------------------------------------------------------
 def read_simple_yaml(path):
     """The two level mappings of mapping/parts.yaml and devices.yaml:
-    {key: {subkey: value}} (quotes removed)."""
+    {key: {subkey: value}} (quotes removed; a one line `{a: b, c: d}`
+    flow mapping too)."""
     out = {}
     current = None
     with open(path) as f:
@@ -107,11 +108,16 @@ def read_simple_yaml(path):
                 continue
             key, _, value = line.strip().partition(':')
             key = key.strip().strip('"\'')
-            value = value.strip().strip('"\'')
+            value = value.strip()
             if not line[0].isspace():
                 current = out.setdefault(key, {})
+                if value.startswith('{') and value.endswith('}'):
+                    for item in value[1:-1].split(','):
+                        k, _, v = item.partition(':')
+                        current[k.strip().strip('"\'')] = v.strip().strip(
+                            '"\'')
             elif current is not None:
-                current[key] = value
+                current[key] = value.strip('"\'')
     return out
 
 
@@ -125,7 +131,13 @@ def fabric_of(db_root, part):
     parts = read_simple_yaml(os.path.join(db_root, 'mapping', 'parts.yaml'))
     devices = read_simple_yaml(
         os.path.join(db_root, 'mapping', 'devices.yaml'))
-    return devices[parts[part]['device']]['fabric']
+    if part not in parts:
+        raise SystemExit('part %s not in mapping/parts.yaml' % part)
+    device = parts[part].get('device')
+    if device not in devices or 'fabric' not in devices[device]:
+        raise SystemExit('part %s: device %s has no fabric in '
+                         'mapping/devices.yaml' % (part, device))
+    return devices[device]['fabric']
 
 
 def parse_bit(text):
