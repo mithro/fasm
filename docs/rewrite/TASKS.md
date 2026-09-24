@@ -73,11 +73,11 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 3: Python bindings
 
-- [r] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
+- [x] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
       `parse_fasm_string`, `parse_fasm_filename` returning the existing
       namedtuples; maturin `pyproject.toml`; `fasm/parser/rust.py`;
       `fasm.parser.available` update; keep textX fallback (after T1.4).
-- [ ] T3.2 Replace setup.py/ANTLR build with maturin based build; update
+- [~] T3.2 Replace setup.py/ANTLR build with maturin based build; update
       `tests/test_simple.py` and add parity tests between `rust` and `textx`
       parsers over the corpus; `tox.ini`; wheel build workflow (after T3.1).
 - [ ] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
@@ -99,7 +99,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       formats, part.yaml, tilegrid.json bits blocks, ROI, required
       features, and how `fasm_assembler.py` + `fasm2frames.py` +
       `xc7frames2bit` behave (after T0.3).
-- [~] T5.2 `fasm-xilinx`: database loader (tilegrid, segbits, ppips, part
+- [r] T5.2 `fasm-xilinx`: database loader (tilegrid, segbits, ppips, part
       yaml/json, package pins) with tests on a checked in miniature database
       (from f4pga-xc-fasm test data) (after T5.1).
 - [ ] T5.3 Binary cache for a loaded part database (versioned, content

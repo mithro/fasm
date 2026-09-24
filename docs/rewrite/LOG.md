@@ -319,3 +319,27 @@ what happened, branch/commit references, open issues.
   `default-members` so bare `cargo build` stays Python free. Fixes in
   progress. Note for T3.2: legacy wheel.yml/tox.ini/ANTLR files are now
   stale and must be removed/rewritten.
+* T3.1 done: fixes 6f9d717 (version.py removed + maturin exclude), c6362ca
+  (tests runnable against an installed package), 47b0223 (workspace
+  default-members without fasm-python). Merged with --no-ff (COMPAT.md
+  section conflict resolved explicitly). Integration issue found on the
+  merged tree: the parity tests iterate the T1.5 synthetic corpus, which
+  contains documented textX-only inputs; fixed by the orchestrator in
+  tests/test_rust_parser.py (skip rust_stricter / invalid files, fast path
+  must decline models Python asserts on). `maturin develop` in a scratch
+  venv: available ['rust', 'textx'], implementation rust; Python tests
+  pass. flake8 clean apart from the F401 in fasm/parser/__init__.py that
+  tox.ini's per-file-ignores already allow.
+* T5.2 implemented on branch `worktree-agent-a23111aea3549812f` (7 commits):
+  Database::open for prjxray-db and prjuray-db, segbits/ppips/tilegrid/
+  part.yaml (hand written subset parser)/part.json/package_pins readers,
+  lookup in prjxray order (~23 ns split, ~100 ns from a whole name),
+  FrameAddress + segbit_position, iter_frame_addresses (matches
+  xc7frames2bit+bitread: 5408 frames xc7a35t, 24060 xc7a200t), ECC
+  invariant (no violations on artix7/zynqusp), mini-db (15 KB) + synthetic
+  db test data; xc7a50t opens in 91 ms / 24 MiB, xc7a200t 171 ms / 41 MiB
+  (prjxray python: 0.53 s / 0.68 s). Findings for T5.4: negative bit
+  offsets of _SING alias tiles wrap to the frame end in prjxray and the
+  golden files depend on it; unknown tiles raise KeyError not
+  FasmLookupError in prjxray. In review.
+* T3.2 (maturin based build, legacy ANTLR removal, CI/tox/wheels) started.
