@@ -811,6 +811,32 @@ fn huge_values_are_fast_and_errors_short() {
         ),
         // Leading zeros are not significant.
         (format!("a = {}1", "0".repeat(mb)), None),
+        // ... and cost nothing but the scan, even in front of the longest
+        // decimal allowed on an address wide enough to accept it.
+        (
+            format!(
+                "a[4294967294:0] = 'd{}{}",
+                "0".repeat(10 * mb),
+                "9".repeat(4300)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "a[4294967294:0] = {}{}",
+                "0_".repeat(5 * mb),
+                "9".repeat(4300)
+            ),
+            None,
+        ),
+        (
+            format!(
+                "a[4294967294:0] = 'd9{}{}",
+                "_".repeat(10 * mb),
+                "9".repeat(4299)
+            ),
+            None,
+        ),
         // Power of two radixes: accepted, and rejected before or after
         // conversion.
         (format!("a[{}:0] = 'h{}", 4 * mb, "F".repeat(mb)), None),

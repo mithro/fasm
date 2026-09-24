@@ -57,16 +57,23 @@ const POW10: [u64; 20] = {
 /// Parses decimal `digits` (`_` separators ignored). No `_`-free digit at
 /// all gives `0` (like the ANTLR parser does for `'d_`).
 ///
-/// Converts 19 digits per step. Allocation free up to 256 bits; the
-/// caller bounds the digit count ([`MAX_DECIMAL_DIGITS`]), which bounds
-/// the (quadratic) cost of wider values.
+/// Converts 19 digits per step, on the stack up to 256 bits. Leading zeros
+/// and `_` cost nothing beyond being skipped, so the cost is linear in the
+/// input plus quadratic in the number of significant digits only, which
+/// the caller bounds ([`MAX_DECIMAL_DIGITS`]).
 pub(super) fn decimal(digits: &[u8]) -> FeatureValue {
+    let first = digits
+        .iter()
+        .position(|&b| b != b'0' && b != b'_')
+        .unwrap_or(digits.len());
+    let digits = digits.get(first..).unwrap_or_default();
     let mut stack = [0u64; INLINE_LIMBS];
     if decimal_into(digits, &mut stack) {
         return FeatureValue::from_le_limbs(&stack);
     }
     // log2(10) < 10 / 3: every 3 digits need at most 10 bits.
-    let bits = digits.len().div_ceil(3).saturating_mul(10);
+    let count = digits.iter().filter(|&&b| b != b'_').count();
+    let bits = count.div_ceil(3).saturating_mul(10);
     let mut heap = vec![0u64; bits / 64 + 1];
     decimal_into(digits, &mut heap);
     FeatureValue::from_le_limbs(&heap)
@@ -75,6 +82,8 @@ pub(super) fn decimal(digits: &[u8]) -> FeatureValue {
 /// Accumulates decimal `digits` into `limbs` (little endian, zeroed by the
 /// caller), 19 digits at a time; `false` if the value does not fit.
 fn decimal_into(digits: &[u8], limbs: &mut [u64]) -> bool {
+    // Number of limbs in use: the higher ones are still zero.
+    let mut used = 0usize;
     let mut chunk = 0u64;
     let mut len = 0usize;
     for &b in digits {
@@ -85,25 +94,35 @@ fn decimal_into(digits: &[u8], limbs: &mut [u64]) -> bool {
         chunk = chunk * 10 + digit_value(b);
         len += 1;
         if len == 19 {
-            if !mul_add(limbs, POW10[19], chunk) {
+            if !mul_add(limbs, &mut used, POW10[19], chunk) {
                 return false;
             }
             chunk = 0;
             len = 0;
         }
     }
-    len == 0 || mul_add(limbs, POW10[len], chunk)
+    len == 0 || mul_add(limbs, &mut used, POW10[len], chunk)
 }
 
-/// `limbs = limbs * mul + add`; `false` if the result does not fit.
-fn mul_add(limbs: &mut [u64], mul: u64, add: u64) -> bool {
+/// `limbs = limbs * mul + add`, where only the first `used` limbs can be
+/// non zero (updated); `false` if the result does not fit.
+fn mul_add(limbs: &mut [u64], used: &mut usize, mul: u64, add: u64) -> bool {
     let mut carry = u128::from(add);
-    for limb in limbs.iter_mut() {
+    for limb in limbs.iter_mut().take(*used) {
         let x = u128::from(*limb) * u128::from(mul) + carry;
         *limb = x as u64;
         carry = x >> 64;
     }
-    carry == 0
+    // The carry is below 2^64: at most one more limb.
+    while carry != 0 {
+        match limbs.get_mut(*used) {
+            Some(limb) => *limb = carry as u64,
+            None => return false,
+        }
+        carry >>= 64;
+        *used += 1;
+    }
+    true
 }
 
 /// Parses `digits` of a power of two radix, `bits` bits per digit (1 for
@@ -260,5 +279,20 @@ mod tests {
     fn only_underscores_is_zero() {
         assert_eq!(decimal(b"_"), FeatureValue::zero());
         assert_eq!(power_of_two(b"__", 4), FeatureValue::zero());
+    }
+
+    #[test]
+    fn leading_zeros_and_underscores_are_ignored() {
+        let wide = "9".repeat(500);
+        let expected = FeatureValue::from_digits(wide.as_bytes(), 10).unwrap();
+        for prefix in ["", "0", "_0_", "0000_0000_", "_"] {
+            let digits = format!("{prefix}{wide}");
+            assert_eq!(decimal(digits.as_bytes()), expected, "{prefix}");
+            let digits = format!("{prefix}{}", "1_2".repeat(100));
+            assert_eq!(
+                decimal(digits.as_bytes()),
+                FeatureValue::from_digits(digits.as_bytes(), 10).unwrap()
+            );
+        }
     }
 }
