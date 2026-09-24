@@ -60,13 +60,16 @@ pub struct SetFasmFeature {
 impl SetFasmFeature {
     /// Builds a `SetFasmFeature`, validating the address and that `value`
     /// fits in the address width (mirroring the asserts in Python's
-    /// `fasm.output.set_feature_width`/`set_feature_to_str`).
+    /// `fasm/__init__.py`'s `set_feature_width`/`set_feature_to_str`).
     ///
     /// # Errors
     ///
     /// * [`ModelError::EndWithoutStart`] if `end.is_some()` but
     ///   `start.is_none()`.
     /// * [`ModelError::EndBeforeStart`] if `end < start`.
+    /// * [`ModelError::AddressRangeTooWide`] if the address range (`end -
+    ///   start + 1`) does not fit in a `u32` (only `start == 0`,
+    ///   `end == u32::MAX`; see [`ModelError::AddressRangeTooWide`]).
     /// * [`ModelError::ValueTooWide`] if `value` needs more bits than the
     ///   address width (see [`Self::width`]) allows.
     pub fn new(
@@ -88,7 +91,16 @@ impl SetFasmFeature {
 
         let width = match end {
             None => 1,
-            Some(e) => e - start.expect("checked above") + 1,
+            Some(e) => {
+                let s = start.expect("checked above");
+                // `e >= s` was just checked above, so `e - s` cannot
+                // underflow; only `+ 1` can overflow, and only for the
+                // single case `s == 0, e == u32::MAX` (a 2^32 bit wide
+                // address).
+                e.checked_sub(s)
+                    .and_then(|diff| diff.checked_add(1))
+                    .ok_or(ModelError::AddressRangeTooWide { start: s, end: e })?
+            }
         };
 
         if !value.fits_in_bits(width) {
@@ -134,15 +146,24 @@ impl SetFasmFeature {
     /// The bit width of the `FeatureAddress`: `1` if `end` is `None`,
     /// otherwise `end - start + 1`.
     ///
-    /// Mirrors Python's `fasm.output.set_feature_width`. Assumes the
-    /// `SetFasmFeature` invariants (`end.is_some()` implies
-    /// `start.is_some()` and `end >= start`) hold, which [`Self::new`]
-    /// checks and [`Self::new_unchecked`] does not.
+    /// Mirrors Python's `fasm/__init__.py`'s `set_feature_width`. Assumes
+    /// the `SetFasmFeature` invariants (`end.is_some()` implies
+    /// `start.is_some()`, `end >= start`, and the range fits in a `u32`,
+    /// i.e. not `start == 0, end == u32::MAX`) hold, which [`Self::new`]
+    /// checks and [`Self::new_unchecked`] does not. Returning `u32` (rather
+    /// than widening to `u64` or saturating) keeps this consistent with
+    /// [`Self::new`], which rejects the one input that would overflow
+    /// ([`ModelError::AddressRangeTooWide`]) instead of ever constructing a
+    /// `SetFasmFeature` whose `width()` cannot be represented; a
+    /// `new_unchecked`-built value that violates that must expect a panic
+    /// here, not a silently wrapped result.
     ///
     /// # Panics
     ///
-    /// Panics if `end.is_some()` but `start.is_none()` (an invariant
-    /// violation only reachable via [`Self::new_unchecked`]).
+    /// Panics if `end.is_some()` but `start.is_none()`, or if
+    /// `end - start + 1` overflows `u32` (i.e. `start == 0` and
+    /// `end == u32::MAX`) — both are invariant violations only reachable
+    /// via [`Self::new_unchecked`].
     #[must_use]
     pub fn width(&self) -> u32 {
         match self.end {
@@ -151,7 +172,12 @@ impl SetFasmFeature {
                 let start = self
                     .start
                     .expect("SetFasmFeature invariant violated: end without start");
-                end - start + 1
+                end.checked_sub(start)
+                    .and_then(|diff| diff.checked_add(1))
+                    .expect(
+                        "SetFasmFeature invariant violated: end - start + 1 overflows u32 \
+                         (start == 0, end == u32::MAX)",
+                    )
             }
         }
     }
@@ -279,6 +305,67 @@ mod tests {
             None,
         );
         assert_eq!(f.value, FeatureValue::from_u64(2));
+    }
+
+    #[test]
+    fn new_rejects_address_range_too_wide_for_u32() {
+        // [u32::MAX:0] would need a width of 2^32, which does not fit in a
+        // u32.
+        assert_eq!(
+            SetFasmFeature::new(
+                feature(),
+                Some(0),
+                Some(u32::MAX),
+                FeatureValue::from_u64(0),
+                None
+            ),
+            Err(ModelError::AddressRangeTooWide {
+                start: 0,
+                end: u32::MAX
+            })
+        );
+    }
+
+    #[test]
+    fn new_accepts_address_range_one_short_of_overflow() {
+        // [u32::MAX - 1 : 0] is a width of u32::MAX, which just fits.
+        let f = SetFasmFeature::new(
+            feature(),
+            Some(0),
+            Some(u32::MAX - 1),
+            FeatureValue::from_u64(0),
+            None,
+        )
+        .unwrap();
+        assert_eq!(f.width(), u32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflows u32")]
+    fn width_panics_on_address_range_too_wide_for_u32() {
+        // Only reachable via new_unchecked, which does not validate.
+        let f = SetFasmFeature::new_unchecked(
+            feature(),
+            Some(0),
+            Some(u32::MAX),
+            FeatureValue::from_u64(0),
+            None,
+        );
+        let _ = f.width();
+    }
+
+    #[test]
+    #[should_panic(expected = "end without start")]
+    fn width_panics_on_end_without_start() {
+        // Only reachable via new_unchecked, which does not validate.
+        let f = SetFasmFeature::new_unchecked(
+            feature(),
+            None,
+            Some(3),
+            FeatureValue::from_u64(0),
+            None,
+        );
+        let _ = f.width();
     }
 
     #[test]

@@ -72,6 +72,16 @@ pub enum ModelError {
         /// The number of bits actually needed to hold the value.
         bit_len: u32,
     },
+    /// A [`super::SetFasmFeature`]'s `FeatureAddress` range (`end - start +
+    /// 1`) does not fit in a `u32` (only possible for `start == 0` and
+    /// `end == u32::MAX`, a 2^32 bit wide address that no real FASM file
+    /// comes close to).
+    AddressRangeTooWide {
+        /// The given start.
+        start: u32,
+        /// The given end.
+        end: u32,
+    },
     /// A byte is not a valid [`super::ValueFormat`] discriminant.
     InvalidValueFormat(u8),
 }
@@ -89,6 +99,11 @@ impl fmt::Display for ModelError {
                 f,
                 "value needs {bit_len} bit(s), which does not fit in the {width}-bit \
                  FeatureAddress"
+            ),
+            ModelError::AddressRangeTooWide { start, end } => write!(
+                f,
+                "FeatureAddress [{end}:{start}] is 2^32 bits wide, which does not fit in a u32 \
+                 width"
             ),
             ModelError::InvalidValueFormat(v) => {
                 write!(f, "{v} is not a valid ValueFormat discriminant (0-4)")
