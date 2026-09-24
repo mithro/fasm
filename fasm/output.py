@@ -423,16 +423,28 @@ def merge_and_sort(model, zero_function=None, sort_key=None):
     _merge_and_sort_py's result exactly for (model, zero_function,
     sort_key) (see docs/rewrite/DESIGN-python.md); otherwise falls back to
     _merge_and_sort_py, which is also the reference: both give the same
-    lines (in the same order), or the same exception, for every input.
-    _merge_and_sort_py returns a lazy generator; the fast path returns a
-    materialised list (it must run the whole algorithm, including every
-    zero_function/sort_key call, to know whether it can handle model at
-    all), wrapped in iter() so callers of merge_and_sort still see an
-    iterator either way. This means zero_function/sort_key are called
-    eagerly, when merge_and_sort is called, rather than lazily as the
-    caller consumes the returned iterator -- the calls themselves happen
-    the same number of times, with the same arguments, in the same order,
-    only sooner.
+    lines (in the same order), or the same exception, for every input --
+    with two narrow, deliberate exceptions where the fast path's calls to
+    zero_function/sort_key can differ from _merge_and_sort_py's own
+    (documented in docs/rewrite/COMPAT.md and DESIGN-python.md, regression
+    tests in tests/test_fast_paths.py's "known deviations"):
+
+    * _merge_and_sort_py returns a lazy generator; the fast path returns a
+      materialised list (it must run the whole algorithm, including every
+      zero_function/sort_key call, to know whether it can handle model at
+      all), wrapped in iter() so callers of merge_and_sort still see an
+      iterator either way. zero_function/sort_key are therefore called
+      eagerly, when merge_and_sort is called, rather than lazily as the
+      caller consumes the returned iterator -- the same number of times,
+      with the same arguments, in the same order, only sooner.
+    * For a tied pair of group ids (sort_key gives neither `a < b` nor
+      `b < a`), the fast path's comparator calls sort_key's result's
+      __lt__ up to twice (to build a 3-way ordering for a Rust sort),
+      where Python's own sorted()/list.sort call it only once per
+      decision. The resulting order is identical either way (a tied pair
+      keeps its original relative order), but a sort_key whose __lt__ has
+      a call-count-dependent side effect (e.g. raises on its Nth call)
+      can be observed to behave differently between the two paths.
     """
     if _fasm_rs is not None:
         fast = _fasm_rs.merge_and_sort(model, zero_function, sort_key)

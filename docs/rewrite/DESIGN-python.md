@@ -238,9 +238,10 @@ walking `MergeModel::groups()` — the same order Python's
 dicts (and `MergeModel::merge_addresses`, deliberately, see the "Insertion
 order" section of `docs/rewrite/DESIGN-output.md`) preserve insertion
 order. The resulting Python key objects are then stably sorted
-(`Vec::sort_by`, documented stable) with a comparator built from a single
-`PyAny::lt` (`<`) per pair — `a < b` is `Less`, `b < a` is `Greater`,
-otherwise `Equal` — deliberately **not**
+(`Vec::sort_by`, documented stable) with a comparator built from
+`PyAny::lt` (`<`) calls only (up to two per pair — see "`sort_key`'s
+`__lt__` call count can differ for tied keys" below) — `a < b` is
+`Less`, `b < a` is `Greater`, otherwise `Equal` — deliberately **not**
 [`PyAny::compare`](https://docs.rs/pyo3/0.29.2/pyo3/types/trait.PyAnyMethods.html#tymethod.compare),
 which also calls `==`/`>` and requires every pair to be resolved by one of
 the three: that rejects a pair a plain `<`-based sort accepts (e.g. two
@@ -267,13 +268,43 @@ plain iterator either way. `zero_function`/`sort_key` therefore end up
 called the same number of times, with the same arguments, in the same
 order, but **sooner** — at the `merge_and_sort(...)` call itself rather
 than while iterating its result — whenever the fast path runs. This is
-the one observable difference from the original API for a caller whose
-`zero_function`/`sort_key` has side effects timed against partial
-consumption of the returned iterator (e.g. one that stops after the first
-few lines); `tests/test_fast_paths.py`'s call-order tests check counts and
-ordering, not timing against partial consumption, since nothing in the
-existing test suite or `fasm.tool`/`fasm.output` callers relies on it.
-Recorded in `docs/rewrite/COMPAT.md`.
+one of two observable differences from the original API for a caller
+whose `zero_function`/`sort_key` has call-count- or timing-sensitive
+side effects; the other is `sort_key`'s `__lt__` call count, below.
+`tests/test_fast_paths.py`'s call-order tests check counts and ordering,
+not timing against partial consumption, since nothing in the existing
+test suite or `fasm.tool`/`fasm.output` callers relies on it. Recorded in
+`docs/rewrite/COMPAT.md`.
+
+### `sort_key`'s `__lt__` call count can differ for tied keys
+
+`sort_group_ids_by_key`'s comparator (above) calls `a.lt(b)` and, only
+when that is `false`, also calls `b.lt(a)` to tell "equal" (stable: no
+swap) apart from "greater" (swap) — it needs a real 3-way `Ordering` for
+`Vec::sort_by`. CPython's own `sorted()`/`list.sort` never do this
+second call: their comparison primitive is a single `<` test per
+decision (`ISLT` in `listobject.c`), and *not* swapping is correct
+whether the pair is genuinely equal or `a` merely isn't found `< b`
+(`Timsort` never needs to distinguish the two, since it only ever asks
+"should this move left?"). So for a **tied** pair (neither `a < b` nor
+`b < a`) the fast path calls `__lt__` twice where
+`_merge_and_sort_py`'s `sorted(..., key=sort_key)` calls it once — the
+final sorted order is identical either way (both leave a tied pair in
+their original relative order), but a `sort_key` result whose `__lt__`
+has a call-count-dependent side effect (e.g. it raises on its Nth call,
+or logs a call trace a test asserts on) can be observed to behave
+differently between the two paths. Concretely (`tests/test_fast_paths.py`,
+"known deviations"): two already-sorted (tied) groups with a `sort_key`
+whose `__lt__` raises on the 2nd call, across all instances: the fast
+path raises (it makes 2 calls), `_merge_and_sort_py` returns normally
+(it makes only 1). This is a narrow, deliberately undocumented-until-now
+gap the T3.3 review found; it was not considered worth closing by
+building a genuinely 2-call-per-tie-avoiding comparator (that would mean
+reimplementing timsort's own comparison strategy rather than a plain
+`Vec::sort_by`, for a difference that only shows up for a `sort_key`
+whose `__lt__` has an external, call-count-sensitive side effect — no
+caller in this codebase's test suite does that). Recorded in
+`docs/rewrite/COMPAT.md`.
 
 ### Benchmarks
 

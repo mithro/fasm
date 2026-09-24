@@ -540,3 +540,83 @@ def test_merge_and_sort_falls_back_when_extension_missing(monkeypatch):
     model = [feature_line('A.a')]
     result = list(fasm.output.merge_and_sort(model))
     assert result == list(fasm.output._merge_and_sort_py(model))
+
+
+# ---------------------------------------------------------------------------
+# Known deviations: narrow, deliberate differences between the fast path
+# and _merge_and_sort_py, documented in docs/rewrite/DESIGN-python.md
+# ("sort_key's __lt__ call count can differ for tied keys") and
+# docs/rewrite/COMPAT.md. These are regression tests for the documented
+# behaviour of *both* paths, not bugs to fix.
+# ---------------------------------------------------------------------------
+
+
+def make_raises_on_nth_lt_class(n):
+    """ A key class whose __lt__ raises on the Nth call across *all* of
+    its instances (a shared counter), and otherwise compares `.value`.
+    Used to observe how many times a comparator actually calls __lt__. """
+    calls = [0]
+
+    class RaisesOnNthLt:
+        def __init__(self, value):
+            self.value = value
+
+        def __lt__(self, other):
+            calls[0] += 1
+            if calls[0] == n:
+                raise RuntimeError('boom on __lt__ call %d' % n)
+            return self.value < other.value
+
+    return RaisesOnNthLt, calls
+
+
+def test_tied_sort_key_lt_call_count_differs_between_fast_path_and_python():
+    """ Reviewer repro (T3.3 review): two groups ('A.a', 'B.b'), already in
+    their final relative order, with a sort_key that returns *tied* keys
+    (`.value` equal for both -- neither `a < b` nor `b < a`) whose __lt__
+    raises on the 2nd call across all instances.
+
+    sort_group_ids_by_key (rust/fasm-python/src/merge.rs) needs a 3-way
+    Ordering for Vec::sort_by: for this tied pair it calls `a.lt(b)`
+    (call 1, returns False) and then, to tell "equal" from "greater",
+    `b.lt(a)` (call 2, raises) -- 2 __lt__ calls.
+
+    _merge_and_sort_py's sorted(..., key=sort_key) only ever tests one
+    direction (CPython's sort has no need to distinguish equal from
+    greater beyond a single `<` test: not swapping is correct for both),
+    so for this same tied, already-in-order pair it makes exactly 1
+    __lt__ call and never reaches the 2nd-call raise. """
+    model = [feature_line('A.a'), feature_line('B.b')]
+
+    Cls, calls = make_raises_on_nth_lt_class(2)
+    with pytest.raises(RuntimeError, match='boom on __lt__ call 2'):
+        list(fasm.output.merge_and_sort(model, sort_key=lambda name: Cls(0)))
+    assert calls[0] == 2
+
+    Cls, calls = make_raises_on_nth_lt_class(2)
+    result = list(
+        fasm.output._merge_and_sort_py(model, sort_key=lambda name: Cls(0)))
+    assert calls[0] == 1
+    assert [line.set_feature.feature for line in result if line.set_feature
+            ] == ['A.a', 'B.b']
+
+
+def test_tied_sort_key_lt_call_count_both_succeed_when_not_on_the_edge():
+    """ Same tied pair, but the raise is set for a call count neither
+    path reaches (3rd call): both paths return the same, stably ordered
+    result -- the __lt__ call count difference above only matters for a
+    sort_key with a call-count-dependent side effect, not for the sorted
+    order itself, which is identical either way. """
+    model = [feature_line('A.a'), feature_line('B.b')]
+
+    Cls, fast_calls = make_raises_on_nth_lt_class(3)
+    fast = list(
+        fasm.output.merge_and_sort(model, sort_key=lambda name: Cls(0)))
+    assert fast_calls[0] == 2
+
+    Cls, py_calls = make_raises_on_nth_lt_class(3)
+    py = list(
+        fasm.output._merge_and_sort_py(model, sort_key=lambda name: Cls(0)))
+    assert py_calls[0] == 1
+
+    assert fast == py
