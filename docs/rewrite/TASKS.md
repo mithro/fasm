@@ -48,7 +48,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       grammar with exact ANTLR/textX compatible acceptance and error
       behaviour; streaming and whole-file APIs; tests from
       `examples/*.fasm` and a hand written edge case table (after T1.2).
-- [~] T1.4 `output` module: string formatting, canonicalisation,
+- [r] T1.4 `output` module: string formatting, canonicalisation,
       `merge_features`, `merge_and_sort` (MergeModel) with tests ported from
       Python behaviour (after T1.2).
 - [ ] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test

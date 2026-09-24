@@ -169,3 +169,10 @@ what happened, branch/commit references, open issues.
   is a real constraint on this machine: toolchains and venvs should be
   built in the main tree, not per worktree, wherever possible.
 * T1.4 (output module) started.
+* T1.4 implemented on branch `worktree-agent-a9a6c3f4a5ecb9b14` (6 commits,
+  docs/rewrite/DESIGN-output.md, golden outputs for examples/many.fasm in
+  tests/corpus/oracle/). All Python asserts became `Result` errors.
+  Implementer found and deliberately reproduced a Python bug:
+  `MergeModel.add_to_comment_group` does not reset `current_group` after a
+  feature line ends a comment group, so the group can be emitted twice
+  (verified against the oracle). Sent for differential review.
