@@ -294,3 +294,159 @@ cargo +nightly miri test -p fasm-capi --lib
 Under Miri's default isolation there is no file system access: the tests
 parse the embedded `examples/many.fasm` with `fasm_parse_string` instead
 of `fasm_parse_file`, and skip the file error tests.
+
+## C++ wrapper (T4.2)
+
+`include/fasm/fasm.hpp` is a header only, C++17 RAII wrapper over
+`fasm.h`: `#include "fasm.h"` and nothing else from the library (only
+standard headers besides that), namespace `fasm`. It adds no new
+capability over the C API; it exists so a C++ caller gets normal C++
+ergonomics (constructors/destructors, exceptions, `std::string_view`,
+`std::optional`, iterators, `std::function`) instead of hand rolled
+`fasm_*_free` calls and status checks.
+
+### Type mapping
+
+| C API | C++ wrapper |
+|---|---|
+| `fasm_status` | `enum class Status` (numerically identical, `to_c`/`from_c` convert) |
+| `fasm_value_format`, with `FASM_VALUE_FORMAT_NONE` | `enum class ValueFormat` plus `std::optional<ValueFormat>` (`std::nullopt` for `FASM_VALUE_FORMAT_NONE`) |
+| `fasm_error *` + a `fasm_status` return | a thrown `fasm::Error : std::runtime_error` (see below) |
+| `fasm_file *` (owned) | `class File` (RAII, move only) |
+| `fasm_line *` (borrowed) | `class Line` (a wrapped pointer, copyable, not owning) |
+| `fasm_set_feature *` (borrowed) | `class SetFeature` (ditto), with value access split into `class Value` |
+| `fasm_string *` (owned) | `class String` (RAII, move only) |
+| `fasm_str`, comments/annotation text | `std::string_view` (never NUL terminated, as in C) |
+| `fasm_annotation` | `struct Annotation { std::string_view name, value; }`, used for both reading (`Line::annotations()`) and writing (`File::push_line`) |
+| `fasm_set_feature_spec` | `struct SetFeatureSpec` (`std::optional<uint32_t> start, end`, `std::vector<uint8_t> value_le`, `std::optional<ValueFormat> format`) |
+| `fasm_zero_fn`, `fasm_sort_key_fn` | `File::ZeroFn`, `File::SortKeyFn` (`std::function`) |
+| `fasm_line_callback` | the callable passed to `File::parse_each` / `parse_each_file` (any type invocable as `bool(const Line&, size_t)` or `void(const Line&, size_t)`) |
+
+`Status` and `ValueFormat` are declared with the same underlying values as
+the C enums (`FASM_OK` = 0, ...; `FASM_VALUE_FORMAT_PLAIN` = 0, ...), so
+`to_c`/`from_c` are plain `static_cast`s, not a lookup table, and stay
+correct if a status or format is added at the end (`fasm.h`'s ABI
+stability rule).
+
+### Errors: a thrown `fasm::Error`
+
+Every wrapper call that the C API reports with a `fasm_status` /
+`fasm_error **` (or a `NULL` return) instead throws `fasm::Error`, a
+`std::runtime_error` built from the `fasm_error *` (`Error`'s constructor
+reads `status`/`message`/`line`/`column` and calls `fasm_error_free`
+before the base class and members are constructed, so the C object is
+never read after being freed and never leaked on the throwing path).
+`what()` is the same message `fasm.h` documents (e.g. `"Parse error at
+2:11 - ..."`); `status()`, `line()`, `column()` and `has_position()`
+(`line() != 0`, since 1 based line numbers make 0 an unambiguous "no
+position" sentinel, unlike the 0 based `column()` alone) give the
+structured fields. There is no status-returning overload: a caller who
+wants to avoid exceptions on the hot path uses the C API directly
+(`fasm.h` and `fasm.hpp` are both always available; picking one does not
+exclude the other in the same translation unit).
+
+### Exception trampoline rule
+
+`fasm.h` requires that a callback given to the C API (`fasm_zero_fn`,
+`fasm_sort_key_fn`, `fasm_line_callback`) must not unwind: a C++ exception
+crossing the Rust `extern "C"` boundary is undefined behaviour. The
+wrapper's callback taking functions (`File::merge_and_sort(zero_fn,
+sort_key_fn)`, `File::parse_each`, `File::parse_each_file`) therefore
+never pass the caller's `std::function`/callable directly as the C
+callback. Instead each installs a small, captureless (so it converts
+implicitly to the required C function pointer type) lambda "trampoline"
+that:
+
+1. receives the C callback's arguments and a `void *user` pointing at a
+   stack allocated context holding a reference to the caller's callable
+   and an `std::exception_ptr pending`;
+2. calls the callable inside a `try { ... } catch (...) { ... }`;
+3. on success, returns its result converted to the C callback's return
+   type (for `parse_each`, via `File::invoke_line_callback`, which accepts
+   a callable returning either `bool` or `void`, `if constexpr`
+   dispatched with `std::is_invocable_r_v`);
+4. on an exception, stores it with `ctx->pending =
+   std::current_exception()` and returns a neutral value that stops or
+   has no effect on the C side (`false` for `fasm_line_callback`, `true`
+   for `fasm_zero_fn`, `0` for `fasm_sort_key_fn` — the C call is already
+   being unwound at that point, so the value is never actually used for
+   anything but returning cleanly).
+
+Once the C call returns, the wrapper checks `context.pending`: if set, it
+frees whatever the C function returned (`fasm_file_free`) and any
+`fasm_error` it set, then calls `std::rethrow_exception(context.pending)`.
+From the caller's point of view the exception propagates out of
+`merge_and_sort` / `parse_each` exactly as if the C boundary were not
+there, **as the same exception object and dynamic type** (not wrapped in
+a `fasm::Error`), including a custom exception type. If the C call itself
+also fails independently of the callback (should not happen: the callback
+having thrown means the C side observed early termination, not a
+separate error), the pending exception always wins over a `fasm_error`.
+
+### Lifetimes of views
+
+`Line`, `SetFeature`, `Value` and the `std::string_view`s handed out by
+`Line::comment()` and `Line::annotations()` are non-owning views, exactly
+like the `fasm_line *` / `fasm_set_feature *` / `fasm_str` they wrap:
+
+* obtained from a `File`, they are valid until that `File` is destroyed,
+  moved-from, or `push_line`d into (which may reallocate the line array);
+* obtained from a `File::parse_each` / `parse_each_file` callback, they
+  are valid **only during that call** — do not store a `Line` (or
+  anything derived from it) escaping the callback.
+
+These types are cheap to copy (a wrapped pointer) and returned by value
+from iterators and accessors on purpose, so that the usual C++ idioms
+(range-for, `std::count_if`, `std::any_of`, ...) work directly; nothing
+about copying a `Line` extends its underlying data's lifetime.
+`File::iterator` and `Line::AnnotationRange::iterator` are labelled
+`std::random_access_iterator_tag` for arithmetic and algorithm support,
+but (like other "generator" style iterators, e.g. Boost's
+`transform_iterator`) their `operator*` returns a value, not a true
+lvalue reference, so an algorithm that needs to bind a mutable reference
+through the iterator (there is none here: iteration is read only) would
+not compile against them; `std::count_if`, `std::any_of`, `std::distance`
+and range-for, which only need an input iterator's guarantees plus random
+access arithmetic, work as shown in the test program.
+
+`File` and `String` own their C object (`fasm_file *` / `fasm_string *`)
+and are move only, like `std::unique_ptr`: there is no implicit copy
+constructor, so an accidental deep copy of a whole model is not possible
+to write by accident. Building a second, independent model is explicit
+(`File::merge_and_sort()`, or `push_line`ing into a fresh `File`).
+
+### Thread safety
+
+Unchanged from `fasm.h`: a `File` (and every view taken from it) may be
+read from any number of threads at once; `push_line` needs exclusive
+access to that `File`. `String` and `Error` are immutable and may be used
+from any thread. The wrapper adds no shared mutable state of its own: the
+`merge_and_sort` trampolines' `static const` function pointers are
+stateless (they only read their `user` argument, which is a stack local
+of the calling thread's call), so concurrent calls on different `File`s
+from different threads do not interact.
+
+### Build, tests and packaging
+
+The header needs nothing beyond `fasm.h` and the C++17 standard library:
+`rust/fasm-capi/tests/cpp/header_only.cpp` is compiled on its own (`-c`,
+never linked) with both g++ and clang++ at `-std=c++17` and
+`-std=c++20`, `-Wall -Wextra -Wpedantic -Werror`, as part of `make
+capi-test` (`rust/fasm-capi/tests/c/CMakeLists.txt`), to catch a missing
+include or a construct valid in one standard/compiler but not another.
+`rust/fasm-capi/tests/cpp/test_capi.cpp` is the C++ counterpart of
+`tests/c/test_capi.c`: same coverage (parses `examples/many.fasm`,
+compares output byte for byte against the oracle files, wide values,
+parse/IO/UTF-8 errors, streaming with early stop and an exception
+propagating out of it, `merge_and_sort` with and without callbacks and
+with an exception thrown from a callback, `push_line` and re-serialising,
+move semantics, iterators with `std::count_if`/`std::any_of`/range-for,
+`Value::to_string` at every radix), built and run the same way (shared
+and static library, plus valgrind).
+
+`make capi-install PREFIX=...` installs `fasm.h`, `fasm.hpp`,
+`libfasm_capi.{so,a}` (release profile) and a generated
+`lib/pkgconfig/fasm.pc` (from `rust/fasm-capi/fasm.pc.in`) into
+`PREFIX/{include/fasm,lib}`; `rust/fasm-capi/examples/cpp/{CMakeLists.txt,
+example.cpp}` is a minimal example that finds the installed library with
+`pkg-config`/CMake's `PkgConfig` module and uses only the C++ wrapper.
