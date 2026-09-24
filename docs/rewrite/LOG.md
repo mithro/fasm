@@ -124,3 +124,4 @@ what happened, branch/commit references, open issues.
   a textX vs ANTLR divergence the parser (T1.3) must decide on: textX
   rejects a declared width wider than the address width (`a.b[0] = 3'b001`),
   ANTLR accepts it. Fix in progress.
+* T7.1 (openXC7 toolchain setup script) started.
