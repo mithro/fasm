@@ -139,3 +139,8 @@ tests/oracle/build/
 # covered by tests/oracle/build/ above unless FASM_DB_CACHE points
 # elsewhere); never committed, each machine builds/fetches its own.
 tests/oracle/venv-xilinx/
+
+# Rust rewrite: T7.1 end-to-end toolchain (tools/e2e/setup-openxc7.sh):
+# openXC7 snap extraction, OSS CAD Suite, chip databases, downloads cache;
+# never committed, each machine sets its own up.
+tools/e2e/build/
