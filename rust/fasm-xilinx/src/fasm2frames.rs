@@ -425,13 +425,105 @@ pub fn read_roi_design(path: &Path) -> Result<RoiDesign, AssemblerError> {
         y2: bounds[3],
     };
     let required_features = match &json {
-        Value::Object(map) => map.get("required_features").map(join_lines).transpose()?,
+        Value::Object(map) => match map.get("required_features") {
+            // `serde_json::Map` is sorted: take the keys of an object in
+            // file order (a Python `dict` keeps insertion order).
+            Some(Value::Object(_)) => Some(required_feature_keys(&data).join("\n")),
+            Some(value) => Some(join_lines(value)?),
+            None => None,
+        },
         _ => None,
     };
     Ok(RoiDesign {
         roi,
         required_features,
     })
+}
+
+/// The keys of the ROI JSON's `required_features` object in file order,
+/// like the Python `dict` `json.load` makes: a repeated key keeps its first
+/// position, a repeated `required_features` the last value. Empty if it is
+/// not an object (or the text is not valid JSON, which the caller has
+/// already reported).
+fn required_feature_keys(data: &[u8]) -> Vec<String> {
+    use serde::de::{Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+
+    /// The keys of an object, in order, without duplicates (empty for any
+    /// other value).
+    struct Keys(Vec<String>);
+
+    impl<'de> serde::Deserialize<'de> for Keys {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Keys;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("any JSON value")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Keys, A::Error> {
+                    let mut keys: Vec<String> = Vec::new();
+                    while let Some((key, IgnoredAny)) = map.next_entry::<String, IgnoredAny>()? {
+                        if !keys.contains(&key) {
+                            keys.push(key);
+                        }
+                    }
+                    Ok(Keys(keys))
+                }
+                fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Keys, A::Error> {
+                    while seq.next_element::<IgnoredAny>()?.is_some() {}
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_bool<E>(self, _: bool) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_i64<E>(self, _: i64) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_u64<E>(self, _: u64) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_f64<E>(self, _: f64) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_str<E>(self, _: &str) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+                fn visit_unit<E>(self) -> Result<Keys, E> {
+                    Ok(Keys(Vec::new()))
+                }
+            }
+            deserializer.deserialize_any(V)
+        }
+    }
+
+    /// The top level object: the keys of its last `required_features`.
+    struct Top(Vec<String>);
+
+    impl<'de> serde::Deserialize<'de> for Top {
+        fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            struct V;
+            impl<'de> Visitor<'de> for V {
+                type Value = Top;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("a JSON object")
+                }
+                fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Top, A::Error> {
+                    let mut keys = Vec::new();
+                    while let Some(key) = map.next_key::<String>()? {
+                        if key == "required_features" {
+                            keys = map.next_value::<Keys>()?.0;
+                        } else {
+                            map.next_value::<IgnoredAny>()?;
+                        }
+                    }
+                    Ok(Top(keys))
+                }
+            }
+            deserializer.deserialize_map(V)
+        }
+    }
+
+    serde_json::from_slice::<Top>(data).map_or_else(|_| Vec::new(), |top| top.0)
 }
 
 /// `'\n'.join(value)`.
@@ -511,6 +603,22 @@ mod tests {
         );
         let v: Value = serde_json::from_str("3").unwrap();
         assert!(join_lines(&v).is_err());
+    }
+
+    #[test]
+    fn required_features_object_keeps_file_order() {
+        let keys = |text: &str| required_feature_keys(text.as_bytes());
+        assert_eq!(
+            keys(r#"{"info": {}, "required_features": {"B": 1, "A": 2, "B": 3, "C": null}}"#),
+            ["B", "A", "C"]
+        );
+        // The last `required_features` wins.
+        assert_eq!(
+            keys(r#"{"required_features": {"X": 1}, "required_features": {"Z": 1, "Y": 2}}"#),
+            ["Z", "Y"]
+        );
+        assert!(keys(r#"{"required_features": ["A"]}"#).is_empty());
+        assert!(keys("[1]").is_empty());
     }
 
     #[test]
