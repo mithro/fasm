@@ -12,10 +12,9 @@ name = "fasm"
 path = "src/lib.rs"
 
 [dependencies]
-# Hash index of the idstring interner tables (HashTable storing only u32
-# entry numbers) and its hasher; see docs/rewrite/DESIGN-idstring.md.
+# Hasher of the idstring interner tables (fast on short keys, no
+# dependencies); see docs/rewrite/DESIGN-idstring.md.
 foldhash = "0.2"
-hashbrown = { version = "0.17", default-features = false, features = ["inline-more"] }
 
 [dev-dependencies]
 proptest = { version = "1.11", default-features = false, features = ["std"] }

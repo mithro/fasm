@@ -17,14 +17,21 @@
 //! [`Resolved`]: the interned pieces of a handle and every string
 //! operation on them, implemented without joining the pieces.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::fmt;
 
 use super::repr::LEVELS;
 
-/// Names up to this many bytes are joined on the stack by
-/// [`Resolved::with_str`].
-const STACK_BUFFER: usize = 256;
+/// Names up to this many bytes are joined in a per thread buffer by
+/// [`Resolved::with_str`]; longer ones in a new `String`.
+const MAX_BUFFERED: usize = 1024;
+
+thread_local! {
+    /// Reused buffer of [`Resolved::with_str`] (at most [`MAX_BUFFERED`]
+    /// bytes, so it never pins much memory).
+    static BUFFER: RefCell<String> = const { RefCell::new(String::new()) };
+}
 
 /// The resolved text of an [`IdString`](super::IdString): one to three
 /// interned pieces that, joined with `.`, form the string.
@@ -57,14 +64,20 @@ impl Resolved {
         &self.pieces[..self.count]
     }
 
-    /// The bytes of the string as a sequence of chunks (pieces and the
-    /// `.` separators between them).
-    fn chunks(&self) -> impl Iterator<Item = &'static [u8]> + '_ {
-        self.pieces()
-            .iter()
-            .enumerate()
-            .flat_map(|(i, piece)| [if i == 0 { "" } else { "." }, *piece])
-            .map(str::as_bytes)
+    /// The bytes of the string as a sequence of chunks (the pieces and
+    /// the `.` separators between them).
+    fn chunks(&self) -> Chunks {
+        let mut chunks = Chunks {
+            chunks: [&[]; MAX_CHUNKS],
+            count: 1,
+        };
+        chunks.chunks[0] = self.pieces[0].as_bytes();
+        for piece in &self.pieces[1..self.count] {
+            chunks.chunks[chunks.count] = b".";
+            chunks.chunks[chunks.count + 1] = piece.as_bytes();
+            chunks.count += 2;
+        }
+        chunks
     }
 
     /// Length of the string in bytes.
@@ -102,7 +115,8 @@ impl Resolved {
     /// false for `"A.B"` (partial component), `"A.BC."` and `"A.BC.D.E"`.
     pub fn starts_with_component(&self, prefix: &str) -> bool {
         let mut rest = prefix.as_bytes();
-        for chunk in self.chunks().filter(|chunk| !chunk.is_empty()) {
+        let chunks = self.chunks();
+        for chunk in chunks.as_slice().iter().filter(|chunk| !chunk.is_empty()) {
             if rest.is_empty() {
                 return chunk.first() == Some(&b'.');
             }
@@ -119,60 +133,84 @@ impl Resolved {
         rest.is_empty()
     }
 
-    /// Calls `f` with the string. No heap allocation happens when the
-    /// string is a single interned piece or at most 256 bytes long.
+    /// Calls `f` with the string.
+    ///
+    /// A string made of a single interned piece is passed directly. Other
+    /// strings of at most 1024 bytes are joined in a reused per thread
+    /// buffer, so no heap allocation happens in steady state; longer
+    /// strings, and calls nested inside `f`, join into a new `String`.
     pub fn with_str<R>(&self, f: impl FnOnce(&str) -> R) -> R {
         if let [single] = self.pieces() {
             return f(single);
         }
-        if self.len() <= STACK_BUFFER {
-            let mut buffer = [0u8; STACK_BUFFER];
-            let mut end = 0;
-            for chunk in self.chunks() {
-                buffer[end..end + chunk.len()].copy_from_slice(chunk);
-                end += chunk.len();
-            }
-            // Joining valid UTF-8 pieces with '.' is valid UTF-8, so this
-            // always succeeds; fall back to the allocating path otherwise.
-            if let Ok(text) = std::str::from_utf8(&buffer[..end]) {
-                return f(text);
+        let mut f = Some(f);
+        if self.len() <= MAX_BUFFERED {
+            let result = BUFFER.try_with(|cell| {
+                // Busy when `f` itself calls `with_str`.
+                let mut buffer = cell.try_borrow_mut().ok()?;
+                let f = f.take()?;
+                buffer.clear();
+                self.push_to(&mut buffer);
+                Some(f(&buffer))
+            });
+            if let Ok(Some(result)) = result {
+                return result;
             }
         }
-        f(&self.into_string())
+        match f {
+            Some(f) => f(&self.into_string()),
+            // `f` is only taken right before it is called and its result
+            // returned above.
+            None => unreachable!("with_str callback consumed without a result"),
+        }
     }
 
-    /// Returns the string as a newly allocated `String`.
-    pub fn into_string(self) -> String {
-        let mut out = String::with_capacity(self.len());
+    /// Appends the string to `out`.
+    fn push_to(&self, out: &mut String) {
         for (i, piece) in self.pieces().iter().enumerate() {
             if i > 0 {
                 out.push('.');
             }
             out.push_str(piece);
         }
+    }
+
+    /// Returns the string as a newly allocated `String`.
+    pub fn into_string(self) -> String {
+        let mut out = String::with_capacity(self.len());
+        self.push_to(&mut out);
         out
     }
 }
 
+/// Maximum number of chunks of a string: the pieces and the separators.
+const MAX_CHUNKS: usize = 2 * LEVELS - 1;
+
+/// A string as a short sequence of byte chunks.
+struct Chunks {
+    chunks: [&'static [u8]; MAX_CHUNKS],
+    count: usize,
+}
+
+impl Chunks {
+    fn as_slice(&self) -> &[&'static [u8]] {
+        &self.chunks[..self.count]
+    }
+}
+
 /// Lexicographic byte comparison of two strings given as chunk sequences.
-fn cmp_chunks<'a, 'b>(
-    mut a: impl Iterator<Item = &'a [u8]>,
-    mut b: impl Iterator<Item = &'b [u8]>,
-) -> Ordering {
+fn cmp_chunks(a: &[&[u8]], b: &[&[u8]]) -> Ordering {
+    let (mut next_a, mut next_b) = (0, 0);
     let mut chunk_a: &[u8] = &[];
     let mut chunk_b: &[u8] = &[];
     loop {
-        while chunk_a.is_empty() {
-            match a.next() {
-                Some(chunk) => chunk_a = chunk,
-                None => break,
-            }
+        while chunk_a.is_empty() && next_a < a.len() {
+            chunk_a = a[next_a];
+            next_a += 1;
         }
-        while chunk_b.is_empty() {
-            match b.next() {
-                Some(chunk) => chunk_b = chunk,
-                None => break,
-            }
+        while chunk_b.is_empty() && next_b < b.len() {
+            chunk_b = b[next_b];
+            next_b += 1;
         }
         match (chunk_a.is_empty(), chunk_b.is_empty()) {
             (true, true) => return Ordering::Equal,
@@ -193,7 +231,16 @@ fn cmp_chunks<'a, 'b>(
 
 impl fmt::Display for Resolved {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.with_str(|s| f.pad(s))
+        if f.width().is_some() || f.precision().is_some() {
+            return self.with_str(|s| f.pad(s));
+        }
+        for (i, piece) in self.pieces().iter().enumerate() {
+            if i > 0 {
+                f.write_str(".")?;
+            }
+            f.write_str(piece)?;
+        }
+        Ok(())
     }
 }
 
@@ -219,14 +266,14 @@ impl PartialOrd for Resolved {
 
 impl Ord for Resolved {
     fn cmp(&self, other: &Self) -> Ordering {
-        cmp_chunks(self.chunks(), other.chunks())
+        cmp_chunks(self.chunks().as_slice(), other.chunks().as_slice())
     }
 }
 
 impl PartialEq<str> for Resolved {
     fn eq(&self, other: &str) -> bool {
         self.len() == other.len()
-            && cmp_chunks(self.chunks(), std::iter::once(other.as_bytes())) == Ordering::Equal
+            && cmp_chunks(self.chunks().as_slice(), &[other.as_bytes()]) == Ordering::Equal
     }
 }
 
@@ -342,6 +389,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn with_str_nested_and_long() {
+        let a = view("A.B.C");
+        let b = view("D.E");
+        let joined = a.with_str(|x| b.with_str(|y| format!("{x}|{y}")));
+        assert_eq!(joined, "A.B.C|D.E");
+        let long = format!("{}.{}", "L".repeat(MAX_BUFFERED), "M");
+        assert_eq!(view(&long).with_str(str::to_owned), long);
+        assert_eq!(a.with_str(str::to_owned), "A.B.C");
+        assert_eq!(format!("{:.3}|{:6}|", a, b), "A.B|D.E   |");
     }
 
     #[test]

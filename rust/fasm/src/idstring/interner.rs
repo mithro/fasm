@@ -82,6 +82,49 @@ const fn min(a: u32, b: u32) -> u32 {
     }
 }
 
+/// Position of the first `.` in `bytes`.
+///
+/// Scans eight bytes at a time (a "has zero byte" test on the word XORed
+/// with dots); FASM components are typically 5 to 25 bytes long, where this
+/// beats both a byte loop and `memchr` call overhead.
+fn find_dot(bytes: &[u8]) -> Option<usize> {
+    const DOTS: u64 = u64::from_ne_bytes([b'.'; 8]);
+    const LOW: u64 = u64::from_ne_bytes([0x01; 8]);
+    const HIGH: u64 = u64::from_ne_bytes([0x80; 8]);
+    let (words, tail) = bytes.as_chunks::<8>();
+    for (i, word) in words.iter().enumerate() {
+        let x = u64::from_le_bytes(*word) ^ DOTS;
+        // The lowest set bit marks the first zero byte of `x` (borrows
+        // only produce false positives above it).
+        let found = x.wrapping_sub(LOW) & !x & HIGH;
+        if found != 0 {
+            return Some(i * 8 + (found.trailing_zeros() / 8) as usize);
+        }
+    }
+    let at = tail.iter().position(|&b| b == b'.')?;
+    Some(words.len() * 8 + at)
+}
+
+/// Splits `s` into its levels: the first two `.` separated components and
+/// the remainder. Returns the pieces and their number (1 to [`LEVELS`]).
+fn split_levels(s: &str) -> ([&str; LEVELS], usize) {
+    let mut pieces = [""; LEVELS];
+    let mut rest = s;
+    let mut count = 0;
+    while count < LEVELS - 1 {
+        let Some(dot) = find_dot(rest.as_bytes()) else {
+            break;
+        };
+        // `dot` is the index of an ASCII byte, hence a char boundary.
+        let (head, tail) = rest.split_at(dot);
+        pieces[count] = head;
+        rest = &tail[1..];
+        count += 1;
+    }
+    pieces[count] = rest;
+    (pieces, count + 1)
+}
+
 #[cold]
 #[inline(never)]
 fn foreign(id: IdString) -> ! {
@@ -136,9 +179,9 @@ impl Interner {
         let hasher = self.hasher();
         let mut pos0 = 0;
         let mut fields = [0u32; LEVELS - 1];
-        for (level, piece) in s.splitn(LEVELS, '.').enumerate() {
-            let table = &self.levels[level];
-            let Some(pos) = table.intern(hasher.hash_one(piece), piece, hasher) else {
+        let (pieces, count) = split_levels(s);
+        for (level, (table, &piece)) in self.levels.iter().zip(&pieces[..count]).enumerate() {
+            let Some(pos) = table.intern(hasher.hash_one(piece), piece) else {
                 // `piece` is not in the table and the table is full, which
                 // can never change: `s` is represented in the overflow table.
                 return self.intern_overflow(s);
@@ -155,7 +198,7 @@ impl Interner {
     #[cold]
     fn intern_overflow(&self, s: &str) -> IdString {
         let hasher = self.hasher();
-        match self.overflow.intern(hasher.hash_one(s), s, hasher) {
+        match self.overflow.intern(hasher.hash_one(s), s) {
             Some(pos) => IdString::from_raw(encode_overflow(pos)),
             None => panic!("idstring overflow table exhausted ({OVERFLOW_LIMIT} entries)"),
         }
@@ -172,8 +215,9 @@ impl Interner {
         let hasher = self.hasher();
         let mut pos0 = 0;
         let mut fields = [0u32; LEVELS - 1];
-        for (level, piece) in s.splitn(LEVELS, '.').enumerate() {
-            let Some(pos) = self.levels[level].find(hasher.hash_one(piece), piece) else {
+        let (pieces, count) = split_levels(s);
+        for (level, (table, &piece)) in self.levels.iter().zip(&pieces[..count]).enumerate() {
+            let Some(pos) = table.find(hasher.hash_one(piece), piece) else {
                 // Some component is unknown: `s` can only be known as an
                 // overflowed string.
                 let pos = self.overflow.find(hasher.hash_one(s), s)?;
@@ -188,16 +232,24 @@ impl Interner {
         Some(IdString::from_raw(encode_levels(pos0, fields)))
     }
 
+    /// The text of level `level` of a hierarchical handle (the level must
+    /// be present).
+    fn level_text(&self, id: IdString, fields: &[u32; LEVELS], level: usize) -> &'static str {
+        self.levels[level]
+            .text(fields[level].wrapping_sub(1))
+            .unwrap_or_else(|| foreign(id))
+    }
+
     /// Resolves the levels `from..` of a hierarchical handle (the first of
     /// them must be present).
-    fn resolve_levels(&self, id: IdString, fields: [u32; LEVELS], from: usize) -> Resolved {
+    fn resolve_levels(&self, id: IdString, fields: &[u32; LEVELS], from: usize) -> Resolved {
         let mut pieces = [""; LEVELS];
         let mut count = 0;
-        for (table, &field) in self.levels.iter().zip(&fields).skip(from) {
-            if field == 0 {
+        for level in from..LEVELS {
+            if fields[level] == 0 {
                 break;
             }
-            pieces[count] = table.text(field - 1).unwrap_or_else(|| foreign(id));
+            pieces[count] = self.level_text(id, fields, level);
             count += 1;
         }
         Resolved::from_pieces(pieces, count)
@@ -211,7 +263,7 @@ impl Interner {
     /// entry that does not exist.
     pub fn resolved(&self, id: IdString) -> Resolved {
         match decode(id.raw()) {
-            Repr::Levels(fields) => self.resolve_levels(id, fields, 0),
+            Repr::Levels(fields) => self.resolve_levels(id, &fields, 0),
             Repr::Overflow(pos) => {
                 let text = self.overflow.text(pos).unwrap_or_else(|| foreign(id));
                 Resolved::from_pieces([text, "", ""], 1)
@@ -261,9 +313,18 @@ impl Interner {
                 if y[level] == 0 {
                     return Ordering::Greater;
                 }
+                // The two texts of `level` differ. Unless one is a prefix of
+                // the other, they decide the order on their own.
+                let (text_a, text_b) =
+                    (self.level_text(a, &x, level), self.level_text(b, &y, level));
+                let common = text_a.len().min(text_b.len());
+                let order = text_a.as_bytes()[..common].cmp(&text_b.as_bytes()[..common]);
+                if order != Ordering::Equal {
+                    return order;
+                }
                 return self
-                    .resolve_levels(a, x, level)
-                    .cmp(&self.resolve_levels(b, y, level));
+                    .resolve_levels(a, &x, level)
+                    .cmp(&self.resolve_levels(b, &y, level));
             }
         }
         self.resolved(a).cmp(&self.resolved(b))
@@ -302,5 +363,60 @@ impl fmt::Debug for Interner {
             .field("level_entries", &stats.level_entries)
             .field("overflow_entries", &stats.overflow_entries)
             .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn find_dot_matches_position() {
+        let long = format!("{}.{}", "x".repeat(37), "y".repeat(9));
+        for s in [
+            "",
+            ".",
+            "a",
+            "a.",
+            ".a",
+            "abcdefg.",
+            "abcdefgh.",
+            "abcdefghi.",
+            "ü.ß",
+            &long,
+        ] {
+            assert_eq!(find_dot(s.as_bytes()), s.find('.'), "{s:?}");
+        }
+        // Bytes whose XOR with '.' borrows (0x2f, 0xae) must not confuse
+        // the word scan.
+        let tricky = [0x2f, 0x2f, 0xae, 0x2d, 0x2e, 0x2f, 0x2e, 0x00, 0x2f, 0x2e];
+        for start in 0..tricky.len() {
+            let expected = tricky[start..].iter().position(|&b| b == b'.');
+            assert_eq!(find_dot(&tricky[start..]), expected);
+        }
+    }
+
+    #[test]
+    fn split_levels_matches_splitn() {
+        for s in [
+            "",
+            ".",
+            "..",
+            "...",
+            "A",
+            "A.B",
+            "A.B.C",
+            "A.B.C.D",
+            "A..B",
+            ".A.",
+            "ü.ß.漢.字",
+        ] {
+            let (pieces, count) = split_levels(s);
+            assert_eq!(
+                pieces[..count],
+                s.splitn(LEVELS, '.').collect::<Vec<_>>()[..],
+                "{s:?}"
+            );
+        }
     }
 }

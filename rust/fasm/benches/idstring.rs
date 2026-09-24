@@ -25,7 +25,7 @@
 //! known names (hit), lookups, resolving and sorting, plus the heap bytes the
 //! interner uses per distinct name and per distinct component.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -157,6 +157,15 @@ fn main() {
         .all(|(&id, s)| interner.resolved(id) == s.as_str());
     assert!(equal, "IdString order differs from str order");
 
+    // Baseline: a whole string `HashMap<String, u32>` (std hasher), the
+    // obvious alternative to per-level interning.
+    let map: HashMap<String, u32> = names.iter().cloned().zip(0..).collect();
+    let map_hit = best_of(5, n, || {
+        for s in &names {
+            black_box(map.get(black_box(s.as_str())));
+        }
+    });
+
     // Concurrent hits: THREADS threads intern all names.
     let start = Instant::now();
     std::thread::scope(|scope| {
@@ -187,6 +196,7 @@ fn main() {
     println!("  resolve (to String)      {resolve:8.1} ns/op");
     println!("  sort IdString            {sort_ids:8.1} ns/element");
     println!("  sort String              {sort_strings:8.1} ns/element");
+    println!("  HashMap<String,u32> get  {map_hit:8.1} ns/op (baseline)");
     println!(
         "  interner heap            {:8} bytes = {:.1} bytes/distinct name, {:.1} bytes/distinct table entry",
         stats.heap_bytes,

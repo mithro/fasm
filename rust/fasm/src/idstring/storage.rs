@@ -21,17 +21,14 @@
 //! * [`Slots`]: an append only, segmented array of `&'static str` whose
 //!   entries are written once and read without taking any lock.
 //! * [`Table`]: one interning table (one level, or the overflow table):
-//!   a sharded `text -> entry number` hash index on top of [`Slots`].
+//!   a sharded, lock free readable `text -> entry number` hash index on
+//!   top of [`Slots`].
 //!
-//! Everything here is safe code: publication uses `OnceLock` and the
-//! arena carves leaked chunks with `split_at_mut`.
+//! Everything here is safe code: publication uses `OnceLock` and atomics,
+//! and the arena carves leaked chunks with `split_at_mut`.
 
-use std::hash::BuildHasher;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use hashbrown::hash_table::Entry;
-use hashbrown::HashTable;
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// Size of the first arena chunk; later chunks double up to [`MAX_CHUNK`].
 const MIN_CHUNK: usize = 1024;
@@ -174,29 +171,134 @@ impl Slots {
     }
 }
 
-/// Number of lock shards per [`Table`].
+/// Number of shards per [`Table`] (each with its own index and writer
+/// lock).
 const SHARDS: usize = 16;
+/// log2 of the number of buckets of the first index generation.
+const MIN_BUCKETS_BITS: u32 = 4;
+/// Number of index generations; the last one has `2^33` buckets, more than
+/// `u32::MAX` entries need at the maximum load factor of 3/4.
+const GENERATIONS: usize = 30;
 
-/// The part of a [`Table`] protected by one shard lock.
-struct Shard {
-    /// Entry numbers, hashed and compared by their text in [`Slots`].
-    map: HashTable<u32>,
+/// Number of buckets of index generation `generation`, if addressable.
+fn bucket_count(generation: usize) -> Option<usize> {
+    let bits = MIN_BUCKETS_BITS.checked_add(u32::try_from(generation).ok()?)?;
+    1usize.checked_shl(bits)
+}
+
+/// Result of probing an index for a string.
+enum Probe {
+    /// The string is entry `pos`.
+    Found(u32),
+    /// The string is not in the index.
+    Vacant,
+}
+
+/// Mutable state of a shard, protected by its writer lock.
+struct Writer {
+    /// Number of entries in this shard's index.
+    len: usize,
     /// Storage for the text of the entries inserted through this shard.
     arena: Arena,
+}
+
+/// One shard of a [`Table`]: a lock free readable hash index plus the
+/// writer state.
+///
+/// The index is an open addressing (linear probing) array of `AtomicU64`
+/// buckets, each `0` (empty) or `tag << 32 | (entry number + 1)` where
+/// `tag` is the upper half of the hash. When it gets 3/4 full, the writer
+/// builds the next, twice as large, *generation* and publishes it by
+/// storing its number in `current`; older generations are kept (readers may
+/// still be probing them) until the table is dropped, which at most doubles
+/// the memory of the index.
+///
+/// Readers load `current` and probe without any lock or atomic read modify
+/// write. A reader probing an old generation may miss a very recent entry;
+/// callers that must not miss one ([`Table::intern`]) repeat the probe
+/// under the writer lock.
+struct Shard {
+    generations: [OnceLock<Box<[AtomicU64]>>; GENERATIONS],
+    current: AtomicUsize,
+    writer: Mutex<Writer>,
+}
+
+impl Shard {
+    const fn new() -> Self {
+        Shard {
+            generations: [const { OnceLock::new() }; GENERATIONS],
+            current: AtomicUsize::new(0),
+            writer: Mutex::new(Writer {
+                len: 0,
+                arena: Arena::new(),
+            }),
+        }
+    }
+
+    /// The current index generation (`None` before the first insertion).
+    fn buckets(&self) -> Option<&[AtomicU64]> {
+        let current = self.current.load(Ordering::Acquire);
+        self.generations.get(current)?.get().map(|b| &**b)
+    }
+
+    /// Allocates generation `generation` if it is addressable.
+    fn allocate(&self, generation: usize) -> Option<&[AtomicU64]> {
+        let size = bucket_count(generation)?;
+        let cell = self.generations.get(generation)?;
+        Some(cell.get_or_init(|| (0..size).map(|_| AtomicU64::new(0)).collect()))
+    }
+
+    /// Returns an index with room for one more entry, growing it if needed
+    /// (called with the writer lock held). `None` if it cannot grow.
+    fn room_for_one_more(&self, len: usize) -> Option<&[AtomicU64]> {
+        let current = self.current.load(Ordering::Relaxed);
+        let Some(buckets) = self.buckets() else {
+            return self.allocate(current);
+        };
+        if (len + 1) * 4 <= buckets.len() * 3 {
+            return Some(buckets);
+        }
+        let Some(next) = self.allocate(current + 1) else {
+            // Cannot grow any more: keep at least one empty bucket so that
+            // probes terminate.
+            return (len + 1 < buckets.len()).then_some(buckets);
+        };
+        for bucket in buckets {
+            let entry = bucket.load(Ordering::Relaxed);
+            if entry != 0 {
+                next[vacant_bucket(next, (entry >> 32) as u32)].store(entry, Ordering::Relaxed);
+            }
+        }
+        // Publishes the fully built generation to readers.
+        self.current.store(current + 1, Ordering::Release);
+        Some(next)
+    }
+}
+
+/// First empty bucket of the probe sequence of `tag` (the index must have
+/// an empty bucket).
+fn vacant_bucket(buckets: &[AtomicU64], tag: u32) -> usize {
+    let mask = buckets.len() - 1;
+    let mut i = tag as usize & mask;
+    while buckets[i].load(Ordering::Relaxed) != 0 {
+        i = (i + 1) & mask;
+    }
+    i
 }
 
 /// One interning table: dense entry numbers `0..limit` for distinct
 /// strings.
 ///
-/// Lookups take the read lock of one shard (chosen from the hash);
-/// insertions take its write lock. Entry numbers come from a shared atomic
-/// counter so they stay dense across shards. Reading the text of an entry
-/// ([`Table::text`]) takes no lock.
+/// Lookups ([`Table::find`], and [`Table::intern`] for known strings) take
+/// no lock. Insertions take the writer lock of one shard (chosen from the
+/// hash). Entry numbers come from a shared atomic counter so they stay
+/// dense across shards. Reading the text of an entry ([`Table::text`])
+/// takes no lock either.
 pub(crate) struct Table {
     limit: u32,
     next: AtomicU32,
     slots: Slots,
-    shards: [RwLock<Shard>; SHARDS],
+    shards: [Shard; SHARDS],
 }
 
 impl Table {
@@ -206,12 +308,7 @@ impl Table {
             limit,
             next: AtomicU32::new(0),
             slots: Slots::new(),
-            shards: [const {
-                RwLock::new(Shard {
-                    map: HashTable::new(),
-                    arena: Arena::new(),
-                })
-            }; SHARDS],
+            shards: [const { Shard::new() }; SHARDS],
         }
     }
 
@@ -232,64 +329,78 @@ impl Table {
             .shards
             .iter()
             .map(|shard| {
-                let shard = shard.read().unwrap_or_else(PoisonError::into_inner);
-                shard.map.allocation_size() + shard.arena.allocated()
+                let index: usize = shard
+                    .generations
+                    .iter()
+                    .filter_map(OnceLock::get)
+                    .map(|buckets| buckets.len() * size_of::<AtomicU64>())
+                    .sum();
+                let writer = shard.writer.lock().unwrap_or_else(PoisonError::into_inner);
+                index + writer.arena.allocated()
             })
             .sum();
         self.slots.allocated() + shards
     }
 
-    fn shard_index(hash: u64) -> usize {
-        // Bits 40..44: hashbrown uses the low bits for the bucket and the
-        // top 7 bits for its control bytes, so these are independent.
-        ((hash >> 40) as usize) & (SHARDS - 1)
+    fn shard(&self, hash: u64) -> &Shard {
+        // The low bits pick the shard, the high half is the bucket tag.
+        &self.shards[(hash as usize) & (SHARDS - 1)]
     }
 
-    fn read(&self, hash: u64) -> RwLockReadGuard<'_, Shard> {
-        self.shards[Self::shard_index(hash)]
-            .read()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn write(&self, hash: u64) -> RwLockWriteGuard<'_, Shard> {
-        self.shards[Self::shard_index(hash)]
-            .write()
-            .unwrap_or_else(PoisonError::into_inner)
+    /// Probes `buckets` for `s` with tag `tag`.
+    fn probe(&self, buckets: &[AtomicU64], tag: u32, s: &str) -> Probe {
+        let mask = buckets.len() - 1;
+        let mut i = tag as usize & mask;
+        loop {
+            let entry = buckets[i].load(Ordering::Acquire);
+            if entry == 0 {
+                return Probe::Vacant;
+            }
+            if (entry >> 32) as u32 == tag {
+                let pos = (entry as u32).wrapping_sub(1);
+                if self.slots.get(pos) == Some(s) {
+                    return Probe::Found(pos);
+                }
+            }
+            i = (i + 1) & mask;
+        }
     }
 
     /// Looks `s` (whose hash under the interner's hasher is `hash`) up
-    /// without inserting it.
+    /// without inserting it. Takes no lock.
     pub(crate) fn find(&self, hash: u64, s: &str) -> Option<u32> {
-        let shard = self.read(hash);
-        shard
-            .map
-            .find(hash, |&pos| self.slots.get(pos) == Some(s))
-            .copied()
+        let buckets = self.shard(hash).buckets()?;
+        match self.probe(buckets, (hash >> 32) as u32, s) {
+            Probe::Found(pos) => Some(pos),
+            Probe::Vacant => None,
+        }
     }
 
     /// Returns the entry number of `s`, inserting it if needed. Returns
     /// `None` only when `s` is not present and the table is full; since a
     /// full table stays full, the answer for `s` never changes afterwards.
-    pub(crate) fn intern(&self, hash: u64, s: &str, hasher: &impl BuildHasher) -> Option<u32> {
+    pub(crate) fn intern(&self, hash: u64, s: &str) -> Option<u32> {
         if let Some(pos) = self.find(hash, s) {
             return Some(pos);
         }
-        let mut guard = self.write(hash);
-        let Shard { map, arena } = &mut *guard;
-        let entry = map.entry(
-            hash,
-            |&pos| self.slots.get(pos) == Some(s),
-            |&pos| self.slots.get(pos).map_or(0, |text| hasher.hash_one(text)),
-        );
-        match entry {
-            Entry::Occupied(occupied) => Some(*occupied.get()),
-            Entry::Vacant(vacant) => {
-                let pos = self.reserve()?;
-                self.slots.set(pos, arena.alloc(s));
-                vacant.insert(pos);
-                Some(pos)
+        let tag = (hash >> 32) as u32;
+        let shard = self.shard(hash);
+        let mut writer = shard.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        // Only writers holding this lock change the index, so this probe of
+        // the current generation is authoritative.
+        if let Some(buckets) = shard.buckets() {
+            if let Probe::Found(pos) = self.probe(buckets, tag, s) {
+                return Some(pos);
             }
         }
+        let buckets = shard.room_for_one_more(writer.len)?;
+        let pos = self.reserve()?;
+        self.slots.set(pos, writer.arena.alloc(s));
+        let entry = (u64::from(tag) << 32) | u64::from(pos + 1);
+        // Publishes the entry (its slot was set above) to readers.
+        buckets[vacant_bucket(buckets, tag)].store(entry, Ordering::Release);
+        writer.len += 1;
+        Some(pos)
     }
 
     /// Reserves the next entry number, or `None` if the table is full.
@@ -307,6 +418,7 @@ impl Table {
 mod tests {
     use super::*;
     use foldhash::fast::RandomState;
+    use std::hash::BuildHasher;
 
     #[test]
     fn locate_covers_positions_densely() {
@@ -363,7 +475,7 @@ mod tests {
     fn table_interns_and_respects_limit() {
         let hasher = RandomState::default();
         let table = Table::new(3);
-        let intern = |s: &str| table.intern(hasher.hash_one(s), s, &hasher);
+        let intern = |s: &str| table.intern(hasher.hash_one(s), s);
         assert_eq!(intern("a"), Some(0));
         assert_eq!(intern("b"), Some(1));
         assert_eq!(intern("a"), Some(0));
@@ -385,7 +497,7 @@ mod tests {
         let table = Table::new(u32::MAX);
         let names: Vec<String> = (0..50_000).map(|i| format!("INT_L_X{i}Y{i}")).collect();
         for (i, name) in names.iter().enumerate() {
-            let pos = table.intern(hasher.hash_one(name.as_str()), name, &hasher);
+            let pos = table.intern(hasher.hash_one(name.as_str()), name);
             assert_eq!(pos, Some(i as u32));
         }
         for (i, name) in names.iter().enumerate() {
