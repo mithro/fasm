@@ -10,6 +10,14 @@ and `docs/rewrite/TASKS.md` (T1.5) for how this fits the rewrite, and
 that `tools/difftest.py`'s classifier checks
 `tests/corpus/synthetic/edge-cases/` files against.
 
+Every `*.fasm` file here (plus `examples/*.fasm`) also seeds the T1.6
+`cargo-fuzz` targets under `rust/fasm/fuzz/` (`make fuzz`, or
+`rust/fasm/fuzz/seed-corpus.sh`; see `rust/fasm/fuzz/README.md`). A
+minimised regression file for a bug a fuzz run finds belongs under a new
+`synthetic/regressions/` directory (added via `tools/gen-corpus.py`,
+following the existing `edge-cases`/`invalid` patterns), so it is picked
+up by both `tools/difftest.py` and the next fuzz run.
+
 Run it with `make difftest` (builds the `fasm-dump` helper binary first) or
 directly: `python3 tools/difftest.py --jobs 4`. `tests/difftest/test_difftest.py`
 is a pytest wrapper that does the same and asserts zero unexplained
