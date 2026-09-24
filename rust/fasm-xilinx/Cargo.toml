@@ -1,0 +1,18 @@
+[package]
+name = "fasm-xilinx"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "prjxray/prjuray database loader, FASM -> frames assembler and frames -> bitstream writer for Xilinx Series7 / UltraScale / UltraScale+ parts."
+
+[lib]
+name = "fasm_xilinx"
+path = "src/lib.rs"
+
+[dependencies]
+fasm = { path = "../fasm" }
+
+[lints]
+workspace = true

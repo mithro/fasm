@@ -22,6 +22,10 @@
 resolver = "2"
 members = [
     "rust/fasm",
+    "rust/fasm-cli",
+    "rust/fasm-xilinx",
+    "rust/fasm-capi",
+    "rust/fasm-python",
 ]
 
 [workspace.package]
