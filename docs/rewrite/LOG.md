@@ -158,3 +158,14 @@ what happened, branch/commit references, open issues.
   address truncation; Rust rejects `a[0:1] = 0` which both originals
   accept; BOM skipped like ANTLR). Sent for Opus review with an adversarial
   differential corpus.
+* T7.1 done: review found `--parts DEVICE` (space form) was documented but
+  not accepted, and `--force --force` was a no-op; fixed in 586d1ca (while/
+  shift parser accepting both forms, FORCE counter). Merged with --no-ff.
+  Toolchain installed in the main tree (110 s with cached downloads, 4.7
+  GiB), counter flow reproduces the corpus FASM sha256 exactly, 4 e2e
+  smoke tests pass.
+* Housekeeping: removed the worktrees of all merged agent branches
+  (branches kept); disk went from 6.7 GB to 14 GB free. Worktree disk use
+  is a real constraint on this machine: toolchains and venvs should be
+  built in the main tree, not per worktree, wherever possible.
+* T1.4 (output module) started.

@@ -48,7 +48,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       grammar with exact ANTLR/textX compatible acceptance and error
       behaviour; streaming and whole-file APIs; tests from
       `examples/*.fasm` and a hand written edge case table (after T1.2).
-- [ ] T1.4 `output` module: string formatting, canonicalisation,
+- [~] T1.4 `output` module: string formatting, canonicalisation,
       `merge_features`, `merge_and_sort` (MergeModel) with tests ported from
       Python behaviour (after T1.2).
 - [ ] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test
@@ -131,7 +131,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 7: Toolchain end-to-end compatibility
 
-- [r] T7.1 `tools/e2e/setup-openxc7.sh`: fetch openXC7 snap (unsquashfs) or
+- [x] T7.1 `tools/e2e/setup-openxc7.sh`: fetch openXC7 snap (unsquashfs) or
       build nextpnr-xilinx + chipdb for the needed parts; yosys from OSS CAD
       Suite; document versions.
 - [ ] T7.2 fpgas.online-test-designs: build every Xilinx design (LiteX +
