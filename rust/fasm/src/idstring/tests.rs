@@ -396,6 +396,78 @@ fn type_properties() {
 }
 
 #[test]
+fn display_honours_width_fill_alignment_and_precision() {
+    let long = format!("{}.{}.{}", "A".repeat(700), "B".repeat(700), "C");
+    let strings = [
+        "",
+        "A",
+        "A.B",
+        "CLBLL_L_X12Y124.SLICEL_X0.BLUT.INIT",
+        "ü.漢字.🙂.x",
+        long.as_str(),
+    ];
+    // A private interner with tiny tables: some of these are overflowed.
+    let interner = Interner::with_level_limit(1);
+    for s in strings {
+        let id = IdString::new(s);
+        let resolved = interner.resolved(interner.intern(s));
+        let cases = [
+            (s.to_owned(), format!("{id}"), format!("{resolved}")),
+            (
+                format!("{s:40}"),
+                format!("{id:40}"),
+                format!("{resolved:40}"),
+            ),
+            (
+                format!("{s:<40}"),
+                format!("{id:<40}"),
+                format!("{resolved:<40}"),
+            ),
+            (
+                format!("{s:>40}"),
+                format!("{id:>40}"),
+                format!("{resolved:>40}"),
+            ),
+            (
+                format!("{s:^41}"),
+                format!("{id:^41}"),
+                format!("{resolved:^41}"),
+            ),
+            (
+                format!("{s:*^9}"),
+                format!("{id:*^9}"),
+                format!("{resolved:*^9}"),
+            ),
+            (
+                format!("{s:.5}"),
+                format!("{id:.5}"),
+                format!("{resolved:.5}"),
+            ),
+            (
+                format!("{s:-<12.3}"),
+                format!("{id:-<12.3}"),
+                format!("{resolved:-<12.3}"),
+            ),
+            (
+                format!("{s:2000}|"),
+                format!("{id:2000}|"),
+                format!("{resolved:2000}|"),
+            ),
+            (
+                format!("{s:?}"),
+                format!("{resolved:?}"),
+                format!("{resolved:?}"),
+            ),
+        ];
+        for (expected, global, private) in cases {
+            assert_eq!(global, expected, "{s:?}");
+            assert_eq!(private, expected, "{s:?}");
+        }
+        assert_eq!(format!("{id:?}"), format!("IdString({s:?})"));
+    }
+}
+
+#[test]
 #[should_panic(expected = "was not created by this interner")]
 fn foreign_handle_panics() {
     let big = Interner::new();
