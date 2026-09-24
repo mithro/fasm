@@ -519,3 +519,85 @@ fn pudc_b_without_pin() {
         golden_frm("lut_int.dense.txt")
     );
 }
+
+/// Random lines (valid and unknown tiles and features, random ranges and
+/// values, including `SetFasmFeature`s that break the model invariants)
+/// never panic, whatever the outcome.
+#[test]
+fn random_lines_do_not_panic() {
+    use fasm::idstring::IdString;
+    use fasm::{FasmLine, FeatureValue, SetFasmFeature};
+
+    let db = open();
+    let mut state = 0x2545_F491_4F6C_DD1D_u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let tiles = [
+        "CLBLM_L_X10Y102",
+        "INT_L_X10Y102",
+        "LIOB33_SING_X0Y0",
+        "LIOB33_X0Y1",
+        "RIOB33_X43Y3",
+        "HCLK_IOI3_X1Y26",
+        "HCLK_L_X31Y130",
+        "NOPE_X0Y0",
+        "",
+    ];
+    let features = [
+        "SLICEM_X0.ALUT.INIT",
+        "SLICEM_X0.AFFMUX.AX",
+        "SLICEM_X0.AFFMUX.CY",
+        "IMUX_L1.EE2END0",
+        "IOB_Y0.SOMETHING.STEPDOWN",
+        "IOB_Y1.SOMETHING.IN",
+        "STEPDOWN",
+        "ENABLE_BUFFER.HCLK_CK_BUFHCLK8",
+        "NOPE",
+        "",
+    ];
+    for _ in 0..300 {
+        let mut assembler = FasmAssembler::new(&db).unwrap();
+        let mut missing = Vec::new();
+        let mut result = Ok(());
+        for _ in 0..(next() % 8) {
+            let tile = tiles[(next() % tiles.len() as u64) as usize];
+            let feature = features[(next() % features.len() as u64) as usize];
+            let name = if feature.is_empty() {
+                tile.to_owned()
+            } else {
+                format!("{tile}.{feature}")
+            };
+            if name.is_empty() {
+                continue;
+            }
+            let start = (next() % 3 != 0).then(|| (next() % 70) as u32);
+            let end = (next() % 2 == 0).then(|| (next() % 80) as u32);
+            let value = FeatureValue::from_u64(next() % 5);
+            let set_feature =
+                SetFasmFeature::new_unchecked(IdString::new(&name), start, end, value, None);
+            let line = FasmLine {
+                set_feature: Some(set_feature),
+                annotations: None,
+                comment: None,
+            };
+            result = assembler.add_fasm_line(line, &mut missing);
+            if result.is_err() {
+                break;
+            }
+        }
+        match result {
+            Ok(()) => {
+                for sparse in [false, true] {
+                    if let Ok(frames) = assembler.get_frames(sparse) {
+                        assert!(frames.iter().all(|(_, w)| w.len() == 101));
+                    }
+                }
+            }
+            Err(e) => assert!(!e.traceback_line().is_empty()),
+        }
+    }
+}

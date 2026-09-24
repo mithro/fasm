@@ -578,6 +578,29 @@ mod tests {
     }
 
     #[test]
+    fn frm_reader_fuzz() {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let alphabet = b"0x1aF, \n\r#-+g";
+        for _ in 0..5000 {
+            let len = (next() % 60) as usize;
+            let text: Vec<u8> = (0..len)
+                .map(|_| alphabet[(next() % alphabet.len() as u64) as usize])
+                .collect();
+            for words in [0, 1, 2, 3] {
+                if let Ok(frames) = Frames::read_frm(&text, words, &mut |_| {}) {
+                    assert!(frames.iter().all(|(_, w)| w.len() == words));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn diff_reports_differences() {
         let mut a = Frames::zeroed(2, [1, 2, 4]);
         let mut b = Frames::zeroed(2, [2, 3, 4]);
