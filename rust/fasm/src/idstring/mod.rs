@@ -17,6 +17,13 @@
 //! Interned, 8 byte handles for hierarchical dotted strings such as FASM
 //! feature names (see `docs/rewrite/DESIGN-idstring.md`).
 
-// The storage layer is used by the interner added in a follow up change.
+// The storage layer and the handle layout are used by the interner added
+// in a follow up change.
+#[allow(dead_code)]
+mod repr;
+#[allow(dead_code)]
+mod resolved;
 #[allow(dead_code)]
 mod storage;
+
+pub use resolved::Resolved;
