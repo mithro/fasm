@@ -32,3 +32,7 @@ what happened, branch/commit references, open issues.
     parse errors, and prints an extra blank line after the output (from
     `print`). The Rust CLI must reproduce this exactly.
 * T0.2: wrote PLAN.md, WORKFLOW.md, TASKS.md, LOG.md, AGENTS.md.
+* Push to origin currently fails with HTTP 403 (Claude GitHub App not
+  authorised for mithro/fasm in this session). Work continues locally;
+  pushes are retried after each merge.
+* T0.3 and T0.4 started (sub-agents in isolated worktrees).

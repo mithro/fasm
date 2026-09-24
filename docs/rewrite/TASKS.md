@@ -11,13 +11,13 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T0.1 Sync fork `master` with upstream chipsalliance/fasm and merge into
       the working branch.
 - [x] T0.2 Write PLAN.md, WORKFLOW.md, TASKS.md, LOG.md, root AGENTS.md.
-- [ ] T0.3 Cargo workspace skeleton: root `Cargo.toml`, empty crates `fasm`,
+- [~] T0.3 Cargo workspace skeleton: root `Cargo.toml`, empty crates `fasm`,
       `fasm-cli`, `fasm-xilinx`, `fasm-capi`, `fasm-python` with
       `cargo build --workspace` and `cargo test --workspace` passing;
       `rust-toolchain.toml`; `.gitignore` for `target/`; `deny.toml`/
       `clippy` config; `Makefile` targets `rust-build`, `rust-test`,
       `rust-lint`.
-- [ ] T0.4 Oracle setup: `tests/oracle/setup.sh` creates a venv with the
+- [~] T0.4 Oracle setup: `tests/oracle/setup.sh` creates a venv with the
       original Python package (textX parser always, ANTLR parser when the
       C++ build succeeds) from the git history (`git worktree` of the
       pre-rewrite commit) so it can be used as a golden reference.
