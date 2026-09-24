@@ -141,6 +141,35 @@ check-python-scripts:
 
 .PHONY: check-python-scripts
 
+# Rust workspace (rust/, see docs/rewrite/PLAN.md).
+# ------------------------------------------------------------------------
+
+# Build every crate in the workspace.
+rust-build:
+	cargo build --workspace
+
+.PHONY: rust-build
+
+# Run every crate's tests.
+rust-test:
+	cargo test --workspace
+
+.PHONY: rust-test
+
+# Check formatting and lint with clippy, denying warnings.
+rust-lint:
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets -- -D warnings
+
+.PHONY: rust-lint
+
+# Auto-format the Rust workspace.
+rust-fmt:
+	cargo fmt --all
+
+.PHONY: rust-fmt
+
+
 # Upload to PyPI servers
 # ------------------------------------------------------------------------
 
