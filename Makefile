@@ -181,6 +181,17 @@ rust-check: rust-lint rust-doc rust-test
 
 .PHONY: rust-check
 
+# Differential test: Rust `fasm` crate vs. the original Python `fasm`
+# package (the oracle), over tests/corpus/ (T1.5, tools/difftest.py).
+# Requires tests/oracle/setup.sh to have been run once; DIFFTEST_ARGS can
+# add e.g. `--jobs N` or `--filter GLOB`.
+difftest: DIFFTEST_ARGS ?=
+difftest:
+	cargo build --release --example dump -p fasm
+	python3 tools/difftest.py $(DIFFTEST_ARGS)
+
+.PHONY: difftest
+
 
 # Upload to PyPI servers
 # ------------------------------------------------------------------------
