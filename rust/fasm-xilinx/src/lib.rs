@@ -15,18 +15,24 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Xilinx bitstream support for FASM (work in progress, task T5.2):
-//! frame addresses and the segbits / pseudo PIP tables of prjxray-db and
-//! prjuray-db. See `docs/rewrite/DESIGN-xilinx-db.md`.
+//! frame addresses, the segbits / pseudo PIP tables, tile grid and part
+//! files of prjxray-db and prjuray-db. See `docs/rewrite/DESIGN-xilinx-db.md`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod arch;
 mod error;
+mod json;
+mod part;
 mod segbits;
+mod tilegrid;
+mod yaml;
 
 pub use arch::{
     Architecture, BitPosition, BitPositionError, BlockType, FrameAddress, FrameAddressFields,
 };
 pub use error::DbError;
+pub use part::{read_package_pins, BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};
 pub use segbits::{PpipType, SegBit, SegbitsEntry, SegbitsMatch, TileSegbits};
+pub use tilegrid::{BitAlias, BitsBlock, ClockRegion, Grid, Tile};
