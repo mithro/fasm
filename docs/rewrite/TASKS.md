@@ -105,10 +105,10 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [ ] T5.3 Binary cache for a loaded part database (versioned, content
       hashed, memory mappable) + `fasm-db-cache` maintenance subcommand
       (after T5.2).
-- [~] T5.4 Frame assembler: `FasmAssembler` (feature lookup, multi bit
+- [r] T5.4 Frame assembler: `FasmAssembler` (feature lookup, multi bit
       features, `!` cleared bits, pseudo pips, unknown feature errors, sparse
       vs full frames, ROI, required features, PUDC_B, STEPDOWN) (after T5.2).
-- [ ] T5.5 `.frm` writer/reader and `fasm2frames` compatible CLI; tests vs
+- [r] T5.5 `.frm` writer/reader and `fasm2frames` compatible CLI; tests vs
       reference `.frm` files from f4pga-xc-fasm test data (after T5.4).
 - [ ] T5.6 Series7 bitstream writer (`xc7frames2bit` compatible: header,
       packets, CRC, part idcode) + reader; `xc7frames2bit` compatible CLI;

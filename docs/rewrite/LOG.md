@@ -404,3 +404,9 @@ what happened, branch/commit references, open issues.
   PUDC_B); xilinx-difftest 69/69 identical; 1M line xc7a200t assembly 0.9 s
   vs 28 s (31x); counter design only 3-4x because of the eager database
   load (T5.3 cache will fix). Waiting for the final report.
+* T5.4/T5.5 final (13 commits incl. merge of the main branch): assembler,
+  Frames + .frm I/O, `fasm2frames` CLI with a generalised declarative
+  argparse emulation shared by both binaries (fasm_cli library),
+  tools/difftest-xilinx.py (69/69 identical), 100 fasm2frames CLI cases,
+  tests/cli 1320 passed 12 skipped, 375 Rust tests. Sent for Opus review
+  with an adversarial corpus.
