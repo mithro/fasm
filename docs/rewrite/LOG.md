@@ -72,3 +72,12 @@ what happened, branch/commit references, open issues.
   sharded index (foldhash only runtime dependency). Sent for independent
   review.
 * T5.1 (Xilinx database format study) started.
+* T5.1 written on branch `worktree-agent-a17f8eb0ad8fd6a96` (3 commits,
+  docs/rewrite/DESIGN-xilinx-db.md, 1749 lines). Key findings: the
+  UltraScale Python/C++ core lives in SymbiFlow/prjuray-tools, not prjuray;
+  UltraScale+ frame address layout and 48 bit ECC (words 45/46) differ from
+  Series7 (13 bit ECC in word 50); prjxray's bitstream writer never computes
+  a CRC; row padding is 2 zero frames; sparse and dense `.frm` inputs give
+  identical `.bit` output; prjuray-db only ships `zynqusp` (2 parts), keyed
+  per part, without ppips/mask files or iobanks. Sent for fact checking
+  review.
