@@ -169,6 +169,8 @@ pub struct Lines<'a> {
     line_start: usize,
     /// Offset of the logical line returned last.
     item_start: usize,
+    /// Line number of the logical line returned last.
+    item_line: usize,
     /// Offset of the first line of the file, if `buf` starts with it
     /// (`line_no` 1); see `parse_logical_line`.
     first_line: Option<usize>,
@@ -191,9 +193,18 @@ impl<'a> Lines<'a> {
             line_no,
             line_start: start,
             item_start: start,
+            item_line: line_no,
             first_line: (line_no == 1).then_some(start),
             done: false,
         }
+    }
+
+    /// The line number (1 based, counting `\n` like [`ParseError::line`])
+    /// on which the [`FasmLine`] returned last by [`Iterator::next`]
+    /// starts. Before the first call, the number of the first line.
+    #[must_use]
+    pub fn line_number(&self) -> usize {
+        self.item_line
     }
 
     /// Converts an error located by byte offset into a [`ParseError`]
@@ -233,7 +244,16 @@ impl Iterator for Lines<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while !self.done {
+            // Fast path over empty lines.
+            while let Some(&b @ (b'\n' | b'\r')) = self.buf.get(self.pos) {
+                self.pos += 1;
+                if b == b'\n' {
+                    self.line_no += 1;
+                    self.line_start = self.pos;
+                }
+            }
             let start = self.pos;
+            let line_no = self.line_no;
             let first_line = self.first_line == Some(start);
             let outcome = match parse_logical_line(self.buf, start, first_line) {
                 Ok(outcome) => outcome,
@@ -258,6 +278,7 @@ impl Iterator for Lines<'_> {
             }
             if let Some(line) = outcome.line {
                 self.item_start = start;
+                self.item_line = line_no;
                 return Some(Ok(line));
             }
         }

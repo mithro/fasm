@@ -764,6 +764,27 @@ fn lines_iterator_is_lazy() {
     assert!(first.iter().all(Result::is_ok));
 }
 
+#[test]
+fn lines_iterator_line_numbers() {
+    let input = b"\xEF\xBB\xBFa\n\n# c\r\nb\r{ x = \"1\n2\" }\nc\n";
+    let mut lines = parse_lines(input);
+    assert_eq!(lines.line_number(), 1);
+    let mut got = Vec::new();
+    while let Some(line) = lines.next() {
+        got.push((lines.line_number(), render_line(&line.unwrap())));
+    }
+    assert_eq!(
+        got,
+        [
+            (1, "a=1/-".to_string()),
+            (3, "#\" c\"".to_string()),
+            (4, "b=1/-".to_string()),
+            (4, "{x=\"1\\n2\"}".to_string()),
+            (6, "c=1/-".to_string()),
+        ]
+    );
+}
+
 /// Huge values are handled in time linear in their length, whether they
 /// are accepted, rejected by a width check or rejected by the decimal
 /// digit limit, and error messages stay short.
