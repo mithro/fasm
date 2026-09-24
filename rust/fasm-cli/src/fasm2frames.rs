@@ -39,9 +39,12 @@
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use fasm_xilinx::{dump_frames_sparse, fasm2frames, AssemblerError, Database, Fasm2FramesOptions};
+use fasm::ParseError;
+use fasm_xilinx::{
+    dump_frames_sparse, fasm2frames, read_roi_design, AssemblerError, Database, Fasm2FramesOptions,
+};
 
 use crate::argparse::{Argument, ArgumentParser, Outcome, Values};
 use crate::pystr::PyStr;
@@ -224,10 +227,16 @@ fn assemble(values: &Values, stdout: &mut dyn Write, stderr: &mut dyn Write) -> 
         roi: values.str("roi").map(|r| PathBuf::from(r.to_os_string())),
         emit_pudc_b_pullup: values.flag("emit_pudc_b_pullup"),
     };
-    let frames = fasm2frames(&db, &path(values, "fn_in"), &options, &mut |warning| {
+    let fn_in = path(values, "fn_in");
+    let frames = fasm2frames(&db, &fn_in, &options, &mut |warning| {
         let _ = writeln!(stderr, "{warning}");
     })
-    .map_err(traceback)?;
+    .map_err(|e| match e {
+        AssemblerError::Parse(first) => traceback(AssemblerError::Parse(report_parse_error(
+            first, &db, &options, &fn_in,
+        ))),
+        e => traceback(e),
+    })?;
     let mut out = BufWriter::with_capacity(1 << 16, file);
     frames
         .write_frm(&mut out)
@@ -238,6 +247,52 @@ fn assemble(values: &Values, stdout: &mut dyn Write, stderr: &mut dyn Write) -> 
         dump_frames_sparse(&frames, stdout).map_err(|e| write_error(&e))?;
     }
     Ok(())
+}
+
+/// The syntax error the reference reports for a FASM text whose first
+/// error (in file order) is `first`: the ANTLR parser checks the syntax of
+/// the whole text before it decodes any value, so a syntax error later in
+/// the text wins over an earlier value range error
+/// ([`crate::tool::error_to_report`], as for the `fasm` tool).
+///
+/// `fasm2frames()` parses, in this order, the ROI's `required_features`,
+/// the part's `required_features.fasm` and the FASM file, and stops at the
+/// first text with an error: the first of them that does not parse is the
+/// one `first` comes from. (The PUDC_B and STEPDOWN features are single
+/// generated lines, to which the precedence does not apply.)
+fn report_parse_error(
+    first: ParseError,
+    db: &Database,
+    options: &Fasm2FramesOptions,
+    fasm: &Path,
+) -> ParseError {
+    let mut texts: Vec<Vec<u8>> = Vec::new();
+    if let Some(roi) = options.roi.as_deref().filter(|r| !r.as_os_str().is_empty()) {
+        match read_roi_design(roi) {
+            Ok(design) => texts.extend(design.required_features.map(String::into_bytes)),
+            Err(_) => return first,
+        }
+    }
+    if let Some(info) = db.part_info() {
+        texts.push(
+            db.get_required_fasm_features(Some(&info.name))
+                .join("\n")
+                .into_bytes(),
+        );
+    }
+    if let Ok(data) = std::fs::read(fasm) {
+        texts.push(data);
+    }
+    for text in texts {
+        if let Err(error) = fasm::parse_fasm_bytes(&text) {
+            return if error == first {
+                crate::tool::error_to_report(&text, first)
+            } else {
+                first
+            };
+        }
+    }
+    first
 }
 
 /// The part name as a string (a part name is always ASCII; other code

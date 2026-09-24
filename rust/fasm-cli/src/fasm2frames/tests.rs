@@ -338,3 +338,58 @@ fn errors() {
         result.stderr
     );
 }
+
+/// The reference's ANTLR parser checks the syntax of the whole text before
+/// decoding values: a later syntax error wins over a value range error,
+/// in the FASM file and in the ROI's `required_features`.
+#[test]
+fn parse_error_precedence() {
+    let dir = TempDir::new();
+    let out = dir.0.join("out.frm");
+    let db = mini_db();
+    let fasm = dir.0.join("prec.fasm");
+    std::fs::write(&fasm, "CLBLM_L_X10Y102.SLICEM_X0.AFFMUX.CY = 2\nb c\n").unwrap();
+    let result = run_tool(&["--db-root", s(&db), "--part", "xc7", s(&fasm), s(&out)]);
+    assert_eq!(result.code, 1);
+    assert!(
+        result
+            .stderr
+            .starts_with("Exception: Parse error at 2:2 - "),
+        "{}",
+        result.stderr
+    );
+    // Only a value range error: it is reported.
+    std::fs::write(&fasm, "CLBLM_L_X10Y102.SLICEM_X0.AFFMUX.CY = 2\n").unwrap();
+    let result = run_tool(&["--db-root", s(&db), "--part", "xc7", s(&fasm), s(&out)]);
+    assert!(
+        result.stderr.starts_with("Exception: Parse error at 1:"),
+        "{}",
+        result.stderr
+    );
+
+    let roi = dir.0.join("roi.json");
+    std::fs::write(
+        &roi,
+        r#"{"info": {"GRID_X_MIN": 0, "GRID_X_MAX": 0, "GRID_Y_MIN": 0, "GRID_Y_MAX": 0},
+            "required_features": ["X_X0Y0.A = 2", "b c"]}"#,
+    )
+    .unwrap();
+    std::fs::write(&fasm, "CLBLM_L_X10Y102.SLICEM_X0.AFF.ZINI\n").unwrap();
+    let result = run_tool(&[
+        "--db-root",
+        s(&db),
+        "--part",
+        "xc7",
+        "--roi",
+        s(&roi),
+        s(&fasm),
+        s(&out),
+    ]);
+    assert!(
+        result
+            .stderr
+            .starts_with("Exception: Parse error at 2:2 - "),
+        "{}",
+        result.stderr
+    );
+}
