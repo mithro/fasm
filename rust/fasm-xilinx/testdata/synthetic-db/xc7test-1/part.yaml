@@ -1,0 +1,37 @@
+!<xilinx/xc7series/part>
+idcode: 0x362d093
+global_clock_regions:
+  top: !<xilinx/xc7series/global_clock_region>
+    rows:
+      0: !<xilinx/xc7series/row>
+        configuration_buses:
+          CLB_IO_CLK: !<xilinx/xc7series/configuration_bus>
+            configuration_columns:
+              0: !<xilinx/xc7series/configuration_column>
+                frame_count: 42
+              1: !<xilinx/xc7series/configuration_column>
+                frame_count: 30
+          BLOCK_RAM: !<xilinx/xc7series/configuration_bus>
+            configuration_columns:
+              0: !<xilinx/xc7series/configuration_column>
+                frame_count: 128
+      1: !<xilinx/xc7series/row>
+        configuration_buses:
+          CLB_IO_CLK: !<xilinx/xc7series/configuration_bus>
+            configuration_columns:
+              0: !<xilinx/xc7series/configuration_column>
+                frame_count: 42
+              6: !<xilinx/xc7series/configuration_column>
+                frame_count: 28
+          BLOCK_RAM: !<xilinx/xc7series/configuration_bus>
+            configuration_columns:
+              0: !<xilinx/xc7series/configuration_column>
+                frame_count: 128
+  bottom: !<xilinx/xc7series/global_clock_region>
+    rows:
+      0: !<xilinx/xc7series/row>
+        configuration_buses:
+          CLB_IO_CLK: !<xilinx/xc7series/configuration_bus>
+            configuration_columns:
+              0: !<xilinx/xc7series/configuration_column>
+                frame_count: 42

@@ -16,24 +16,61 @@
 
 //! Xilinx bitstream support for FASM.
 //!
-//! This crate will provide, per `docs/rewrite/PLAN.md`:
+//! This crate provides, per `docs/rewrite/PLAN.md`:
 //!
-//! * a database loader for prjxray-db / prjuray-db layouts (`settings.sh`,
-//!   `tilegrid.json`, `segbits_*.db`, `ppips_*.db`, `mask_*.db`,
-//!   `part.yaml` / `part.json`, `package_pins.csv`), with an optional
-//!   content hashed binary cache;
-//! * a `FasmAssembler` equivalent of `prjxray.fasm_assembler` +
-//!   `xc_fasm.fasm2frames`, producing frames from FASM features;
-//! * a bitstream writer/reader equivalent of prjxray `xc7frames2bit` for
-//!   Series7, UltraScale and UltraScale+ (prjuray) architectures.
+//! * a database loader for prjxray-db (Series7) and prjuray-db
+//!   (UltraScale+) family directories: [`Database::open`] reads the
+//!   tile grid (`tilegrid.json`), the segbits and pseudo PIPs of every
+//!   tile type (`segbits_*.db`, `segbits_*.block_ram.db`, `ppips_*.db`)
+//!   and the part data (`part.yaml`, `part.json`, `package_pins.csv`,
+//!   `required_features.fasm`), and resolves FASM features to
+//!   configuration bits ([`Database::lookup_feature`]);
+//! * frame address arithmetic for Series7, UltraScale and UltraScale+
+//!   ([`FrameAddress`], [`Architecture::segbit_position`],
+//!   [`Part::iter_frame_addresses`]).
 //!
-//! None of the above exists yet; this crate currently only depends on the
-//! `fasm` core crate for the workspace skeleton (task T0.3).
+//! Still to come (tasks T5.3-T5.6, T6.x): a binary cache of a loaded
+//! database, the `FasmAssembler` / `fasm2frames` equivalent and the
+//! bitstream writer and reader.
+//!
+//! The file formats and the reference behaviour are described in
+//! `docs/rewrite/DESIGN-xilinx-db.md`.
+//!
+//! ```no_run
+//! use std::path::Path;
+//! use fasm::idstring::IdString;
+//! use fasm_xilinx::{Database, FeatureLookup};
+//!
+//! let db = Database::open(Path::new("prjxray-db/artix7"), Some("xc7a35tcsg324-1"))?;
+//! let feature = IdString::new("CLBLM_R_X33Y38.SLICEL_X1.A5FF.ZINI");
+//! if let FeatureLookup::Bits(bits) = db.lookup_fasm_feature(feature, 0)? {
+//!     for (segbit, position) in bits.positions() {
+//!         println!("{segbit} -> {:?}", position);
+//!     }
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn depends_on_fasm_crate() {
-        assert!(!fasm::VERSION.is_empty());
-    }
-}
+#![forbid(unsafe_code)]
+#![warn(missing_docs)]
+
+mod arch;
+mod db;
+mod error;
+mod json;
+mod part;
+mod segbits;
+mod tilegrid;
+mod yaml;
+
+pub use arch::{
+    Architecture, BitPosition, BitPositionError, BlockType, FrameAddress, FrameAddressFields,
+};
+pub use db::{
+    Database, EccFinding, EccReport, FeatureBits, FeatureLookup, Layout, LookupError, PartInfo,
+    TileType, TileTypeFiles,
+};
+pub use error::DbError;
+pub use part::{read_package_pins, BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};
+pub use segbits::{PpipType, SegBit, SegbitsEntry, SegbitsMatch, TileSegbits};
+pub use tilegrid::{BitAlias, BitsBlock, ClockRegion, Grid, Tile};

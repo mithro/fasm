@@ -1786,6 +1786,221 @@ turn the `.bit` into a `.bits` text file, then decodes that with
 disassembler; a Rust equivalent should call its own in-process bitstream
 reader (§6.6) instead of shelling out, but keep the same flags.
 
+### 8.5 Implementation notes (T5.2)
+
+What the `fasm-xilinx` loader (`rust/fasm-xilinx/src/`) actually does,
+where it deviates from the sketch above, and measurements.
+
+**Modules.** `arch.rs` (`Architecture`, `BlockType`, `FrameAddress`,
+`segbit_position`, ECC bit spans), `segbits.rs` (`SegBit`, `PpipType`,
+`TileSegbits`), `tilegrid.rs` (`Grid`, `Tile`, `BitsBlock`, `BitAlias`),
+`part.rs` (`Part` frame tree, `package_pins.csv`, `BanksTilesRegistry`),
+`db.rs` (`Database::open`, `lookup_feature`, `check_ecc_invariant`),
+`yaml.rs` (YAML subset), `json.rs` (serde helpers), `error.rs` (`DbError`).
+
+**Data model (ready for the T5.3 cache).** Instead of the generic
+`XilinxArchitecture` trait / `Part<A>` of §8.1, one `Architecture` enum is
+passed where needed (the frame address layout is data, not a type; this
+keeps `Database` a single non-generic type that a cache can store). No
+`Rc`, no references between tables: every table is a few `Vec`s of plain
+`Copy` structs plus `HashMap`s that can be rebuilt from them.
+
+* `Grid`: `tiles: Vec<Tile>` (file order) + flat `bits`, `aliases`,
+  `pairs` (sites, pin functions, alias site maps) and `names`
+  (prohibited sites) arrays; a `Tile` holds `(start, len)` spans into
+  them, its name/type `IdString`s, grid location, clock region and the
+  index of its tile type. `by_name` / `by_loc` maps are derived.
+* `TileSegbits`: `entries: Vec<SegbitsEntry { feature, block_type,
+  start, len }>` over one `bits: Vec<SegBit>` pool; `by_name`
+  (`IdString -> entry`), `addressed` (`(base IdString, N) -> entry`) and
+  the pseudo PIP map are derived. `SegBit` keeps `word_column`/`word_bit`
+  as `u32` (block RAM `word_bit` up to 2204 in artix7) and `is_set`.
+* `Part`: architecture, IDCODE, rows sorted by `(bottom, row)`, each with
+  buses sorted by block type and `(column, frame_count)` pairs.
+
+**Layout detection and fabric.** `<root>/mapping/` present: prjxray-db;
+the fabric is `devices.yaml[parts.yaml[part].device].fabric` exactly like
+`get_fabric_for_part` (`part.json` has **no** `fabric` field in
+prjxray-db; the task brief's suggestion to read it from there does not
+match the data). `<root>/tile_types/` present: prjuray-db, grid from
+`<root>/<part>/tilegrid.json`. The architecture is the `part.yaml` tag
+namespace (`xc7series` / `xcuseries` / `xcupseries`), else Series7 for
+prjxray-db and UltraScale+ for prjuray-db. `part == None` loads only the
+tile types.
+
+**Files read.** Tile types are enumerated from the `tile_type_*.json` file
+*names* (as prjxray does; the JSON is never parsed); for each,
+`segbits_<t>.db`, `segbits_<t>.block_ram.db`, `ppips_<t>.db` are loaded
+**eagerly** (all 128 artix7 types, 38 ms). Part files `part.yaml`,
+`part.json`, `package_pins.csv`, `required_features.fasm` are all
+optional. Never read: `mask_*.db`, `*.origin_info.db`, `tileconn.json`,
+`node_wires.json`, `site_type_*.json` (the synthetic test database has an
+invalid `.origin_info.db` and a mask file to prove it). Because loading
+is eager, a malformed segbits line in *any* tile type fails
+`Database::open` (prjxray only fails when that tile type is first used).
+
+**Parsers.**
+
+* JSON: `serde` + `serde_json` (workspace dependencies). `tilegrid.json`
+  is streamed through a `serde` visitor straight into the `Grid` (no
+  `serde_json::Value` DOM, strings borrowed from the file buffer), so
+  there is no need for a hand written streaming parser: 6.3 MiB (xc7a50t)
+  in 18 ms, 24.4 MiB (xc7a200t) in 73 ms, 14.3 MiB (xczu3eg) in 51 ms,
+  interning included. Errors carry line and column.
+* YAML: a ~450 line (plus tests) hand written parser for the subset the files use
+  (block mappings, plain/quoted scalars, `!<...>` tags, one line flow
+  maps, comments); sequences, anchors, block scalars and multi line flow
+  collections are errors with a line number, not guesses. Rationale:
+  `serde_yaml` is deprecated/unmaintained, `serde_yml` had soundness and
+  maintenance problems, `yaml-rust2` would work but pulls a general YAML
+  1.2 implementation for three fixed shaped files. All 88 artix7
+  `part.yaml` files parse and equal their `part.json`; the zynqusp ones
+  too. The `configuration_ranges` form of `part.yaml` (accepted by the C++
+  decoder, never written by `gen_part_base_yaml`) is rejected with a
+  clear error.
+* CSV (`package_pins.csv`): hand written, columns by header name like
+  `csv.DictReader`, RFC 4180 quotes.
+* segbits / ppips lines: fields split on any ASCII whitespace (prjxray
+  crashes on two spaces), numbers must be ASCII digits; malformed lines
+  are `DbError::Segbits { path, line }`. Tags that do not start with
+  `<TILE_TYPE>.` can never be looked up (prjxray's key is
+  `f"{tile_type}.{feature}"`) and are dropped and counted
+  (`TileSegbits::foreign_lines`; zero in the real databases). A repeated
+  tag keeps the last bits (Python dict).
+
+**Semantics decided here.**
+
+* §9 item 6: all three C++ block type names (`CLB_IO_CLK`, `BLOCK_RAM`,
+  `CFG_CLB`) are accepted in `tilegrid.json` and `part.yaml`; any other
+  bus name is an error.
+* Duplicate tile names or two tiles at one grid location are errors
+  (prjxray: last wins / `assert`). `sites` and `prohibited_sites`
+  default to empty (prjuray-db has no `prohibited_sites`).
+* prjuray-db `pin_functions` values can be maps (`"SYSMONE4_X0Y0": {"R13":
+  "VP", "T12": "VN"}`); they are stored as one `(site, function)` pair per
+  entry (package pin names dropped; unused by the pipeline).
+* Clock regions `X<n>Y<m>` accept several digits (prjxray's regex allows
+  one).
+* `part.json` `iobanks` keep file order (a second typed pass, since a
+  `serde_json::Value` map is sorted).
+
+**Feature lookup.** Per tile type, the tables are keyed by the
+`IdString` of the feature name *within the tile* (the segbits tag minus
+`<TILE_TYPE>.`), which is the "two level map keyed by (tile_type,
+feature IdString)": `lookup_feature(tile, feature, address)` = tile map
+probe -> tile type index -> pseudo PIPs (first, any address) -> exact name
+if `address == 0` -> `(base, address)`; for a tile with any aliased bits
+block: own pseudo PIPs, then the aliased type's table with the site
+renamed through `alias.sites` and `offset - start_offset`. Allocation
+free except when an alias actually renames a site. Result:
+`FeatureLookup::{PseudoPip, Bits(FeatureBits)}`, where `FeatureBits` has
+the tile, the entry, the bits block (for `frames_in_use`), the effective
+offset and `positions()`. Errors distinguish `UnknownTile`,
+`UnknownTileType`, `UnknownFeature` (Display is prjxray's
+`Segment DB %s, key %s not found`, without the line), `MissingBitsBlock`
+and `InconsistentAlias`.
+
+Measured (release, `cargo bench -p fasm-xilinx --bench db`, every
+segbits entry of every non-alias tile, up to 16 per tile):
+
+| | xc7a50t fabric | xc7a200t | xczu3eg |
+|---|---|---|---|
+| `lookup_feature` (pre-split tile + feature handles) | 23 ns | 27 ns | 21 ns |
+| `lookup_fasm_feature` (whole `TILE.FEATURE` handle, split with `with_str` + two `IdString::lookup`) | 99 ns | 124 ns | 100 ns |
+| resolving the whole name alone | 24 ns | 24 ns | 22 ns |
+| `IdString::new(remainder)` of a known remainder | 24 ns | 25 ns | 29 ns |
+
+So interning (or looking up) the remainder per FASM line costs about as
+much as the lookup itself; `lookup_fasm_feature` at ~100 ns per feature is
+~0.1 s per million features, acceptable next to parsing. A further 3x is
+available with an additive `IdString` helper that splits off the first
+component by manipulating the level fields of the handle (the first
+component is exactly level 0, and levels are independent tables), giving
+the tile handle and the remainder key without touching strings; not done
+in T5.2 (no `rust/fasm` change needed yet), candidate for T8.2.
+
+**Frame addresses.** `FrameAddress(u32)` with `fields(arch)` /
+`compose(arch, fields)` and per field accessors; `row_index(arch)` is the
+C++ `row()` (includes the half bit for UltraScale/+, whose `part.yaml`
+rows are keyed that way). `Part::next_frame_address` is a literal port of
+`Part::GetNextFrameAddress` and its row/bus/column helpers (prjxray
+`xc7series`, prjuray-tools `xcupseries`), and
+`Part::iter_frame_addresses` is `addMissingFrames`' walk (address 0
+first, always). Checked against the reference tools: `xc7frames2bit`
+with an empty `.frm` then `bitread -o` lists 5408 frames for
+xc7a35tcsg324-1 (last `0x00C0017F`) and 24060 for xc7a200tffg1156-1 (last
+`0x00C4047F`); the Rust enumeration has the same count, last address and
+address sum. `Part::new` rejects rows/columns/frame counts that do not fit
+the address fields, so the walk is strictly increasing.
+
+**Bit positions and a finding for T5.4.** `segbit_position` computes
+`frame = baseaddr + word_column`, `abs = offset * unit + word_bit`
+(`unit` = 32 for Series7, 16 for UltraScale/+), `word = abs / 32`,
+`bit = abs % 32`. **Negative `abs` wraps like a Python list index**:
+`LIOB33_SING`/`RIOB33_SING` alias tiles have `offset 0, start_offset 2`,
+so their `IOB_Y0` bits have `abs < 0`, and prjxray writes
+`frame[word_addr]` with `word_addr = abs // 32 = -2`, i.e. word 99. The
+f4pga-xc-fasm golden output `liob_stepdown.bits` contains exactly
+`bit_00400000_099_03` from `LIOB33_SING_X0Y0.IOB_Y0.SOMETHING.STEPDOWN`
+(`riob_stepdown.bits` has `099_02`/`099_03`); the Rust tests reproduce
+all four f4pga-xc-fasm golden bit sets (`lut_int`, `ff_int`,
+`ff_int_0s`, `liob/riob_stepdown` with the STEPDOWN pass re-done in the
+test) from the miniature database. `segbit_absolute_bit` exposes the
+unwrapped value. Beyond the frame end (`word >= words_per_frame`) is an
+error (`WordOutOfFrame`); prjxray prints `frame_set: invalid word
+address` and drops the write. In the real databases this only happens
+for the other site's bits of the top `LIOB33_SING`/`LIOI3_SING`
+(`offset 99`) alias tiles (2402 (type, bus, offset, bit) combinations on
+4 tiles of xc7a35t and of xc7a200t, none on zynqusp).
+
+**ECC invariant (§8.3 item 19).** `Database::check_ecc_invariant()`
+checks every (segbits tile type, bus, effective offset) combination used
+by the grid against `Architecture::ecc_reserved_bits` (Series7: word 50
+bits 0-12; UltraScale: word 60 + low 16 bits of word 61; UltraScale+:
+word 45 + low 16 bits of word 46). Results: **no violation** on
+xc7a35t (2.32 M bits checked), xc7a200t (2.33 M) and both zynqusp parts
+(2.17 M), 9-13 ms each; the synthetic test database has a deliberate
+clash that is reported. This also settles §9 item 1 as far as the ECC
+*position* goes: `prjuray-tools/lib/xilinx/xcuseries/ecc.cc` (plain
+UltraScale) has `kECCFrameNumber = 60` and
+`offset = (word + (255 - 122)) << 3 | nib` (a 48-bit ECC in word 60 and
+the low half of word 61).
+
+**Load time and memory** (release build, each part in a fresh process;
+"first open" starts with an empty interner; RSS is the growth of the
+resident set over the open, which includes freed-but-retained parse
+buffers; re-open is the best of three with a warm interner):
+
+| part (fabric) | tiles | first open | re-open | tile types + segbits | tilegrid.json | RSS growth | interner heap |
+|---|---|---|---|---|---|---|---|
+| xc7a35tcsg324-1 (xc7a50t) | 18055 | 91 ms | 60 ms | 37 ms | 18 ms (6.3 MiB) | 23.7 MiB | 5.7 MiB |
+| xc7a200tffg1156-1 (xc7a200t) | 69165 | 171 ms | 133 ms | 38 ms | 73 ms (24.4 MiB) | 41.4 MiB | 14.2 MiB |
+| xczu3eg-sfvc784-1-e | 66385 | 96 ms | 76 ms | 20 ms | 51 ms (14.3 MiB) | 26.4 MiB | 8.1 MiB |
+
+(For comparison, on the same machine prjxray's Python `Database` +
+`grid()` + `get_tile_segbits` of every tile type takes 0.53 s for
+xc7a35tcsg324-1 (including the module import), and `grid()` alone 0.68 s for xc7a200tffg1156-1.) The artix7 family has 120544 segbits entries with
+156888 bits over 128 tile types; zynqusp 54576 entries, 167508 bits, 158
+types.
+
+**Open questions for T5.4.**
+
+1. prjxray keys `FasmAssembler.frames` by the *unwrapped* word
+   (`(frame, -2, 3)`), so a wrapped `_SING` bit and a direct bit on word
+   99 of the same frame never conflict (`FasmInconsistentBits`) in
+   Python; keying by the wrapped position would. Reproduce with
+   `segbit_absolute_bit` if exact error parity matters.
+2. Error kinds: prjxray raises a bare `KeyError` (not `FasmLookupError`)
+   for an unknown tile *and* for a tile whose type has no
+   `tile_type_*.json`, because `get_tile_segbits_at_tilename` runs before
+   the `try:` in `enable_feature` (§5 step 3 says the tile type case is
+   caught; it is not). `MissingBitsBlock` (a feature on a bus the tile
+   has no `bits` for) is inside the `try` and becomes `FasmLookupError`.
+3. `WordOutOfFrame` positions must be dropped with the
+   `frame_set: invalid word address` warning (Series7), not rejected.
+4. `lookup_fasm_feature` or pre-split: the assembler gets whole
+   `IdString` features from the parser; see the lookup numbers above.
+
 ## 9. Open questions / risks
 
 1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**

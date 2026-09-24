@@ -1,0 +1,6 @@
+# Hand written test data for fasm-xilinx (Apache-2.0).
+xc7test-1:
+  device: xc7test
+  package: tst1
+  speedgrade: '1'
+"xc7nodev-1": {device: xc7nodev, package: x, speedgrade: '1'}
