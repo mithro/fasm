@@ -377,3 +377,10 @@ what happened, branch/commit references, open issues.
   compile matrix (g++/clang++ x C++17/20 -Werror), `make capi-install
   PREFIX=` with fasm.pc, pkg-config example. 12/12 ctest incl. valgrind.
   In review.
+* T4.2 review: REQUEST CHANGES. Real bug: merge_and_sort's exception
+  trampolines keep the LAST exception (the C zero/sort key callbacks have
+  no early stop, so callbacks keep running); plus misleading trampoline
+  docs, a missing test, and a broken static link recipe in fasm.pc.in
+  (`--libs.private` is not a pkg-config option). Everything else verified
+  (12/12 tests, -Wshadow -Wconversion clean, 5000 char names, self move,
+  non-UTF-8 paths, pkg-config shared build). Fixes in progress.
