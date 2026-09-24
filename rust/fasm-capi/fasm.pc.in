@@ -28,12 +28,37 @@
 # this file (a plain `sed` substitutes every occurrence).
 #
 # `pkg-config --cflags --libs fasm` gives a dynamically linked build
-# (`-lfasm_capi`, needing libfasm_capi.so at run time); link
-# `libfasm_capi.a` directly (`-l:libfasm_capi.a $(pkg-config --libs.private
-# fasm)`, or the CMake FASM_STATIC path in tests/c/CMakeLists.txt) for a
-# static one. Both the C header and the C++ wrapper are reached through
-# the same Cflags (-I${includedir}, giving <fasm/fasm.h> and
-# <fasm/fasm.hpp>); the C++ wrapper needs no extra library (header only).
+# (`-lfasm_capi`, needing libfasm_capi.so at run time, e.g. via
+# LD_LIBRARY_PATH or an rpath). Both the C header and the C++ wrapper are
+# reached through the same Cflags (-I${includedir}, giving <fasm/fasm.h>
+# and <fasm/fasm.hpp>); the C++ wrapper needs no extra library (header
+# only). Verified (rust/fasm-capi/examples/cpp):
+#
+#   g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
+#       $(pkg-config --libs fasm) -o example
+#   LD_LIBRARY_PATH=${libdir} ./example
+#
+# To link `libfasm_capi.a` instead (no run time dependency on the .so),
+# `pkg-config --static --libs fasm` is *not* enough on its own: pkg-config
+# has no notion of "this Libs entry means the static archive", so it
+# still emits plain `-lfasm_capi` (picked up as the .so by a linker that
+# has both available) followed by `Libs.private`'s system libraries
+# (there is no `--libs.private` pkg-config option; `--static --libs` /
+# `--static --libs-only-l` is how Libs.private is reached). Force the one
+# `-lfasm_capi` from `Libs` to resolve against the archive with
+# `-Wl,-Bstatic` / `-Wl,-Bdynamic` around it, switching back to dynamic
+# before the private system libraries (which are typically only
+# available as shared objects). Verified:
+#
+#   g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
+#       -Wl,-Bstatic $(pkg-config --libs fasm) \
+#       -Wl,-Bdynamic $(pkg-config --static --libs-only-l fasm | sed 's/-lfasm_capi//') \
+#       -o example_static
+#
+# (`ldd example_static` then shows no libfasm_capi.so dependency.) The
+# CMake FASM_STATIC path in rust/fasm-capi/tests/c/CMakeLists.txt links
+# the static library the same way, without pkg-config, by naming
+# libfasm_capi.a's path directly as an IMPORTED target.
 
 prefix=@PREFIX@
 exec_prefix=${prefix}

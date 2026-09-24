@@ -365,12 +365,31 @@ that:
    type (for `parse_each`, via `File::invoke_line_callback`, which accepts
    a callable returning either `bool` or `void`, `if constexpr`
    dispatched with `std::is_invocable_r_v`);
-4. on an exception, stores it with `ctx->pending =
-   std::current_exception()` and returns a neutral value that stops or
-   has no effect on the C side (`false` for `fasm_line_callback`, `true`
-   for `fasm_zero_fn`, `0` for `fasm_sort_key_fn` — the C call is already
-   being unwound at that point, so the value is never actually used for
-   anything but returning cleanly).
+4. on an exception, stores it in `ctx->pending` **only if `ctx->pending` is
+   not already set** (`if (!ctx->pending) ctx->pending =
+   std::current_exception();`), and returns a value the caller cannot
+   observe (`false` for `fasm_line_callback`, `true` for `fasm_zero_fn`,
+   `0` for `fasm_sort_key_fn`).
+
+   The "only if not already set" guard matters because the two callback
+   protocols behave differently once a trampoline has thrown:
+
+   * `fasm_line_callback` (`parse_each` / `parse_each_file`) has an
+     early-stop protocol — returning `false` makes `fasm_parse_*_cb` stop
+     calling it immediately — so at most one exception can ever reach the
+     trampoline; the guard is defensive (kept for consistency, and in
+     case that contract changes), not load bearing.
+   * `fasm_zero_fn` and `fasm_sort_key_fn` (`merge_and_sort`) have **no**
+     early-stop protocol: `fasm_file_merge_and_sort_ex` keeps calling
+     them for the rest of the model after one has thrown (it has no way
+     to know a C++ exception happened — it only sees an ordinary `bool` /
+     `int64_t` return value). Without the guard, a later call's exception
+     silently overwrites `ctx->pending`, so the caller of `merge_and_sort`
+     would see the *last* exception raised rather than the first — with
+     it, the trampoline still runs to completion for every remaining
+     feature/group, but only the exception from the **first** call that
+     threw is ever stored and rethrown; every later one (thrown while
+     `ctx->pending` is already set) is silently discarded.
 
 Once the C call returns, the wrapper checks `context.pending`: if set, it
 frees whatever the C function returned (`fasm_file_free`) and any
@@ -378,7 +397,9 @@ frees whatever the C function returned (`fasm_file_free`) and any
 From the caller's point of view the exception propagates out of
 `merge_and_sort` / `parse_each` exactly as if the C boundary were not
 there, **as the same exception object and dynamic type** (not wrapped in
-a `fasm::Error`), including a custom exception type. If the C call itself
+a `fasm::Error`), including a custom exception type; for `merge_and_sort`
+that is specifically the **first** exception a callback raised, even
+though the callbacks keep being invoked afterwards. If the C call itself
 also fails independently of the callback (should not happen: the callback
 having thrown means the C side observed early termination, not a
 separate error), the pending exception always wins over a `fasm_error`.
@@ -426,6 +447,25 @@ stateless (they only read their `user` argument, which is a stack local
 of the calling thread's call), so concurrent calls on different `File`s
 from different threads do not interact.
 
+### Requirements and caveats
+
+* **Exceptions and RTTI are required.** Every failure is a thrown
+  `fasm::Error`, and the trampolines rely on `catch (...)`,
+  `std::current_exception` and `std::rethrow_exception`; the header is
+  not usable built with `-fno-exceptions` (or the equivalent elsewhere).
+  A caller in that situation uses `fasm.h` directly — it is always
+  installed and usable alongside `fasm.hpp`, in the same translation
+  unit if wanted.
+* **`parse_file` / `parse_each_file` path encoding is exact on POSIX
+  only.** They pass `path.string().c_str()` to `fasm_parse_file` /
+  `fasm_parse_file_cb`. On POSIX, `fasm.h` accepts any byte sequence for
+  a path and `std::filesystem::path::string()` returns that same
+  encoding-agnostic native representation, so this is exact. On Windows,
+  `fasm.h` requires UTF-8, but `path.string()` converts to the active
+  code page instead of UTF-8, so a path containing characters outside
+  that code page would not round trip correctly; this wrapper's tests
+  run on POSIX only and do not exercise that case.
+
 ### Build, tests and packaging
 
 The header needs nothing beyond `fasm.h` and the C++17 standard library:
@@ -450,3 +490,33 @@ and static library, plus valgrind).
 `PREFIX/{include/fasm,lib}`; `rust/fasm-capi/examples/cpp/{CMakeLists.txt,
 example.cpp}` is a minimal example that finds the installed library with
 `pkg-config`/CMake's `PkgConfig` module and uses only the C++ wrapper.
+
+Building against the installed package by hand, with plain `pkg-config`
+rather than CMake (both verified against a scratch `PREFIX`, `ldd` used
+to confirm which library each binary actually depends on):
+
+```sh
+make capi-install PREFIX=/some/prefix
+export PKG_CONFIG_PATH=/some/prefix/lib/pkgconfig
+
+# Dynamically linked (libfasm_capi.so needed at run time).
+g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
+    $(pkg-config --libs fasm) -o example
+LD_LIBRARY_PATH=/some/prefix/lib ./example
+
+# Statically linked (no libfasm_capi.so dependency). pkg-config has no
+# "static archive" concept and no `--libs.private` option (that is not a
+# valid flag): `Libs.private` is reached through `--static`, and
+# `--static --libs`/`--libs-only-l` still includes Libs' plain
+# `-lfasm_capi`, which a linker with both the .so and the .a available
+# resolves as the shared library. -Wl,-Bstatic / -Wl,-Bdynamic around
+# just that one flag forces the archive, while leaving the system
+# libraries in Libs.private (only available as .so on most systems)
+# linked dynamically as usual.
+g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
+    -Wl,-Bstatic $(pkg-config --libs fasm) \
+    -Wl,-Bdynamic $(pkg-config --static --libs-only-l fasm | sed 's/-lfasm_capi//') \
+    -o example_static
+ldd example_static   # no libfasm_capi.so
+./example_static
+```
