@@ -169,6 +169,18 @@ rust-fmt:
 
 .PHONY: rust-fmt
 
+# Build the rustdoc, denying rustdoc warnings (broken doc links etc.).
+rust-doc:
+	RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace
+
+.PHONY: rust-doc
+
+# Everything CI runs for the Rust workspace (see .github/workflows/rust.yml):
+# lint, doc, test.
+rust-check: rust-lint rust-doc rust-test
+
+.PHONY: rust-check
+
 
 # Upload to PyPI servers
 # ------------------------------------------------------------------------
