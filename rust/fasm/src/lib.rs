@@ -29,10 +29,15 @@
 //! * an `output` module: string formatting, canonicalisation and
 //!   `merge_features` / `merge_and_sort` (`MergeModel`) equivalents.
 //!
-//! Only [`idstring`] exists so far; the other modules follow in later tasks
-//! of `docs/rewrite/TASKS.md`.
+//! [`idstring`] and `model` exist so far; the `parser` and `output` modules
+//! follow in later tasks of `docs/rewrite/TASKS.md`.
 
 pub mod idstring;
+pub mod model;
+
+pub use model::{
+    Annotation, FasmLine, FeatureValue, ModelError, SetFasmFeature, ValueFormat, ValueParseError,
+};
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
