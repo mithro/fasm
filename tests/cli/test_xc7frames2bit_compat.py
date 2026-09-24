@@ -156,7 +156,7 @@ def normalise(result, tmp_path):
 def check(tmp_path, argv, env=None):
     o_path, r_path = tmp_path / 'o', tmp_path / 'r'
     oracle = run(ORACLE, argv, o_path, env)
-    epoch = bit_time(oracle[3])
+    epoch = bit_time(oracle[3]) or bit_time(oracle[1])
     r_env = dict(env or {})
     if epoch is not None:
         r_env['SOURCE_DATE_EPOCH'] = str(epoch)
@@ -204,6 +204,8 @@ FLAG_CASES = [
     ['--fromenv=nothing'],
     ['-', '--', '--bogus'],
     ['--part_file=/nonexistent'],
+    # A directory: the reference aborts (std::__ios_failure).
+    ['--part_file=/tmp'],
     ['--architecture=Foo', '--part_file=/nonexistent'],
     ['positional', '--part_file', '/nonexistent'],
 ]
@@ -239,6 +241,11 @@ RUN_CASES = [
     ['--part_file=' + PART_FILE, '--frm_file=' + SMOKE,
      '--output_file=/nonexistent/out.bit'],
     ['--part_file=' + SMOKE, '--frm_file=' + SMOKE, '--output_file=' + OUT],
+    # An unseekable output (a pipe): the header's data length stays 0.
+    ['--part_file=' + PART_FILE, '--frm_file=' + SMOKE,
+     '--output_file=/dev/stdout'],
+    # A .frm that is not a regular file.
+    BASE + ['--frm_file=/proc/version'],
 ] + [BASE + ['--frm_file=' + TMP + '/' + name] for name in sorted(FRM_FILES)]
 
 

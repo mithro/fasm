@@ -43,7 +43,7 @@ use crate::fasm2frames::{
     build_frames, create_output, parser as fasm2frames_parser, path, write_frm_file, Environment,
 };
 use crate::pystr::PyStr;
-use crate::xc7frames2bit::{read_part, write_frames, Env};
+use crate::xc7frames2bit::{read_part, write_frames, Env, PartError};
 
 /// The argument parser of `xc_fasm.xc_fasm.main`.
 #[must_use]
@@ -175,12 +175,22 @@ fn assemble(
             String::from_utf8_lossy(&command)
         )
     };
-    let Some(part_data) = read_part(&part_file) else {
-        let mut message = b"Part file ".to_vec();
-        message.extend_from_slice(&part_file);
-        message.extend_from_slice(b" not found or invalid\n");
-        let _ = stderr.write_all(&message);
-        return Err(failed(1));
+    let part_data = match read_part(&part_file) {
+        Ok(part) => part,
+        Err(PartError::Abort(message)) => {
+            // The tool dies with SIGABRT; the shell (`/bin/sh`, dash)
+            // reports it and exits with 128 + 6.
+            let _ = stderr.write_all(message.as_bytes());
+            let _ = stderr.write_all(b"Aborted\n");
+            return Err(failed(134));
+        }
+        Err(PartError::Invalid) => {
+            let mut message = b"Part file ".to_vec();
+            message.extend_from_slice(&part_file);
+            message.extend_from_slice(b" not found or invalid\n");
+            let _ = stderr.write_all(&message);
+            return Err(failed(1));
+        }
     };
     let result = write_frames(
         &frames,

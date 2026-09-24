@@ -37,7 +37,7 @@ use fasm_xilinx::bitstream::{BitstreamReader, Configuration};
 use fasm_xilinx::{Architecture, FrameAddress, Frames};
 
 use crate::gflags::{self, Flag, FlagType, Outcome, Program};
-use crate::xc7frames2bit::{architecture, os_path, read_part, Env};
+use crate::xc7frames2bit::{architecture, os_path, read_part, Env, PartError, ABORT};
 
 const FILE: &str = "tools/bitread.cc";
 /// The file the help lists the Rust only flags under.
@@ -218,6 +218,24 @@ fn aux_text(bytes: &[u8], reader: &BitstreamReader, config: &Configuration<'_>) 
     out
 }
 
+/// `MemoryMappedFile::InitWithFile`: the file is `fstat`ed and its
+/// `st_size` bytes are mapped; a size of 0 (an empty file, but also a
+/// pipe or a `/proc` file) gives an empty input without reading, and a
+/// file that cannot be mapped (a directory) is an error (`None`).
+fn read_input(path: &std::path::Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    if size == 0 {
+        return Some(Vec::new());
+    }
+    if path.is_dir() {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(size).read_to_end(&mut bytes).ok()?;
+    Some(bytes)
+}
+
 /// Runs the tool with `args` (without `argv[0]`), reading the bitstream
 /// from `stdin` when there is not exactly one positional argument; returns
 /// the exit code.
@@ -306,10 +324,9 @@ fn run_streamed(
 
     let bytes = if parsed.args.len() == 1 {
         let name = &parsed.args[0];
-        let path = os_path(name);
-        match std::fs::read(&path) {
-            Ok(bytes) if !path.is_dir() => bytes,
-            _ => {
+        match read_input(&os_path(name)) {
+            Some(bytes) => bytes,
+            None => {
                 error(
                     stdout,
                     stderr,
@@ -339,9 +356,16 @@ fn run_streamed(
         stdout,
         &format!("Config size: {} words\n", reader.words().len()),
     );
-    let Some(part) = read_part(parsed.string("part_file")) else {
-        error(stdout, stderr, &[b"Part file not found or invalid\n"]);
-        return 1;
+    let part = match read_part(parsed.string("part_file")) {
+        Ok(part) => part,
+        Err(PartError::Abort(message)) => {
+            error(stdout, stderr, &[message.as_bytes()]);
+            return ABORT;
+        }
+        Err(PartError::Invalid) => {
+            error(stdout, stderr, &[b"Part file not found or invalid\n"]);
+            return 1;
+        }
     };
     let Ok(config) = reader.configuration(&part) else {
         error(

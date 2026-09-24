@@ -25,7 +25,7 @@ use std::process::ExitCode;
 
 use fasm_cli::bitread::run;
 use fasm_cli::gflags::os_bytes;
-use fasm_cli::xc7frames2bit::Env;
+use fasm_cli::xc7frames2bit::{Env, ABORT};
 
 fn main() -> ExitCode {
     let mut argv = std::env::args_os();
@@ -42,5 +42,9 @@ fn main() -> ExitCode {
         &mut stdout.lock(),
         &mut stderr.lock(),
     );
+    if code == ABORT {
+        // std::terminate after an uncaught C++ exception (SIGABRT).
+        std::process::abort();
+    }
     ExitCode::from(code)
 }

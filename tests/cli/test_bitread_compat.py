@@ -211,6 +211,10 @@ RUN_CASES = [
     [P, '/nonexistent.bit'],
     [P, TMP],
     ['--part_file=/nonexistent', SMOKE_T],
+    # A directory: the reference aborts (std::__ios_failure).
+    ['--part_file=/tmp', SMOKE_T],
+    # Files whose size is 0 (/proc) read as empty.
+    [P, '/proc/version'],
     ['--part_file=' + SMOKE_T, SMOKE_T],
     ['--part_file=' + OTHER_PART_FILE, '-z', '-y', SMOKE_T],
     ['-y', PART_FILE],

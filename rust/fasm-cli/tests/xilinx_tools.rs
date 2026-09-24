@@ -440,3 +440,34 @@ fn bitread_merged_output_order() {
     assert_eq!(text, "ERROR: unknown command line flag 'bogus'\n");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn invalid_source_date_epoch_warns() {
+    let Some(db) = db() else {
+        return;
+    };
+    let dir = scratch("epoch");
+    let out = dir.join("out.bit");
+    let env = Env {
+        vars: vec![("SOURCE_DATE_EPOCH".into(), b"soon".to_vec())],
+    };
+    let (code, _, stderr) = run_xc7frames2bit(
+        &[
+            [
+                b"--part_file=".to_vec(),
+                bytes(&db.join(PART).join("part.yaml")),
+            ]
+            .concat(),
+            [b"--frm_file=".to_vec(), bytes(&corpus("smoke_x1y0.frm"))].concat(),
+            [b"--output_file=".to_vec(), bytes(&out)].concat(),
+        ],
+        &env,
+    );
+    assert_eq!(code, 0);
+    assert_eq!(
+        stderr,
+        "warning: SOURCE_DATE_EPOCH=\"soon\" is not an integer, using the current time\n"
+    );
+    assert!(BitHeader::parse(&std::fs::read(&out).unwrap()).is_some());
+    let _ = std::fs::remove_dir_all(dir);
+}

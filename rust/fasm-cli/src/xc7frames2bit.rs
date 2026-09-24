@@ -96,11 +96,18 @@ impl Env {
     }
 
     /// The header `(date, time)` from `SOURCE_DATE_EPOCH` (decimal seconds
-    /// since the epoch), if set and valid.
-    pub fn source_date(&self) -> Option<(String, String)> {
-        let value = self.get("SOURCE_DATE_EPOCH")?;
-        let seconds: i64 = std::str::from_utf8(&value).ok()?.trim().parse().ok()?;
-        Some(utc_date_time(seconds))
+    /// since the epoch): `Ok(None)` if it is not set, `Err` with the value
+    /// if it is not an integer (the current time is used then, with a
+    /// warning).
+    pub fn source_date(&self) -> Result<Option<(String, String)>, String> {
+        let Some(value) = self.get("SOURCE_DATE_EPOCH") else {
+            return Ok(None);
+        };
+        std::str::from_utf8(&value)
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .map(|seconds| Some(utc_date_time(seconds)))
+            .ok_or_else(|| String::from_utf8_lossy(&value).into_owned())
     }
 }
 
@@ -122,11 +129,31 @@ pub(crate) fn architecture(tool: &str, name: &[u8]) -> Result<Architecture, Stri
     }
 }
 
+/// Why [`read_part`] failed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum PartError {
+    /// `Part file ... not found or invalid` (`FromFile` returns nothing).
+    Invalid,
+    /// The reference aborts: yaml-cpp reading a directory through an
+    /// `std::ifstream` throws an uncaught `std::__ios_failure`. The
+    /// message of `std::terminate`.
+    Abort(String),
+}
+
+/// The `std::terminate` message of the reference for a part file that is
+/// a directory.
+pub(crate) const DIRECTORY_TERMINATE: &str = "terminate called after throwing an instance of 'std::__ios_failure'\n  what():  basic_filebuf::underflow error reading the file: Is a directory\n";
+
 /// `ArchType::Part::FromFile` for Series7.
-pub(crate) fn read_part(path: &[u8]) -> Option<Part> {
-    Part::from_yaml_file(&os_path(path), Architecture::Series7)
+pub(crate) fn read_part(path: &[u8]) -> Result<Part, PartError> {
+    let path = os_path(path);
+    if path.is_dir() {
+        return Err(PartError::Abort(DIRECTORY_TERMINATE.to_owned()));
+    }
+    Part::from_yaml_file(&path, Architecture::Series7)
         .ok()
         .filter(|p| p.architecture == Architecture::Series7)
+        .ok_or(PartError::Invalid)
 }
 
 /// The message of `std::terminate` for an uncaught exception of
@@ -158,7 +185,16 @@ pub(crate) fn write_frames(
     env: &Env,
     stderr: &mut dyn Write,
 ) -> Frames2Bit {
-    let (date, time) = env.source_date().unzip();
+    let (date, time) = match env.source_date() {
+        Ok(date_time) => date_time.unzip(),
+        Err(value) => {
+            let _ = writeln!(
+                stderr,
+                "warning: SOURCE_DATE_EPOCH={value:?} is not an integer, using the current time"
+            );
+            (None, None)
+        }
+    };
     let options = BitstreamOptions {
         design_name: frm_file.to_vec(),
         generator: b"xc7frames2bit".to_vec(),
@@ -173,6 +209,7 @@ pub(crate) fn write_frames(
             return Frames2Bit { code: 1 };
         }
     };
+    let mut bytes = bytes;
     let mut file = match std::fs::File::create(os_path(output_file)) {
         Ok(file) => file,
         Err(_) => {
@@ -182,6 +219,15 @@ pub(crate) fn write_frames(
             return Frames2Bit { code: 0 };
         }
     };
+    // `writeBitstream` seeks back to fill in the data length of the
+    // header (field `e`); on an unseekable output (a pipe) the seek fails
+    // and the field stays zero.
+    if std::io::Seek::stream_position(&mut file).is_err() {
+        if let Some(header) = fasm_xilinx::bitstream::BitHeader::parse(&bytes) {
+            let end = header.header_length;
+            bytes[end - 4..end].fill(0);
+        }
+    }
     if let Err(e) = file.write_all(&bytes).and_then(|()| file.flush()) {
         let _ = stderr.write_all(b"Error writing ");
         let _ = stderr.write_all(output_file);
@@ -255,11 +301,18 @@ pub fn run(
         return 1;
     }
     let part_file = parsed.string("part_file");
-    let Some(part) = read_part(part_file) else {
-        let _ = stderr.write_all(b"Part file ");
-        let _ = stderr.write_all(part_file);
-        let _ = stderr.write_all(b" not found or invalid\n");
-        return 1;
+    let part = match read_part(part_file) {
+        Ok(part) => part,
+        Err(PartError::Abort(message)) => {
+            let _ = stderr.write_all(message.as_bytes());
+            return ABORT;
+        }
+        Err(PartError::Invalid) => {
+            let _ = stderr.write_all(b"Part file ");
+            let _ = stderr.write_all(part_file);
+            let _ = stderr.write_all(b" not found or invalid\n");
+            return 1;
+        }
     };
     let frm_file = parsed.string("frm_file");
     let frames = match read_frames(frm_file, stderr) {

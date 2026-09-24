@@ -243,6 +243,9 @@ RUN_CASES = [
      '--fn_in', SMOKE] + OUTS,
     ['--db-root', str(DB), '--part', PART, '--part_file', SMOKE, '--fn_in',
      SMOKE] + OUTS,
+    # A directory as part file: xc7frames2bit aborts.
+    ['--db-root', str(DB), '--part', PART, '--part_file', '/tmp', '--fn_in',
+     SMOKE] + OUTS,
     DB_ARGS + OUTS,
     DB_ARGS + ['--fn_in', '/nonexistent.fasm'] + OUTS,
     DB_ARGS + ['--fn_in', SMOKE, '--frm_out', '/nonexistent/out.frm',
