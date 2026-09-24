@@ -309,3 +309,82 @@ fn helpshort_text() {
 "#
     );
 }
+
+/// `bitread` never panics on malformed bitstreams, in any output mode
+/// (a small synthetic part, no database needed).
+#[test]
+fn bitread_fuzz() {
+    use fasm_xilinx::bitstream::{bitstream_bytes, BitstreamOptions};
+    use fasm_xilinx::{Architecture, Frames, Part};
+    let dir = scratch("fuzz");
+    let yaml = "\
+!<xilinx/xc7series/part>
+idcode: 0x362d093
+global_clock_regions:
+  top:
+    rows:
+      0: {configuration_buses: {CLB_IO_CLK: {configuration_columns: {0: {frame_count: 3}, 1: {frame_count: 2}}}, BLOCK_RAM: {configuration_columns: {0: {frame_count: 2}}}}}
+      1: {configuration_buses: {CLB_IO_CLK: {configuration_columns: {0: {frame_count: 2}}}}}
+  bottom:
+    rows:
+      0: {configuration_buses: {CLB_IO_CLK: {configuration_columns: {0: {frame_count: 1}}}}}
+";
+    let part_path = dir.join("part.yaml");
+    std::fs::write(&part_path, yaml).unwrap();
+    let part = Part::from_yaml_file(&part_path, Architecture::Series7).unwrap();
+    let mut frames = Frames::zeroed(101, part.iter_frame_addresses().map(|a| a.0));
+    for (i, address) in frames.addresses().to_vec().into_iter().enumerate() {
+        frames.get_mut(address).unwrap()[i % 101] = 0x8000_0001 | (i as u32) << 4;
+    }
+    let options = BitstreamOptions {
+        date: Some(String::new()),
+        time: Some(String::new()),
+        ..Default::default()
+    };
+    let good = bitstream_bytes(&part, &frames, &options).unwrap();
+    let part_flag = [b"--part_file=".to_vec(), bytes(&part_path)].concat();
+    let modes: [&[&str]; 6] = [
+        &["-z", "-y"],
+        &["-x", "-C"],
+        &["-p"],
+        &["-p", "-z", "-F", "0:0x400000"],
+        &[],
+        &["-f", "0"],
+    ];
+    let mut state = 0x1234_5678_9ABC_DEF1_u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    for round in 0..300 {
+        let mut input = good.clone();
+        for _ in 0..(next() % 6) {
+            let i = (next() as usize) % input.len();
+            match next() % 3 {
+                0 => input[i] = next() as u8,
+                1 => input.truncate(i.max(1)),
+                _ => {
+                    input.remove(i);
+                }
+            }
+        }
+        let mode = modes[round % modes.len()];
+        let mut args = vec![part_flag.clone()];
+        args.extend(mode.iter().map(|a| arg(a)));
+        let aux = dir.join("aux.txt");
+        args.push([b"--aux=".to_vec(), bytes(&aux)].concat());
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = bitread::run(
+            b"bitread",
+            &args,
+            &Env::default(),
+            &mut input.as_slice(),
+            &mut out,
+            &mut err,
+        );
+        assert!(code <= 1);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

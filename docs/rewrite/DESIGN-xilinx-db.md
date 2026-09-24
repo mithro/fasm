@@ -2253,8 +2253,10 @@ the FASM file.
 autoincrement, padding frames), the packet sequence, a random frames ->
 bit -> frames round trip on a synthetic part (sparse and dense input give
 the same bit; rewriting the read frames gives the same bit), a reader
-fuzz test (mutated and random bitstreams: no panic), packet parsing and
-fuzzing, the header and dates, gflags. Integration tests
+fuzz test (mutated and random bitstreams: no panic; also through the
+`bitread` command line in every output mode), packet parsing and
+fuzzing, the header and dates, gflags (with a fuzz test). The random
+round trip also runs on every frame of xc7a35tcsg324-1. Integration tests
 (`rust/fasm-xilinx/tests/bitstream_real_db.rs`,
 `rust/fasm-cli/tests/xilinx_tools.rs`, skipped without the database):
 `smoke_x1y0.frm` -> byte for byte `smoke_x1y0.bit` (header fields taken

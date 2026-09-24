@@ -330,3 +330,56 @@ fn prjxray_test_bitstreams_give_equal_configurations() {
         assert_eq!(again.get(address), Some(words), "frame 0x{address:08X}");
     }
 }
+
+/// Property: random frames of xc7a35t -> bit -> frames gives the frames
+/// back (ECC bits cleared, zero frames skipped), and the ECC word of every
+/// frame read back is the frame's ECC.
+#[test]
+fn random_frames_round_trip_xc7a35t() {
+    let Some(root) = real_db("prjxray-db", "artix7") else {
+        return;
+    };
+    let part = load_part(&root);
+    let addresses: Vec<u32> = part.iter_frame_addresses().map(|a| a.0).collect();
+    for seed in 1..=4u64 {
+        let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let mut frames = Frames::new(101);
+        let density = [1, 10, 50, 100][seed as usize - 1];
+        for &address in &addresses {
+            if next() % 100 >= density {
+                continue;
+            }
+            let frame = frames.get_or_insert_zeroed(address);
+            for word in frame.iter_mut() {
+                if next() % 3 == 0 {
+                    *word = next() as u32;
+                }
+            }
+            frame[50] &= !0x1FFF;
+        }
+        let bytes = bitstream_bytes(&part, &frames, &fixed_options()).unwrap();
+        let reader = BitstreamReader::from_bytes(&bytes).unwrap();
+        let config = reader.configuration(&part).unwrap();
+        assert_eq!(config.len(), addresses.len());
+        let back = config.to_frames(true, true);
+        let mut nonzero = Frames::new(101);
+        for (address, words) in frames.iter() {
+            if words.iter().any(|&w| w != 0) {
+                nonzero.insert_if_absent(address, words);
+            }
+        }
+        let diff = back.diff(&nonzero);
+        assert!(diff.is_empty(), "seed {seed}: {}", diff[0]);
+        for (address, words) in config.frames() {
+            let mut expected = words.to_vec();
+            ecc::update_ecc(&mut expected);
+            assert_eq!(words, &expected[..], "ECC of 0x{address:08X}");
+        }
+    }
+}

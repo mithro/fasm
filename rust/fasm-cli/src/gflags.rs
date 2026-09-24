@@ -1040,6 +1040,56 @@ mod tests {
     }
 
     #[test]
+    fn fuzz_never_panics() {
+        let pieces = [
+            "-",
+            "--",
+            "-b",
+            "--nob",
+            "-n",
+            "=",
+            "0x",
+            "1",
+            "name",
+            "no",
+            "help",
+            "helpshort",
+            "helpxml",
+            "version",
+            "undefok",
+            "fromenv",
+            "tryfromenv",
+            "flagfile",
+            "x",
+            ",",
+            " ",
+            "helpon",
+            "helpmatch",
+            "helppackage",
+            "true",
+            "é",
+        ];
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..3000 {
+            let args: Vec<Vec<u8>> = (0..next() % 5)
+                .map(|_| {
+                    (0..next() % 4)
+                        .map(|_| pieces[(next() % pieces.len() as u64) as usize])
+                        .collect::<String>()
+                        .into_bytes()
+                })
+                .collect();
+            let _ = parse(&program(), &args, &|_| Some(b"help".to_vec()));
+        }
+    }
+
+    #[test]
     fn help() {
         let Outcome::Exit { code, stdout, .. } = run(&["--helpshort", "--name", "abc"]) else {
             panic!()
