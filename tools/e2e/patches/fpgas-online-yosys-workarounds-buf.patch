@@ -1,0 +1,63 @@
+Local patch for fpgas.online-test-designs (T7.2), applied automatically by
+tools/e2e/run-fpgas-online.sh to the pinned checkout at
+tools/e2e/build/fpgas.online-test-designs (gitignored, never committed
+itself -- see tools/e2e/README.md, "Setup", for how that checkout is made).
+
+Subject: designs/_shared/yosys_workarounds.py: also strip stray Yosys/abc9
+$buf cells
+
+Base commit: 37d24079b28179558632abc12fd92af4ff00a036
+Upstream:    https://github.com/fpgas-online/fpgas.online-test-designs
+
+Every SoC (CPU-bearing) design in this repository failed nextpnr-xilinx
+placement on this machine's pinned Yosys (OSS CAD Suite 2026-09-21, via
+tools/e2e/setup-openxc7.sh) with:
+
+    ERROR: Unable to place cell '$auto$rtlil_bufnorm.cc:462:bufNormalize$...',
+    no Bels remaining of type '$buf'
+
+This machine's Yosys + `-abc9` combination leaves stray RTLIL "buffer
+normal form" $buf pass-through cells behind that nextpnr-xilinx has no
+Bel type for. Unlike the existing `$scopeinfo` strip in this same file
+(debug annotations, safe to `delete` outright), a `$buf` cell's output
+wire would be left undriven by a bare `delete` -- so this patch instead
+inserts `techmap -map +/techmap.v t:$buf` (Yosys's own built-in
+techmap library maps `$buf` to a plain wire assignment) right before the
+`$scopeinfo` delete already there, resolving every `$buf` into a direct
+connection before nextpnr-xilinx ever sees the netlist.
+
+Pure-gateware designs (pmod-loopback, pmod-pin-id: no CPU, much smaller/
+simpler netlists) never hit this; every SoC design did (uart,
+spi-flash-id, ethernet-test, ddr-memory, pcie-enumeration, acorn-pcie).
+
+This is environment-specific (a particular Yosys/abc9 version pairing on
+this machine) rather than a bug in fpgas.online-test-designs itself, so
+it is kept here as a local patch rather than proposed upstream (task
+constraints also forbid sending anything upstream from this session).
+
+See tools/e2e/README.md, "A Yosys/abc9 $buf cell workaround", for the
+full writeup.
+
+Apply from the fpgas.online-test-designs checkout root with:
+    patch -p1 --forward -r - < tools/e2e/patches/fpgas-online-yosys-workarounds-buf.patch
+(--forward makes this a no-op, not an error, if already applied --
+tools/e2e/run-fpgas-online.sh relies on that to apply it idempotently on
+every run.)
+
+--- a/designs/_shared/yosys_workarounds.py
++++ b/designs/_shared/yosys_workarounds.py
+@@ -13,6 +13,16 @@
+ for _i, _line in enumerate(YOSYS_TEMPLATE_STRIP_SCOPEINFO):
+     if _line.startswith("write_"):
+         YOSYS_TEMPLATE_STRIP_SCOPEINFO.insert(_i, "delete t:$scopeinfo")
++        # T7.2 local patch (openXC7 flow, this machine's pinned Yosys):
++        # newer Yosys/abc9 can leave stray $buf pass-through cells behind
++        # (RTLIL "buffer normal form" cells, named like
++        # "$auto$rtlil_bufnorm.cc:462:bufNormalize$..."); nextpnr-xilinx
++        # has no Bel type for them ("no Bels remaining of type '$buf'").
++        # techmap's built-in +/techmap.v maps $buf to a plain assign,
++        # resolving them into a direct connection before nextpnr ever sees
++        # them (unlike $scopeinfo, deleting $buf outright would leave its
++        # output wire undriven).
++        YOSYS_TEMPLATE_STRIP_SCOPEINFO.insert(_i, "techmap -map +/techmap.v t:$buf")
+         break

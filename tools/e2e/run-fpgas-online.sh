@@ -125,6 +125,60 @@ ALL_PAIRS=(
   acorn-pcie:acorn
 )
 
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  cat <<'USAGE'
+usage: tools/e2e/run-fpgas-online.sh DESIGN BOARD
+       tools/e2e/run-fpgas-online.sh --list
+       tools/e2e/run-fpgas-online.sh --config DESIGN BOARD
+       tools/e2e/run-fpgas-online.sh -h | --help
+
+Builds one fpgas.online-test-designs Xilinx design/board pair with LiteX +
+the openXC7 flow, then reproduces its reference .frm (dense + sparse) via
+the byte-exact oracle tools (T7.2). See tools/e2e/README.md,
+"fpgas.online-test-designs corpus (T7.2)", for the full writeup.
+
+Modes:
+  DESIGN BOARD          Build one pair (output under
+                         tools/e2e/build/out/fpgas-online/<design>-<board>/).
+                         Follow with tools/e2e/install-fpgas-online-corpus.sh
+                         DESIGN BOARD to copy the result into the corpus.
+  --list                 Print every known design:board pair with its
+                         part, build kind (plain gateware or SoC), and
+                         extra CLI args, then exit.
+  --config DESIGN BOARD  Print that pair's internal table row
+                         (script|part|family|extra_args|kind), '|'
+                         separated -- used by
+                         tools/e2e/install-fpgas-online-corpus.sh and
+                         tests/e2e/test_fpgas_online.py so they never
+                         duplicate this table; not usually called by hand.
+
+Required setup, in order (each documented in tools/e2e/README.md):
+  tools/e2e/setup-openxc7.sh [--parts DEVICE]
+                          T7.1: yosys + nextpnr-xilinx + the openXC7
+                          snap's bundled prjxray-db. Run once with no
+                          --parts (builds the xc7a35tcsg324-1 chipdb),
+                          then again with --parts for every other part
+                          --list shows (from the MAIN tree, so the
+                          chipdb lands in the shared install -- see
+                          "Chip database sizes and timings").
+  tools/e2e/setup-litex.sh [--with-riscv-gcc]
+                          The pinned LiteX SoC builder venv. Most
+                          designs here are built with
+                          --no-compile-software and never need a RISC-V
+                          compiler; pass --with-riscv-gcc only for a
+                          design whose gateware script has no such
+                          escape hatch (currently: pcie-enumeration,
+                          acorn-pcie -- both fail later anyway, on a
+                          genuine GTP/PCIe-hard-IP gap, not on a missing
+                          compiler; see tools/e2e/README.md).
+  a pinned checkout of fpgas.online-test-designs at
+  tools/e2e/build/fpgas.online-test-designs (not created by any script
+  here in this environment -- see tools/e2e/README.md, "Setup", for how
+  it was made without a `git clone` directly into tools/e2e/build/).
+USAGE
+  exit 0
+fi
+
 if [[ "${1:-}" == "--config" ]]; then
   design_config "$2" "$3"
   exit 0
@@ -141,7 +195,7 @@ if [[ "${1:-}" == "--list" ]]; then
   exit 0
 fi
 
-[[ $# -eq 2 ]] || { echo "usage: $0 DESIGN BOARD   (or --list)" >&2; exit 2; }
+[[ $# -eq 2 ]] || { echo "usage: $0 DESIGN BOARD   (or --list, --config DESIGN BOARD, -h/--help)" >&2; exit 2; }
 DESIGN="$1"
 BOARD="$2"
 
@@ -156,6 +210,26 @@ SCRIPT_ABS="$DESIGN_DIR/$SCRIPT_REL"
 [[ -x "$LITEX_PY" ]] || die "$LITEX_PY not found; run tools/e2e/setup-litex.sh first"
 [[ -f "$SCRIPT_DIR/build/openxc7/status.json" ]] || die "openXC7 toolchain not set up; run tools/e2e/setup-openxc7.sh first"
 
+# Local, environment-specific patch to the pinned fpgas.online-test-designs
+# checkout (this machine's pinned Yosys/abc9 leaves stray $buf cells
+# nextpnr-xilinx can't place; see tools/e2e/patches/
+# fpgas-online-yosys-workarounds-buf.patch and tools/e2e/README.md, "A
+# Yosys/abc9 $buf cell workaround"). Applied idempotently on every run:
+# checked by content (grepping for the patch's own marker comment), not
+# by `patch`'s exit status -- GNU patch's `--forward` skips an
+# already-applied hunk cleanly but still exits 1 for it ("Reversed (or
+# previously applied) patch detected! Skipping patch."), which would
+# otherwise abort this script under `set -e` on every run after the
+# first.
+YOSYS_WORKAROUNDS_PY="$FPGAS_SRC/designs/_shared/yosys_workarounds.py"
+BUF_PATCH="$SCRIPT_DIR/patches/fpgas-online-yosys-workarounds-buf.patch"
+if [[ -f "$YOSYS_WORKAROUNDS_PY" && -f "$BUF_PATCH" ]] \
+  && ! grep -q "T7.2 local patch" "$YOSYS_WORKAROUNDS_PY"; then
+  log "applying local patch: $BUF_PATCH"
+  patch -p1 -d "$FPGAS_SRC" --forward -r - < "$BUF_PATCH" \
+    || die "failed to apply $BUF_PATCH to $FPGAS_SRC (a newer fpgas.online-test-designs checkout may have changed designs/_shared/yosys_workarounds.py; see tools/e2e/README.md)"
+fi
+
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/openxc7-env.sh"
 
@@ -163,8 +237,14 @@ source "$SCRIPT_DIR/openxc7-env.sh"
 # designs whose gateware script has no --no-compile-software escape hatch
 # (e.g. pcie-enumeration/acorn-pcie, which build a Builder directly with
 # compile_software always on); harmless to add to PATH unconditionally
-# when present.
-RISCV_GCC_DIR="$(find "$SCRIPT_DIR/build/riscv-gcc" -maxdepth 1 -type d -name 'xpack-riscv-none-elf-gcc-*' 2>/dev/null | head -1)"
+# when present. tools/e2e/build/riscv-gcc does NOT exist under the
+# default setup (--with-riscv-gcc is opt-in), so this must not be fatal:
+# under `set -euo pipefail`, `find` returning nonzero (directory not
+# found) makes the whole `find | head` pipeline "fail" via pipefail even
+# though `head` itself exits 0 -- guarded with `|| true` so a plain,
+# undecorated `setup-litex.sh` (no --with-riscv-gcc) does not silently
+# kill this script here.
+RISCV_GCC_DIR="$(find "$SCRIPT_DIR/build/riscv-gcc" -maxdepth 1 -type d -name 'xpack-riscv-none-elf-gcc-*' 2>/dev/null | head -1 || true)"
 if [[ -n "$RISCV_GCC_DIR" && -d "$RISCV_GCC_DIR/bin" ]]; then
   export PATH="$RISCV_GCC_DIR/bin:$PATH"
 fi
