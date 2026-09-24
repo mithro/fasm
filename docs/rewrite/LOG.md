@@ -423,3 +423,9 @@ what happened, branch/commit references, open issues.
 * Housekeeping: the shared scratchpad reached ENOSPC (11 GB of finished
   review/implementation scratch); deleted finished scratch directories,
   17 GB free again. Reviewer briefs now cap and clean their scratch use.
+* T3.3 done: review found only a documentation gap (tied sort keys may
+  have `__lt__` called twice per comparison, unlike CPython's sort), fixed
+  in b957be5 with a regression test. Merged with --no-ff; Python suite
+  1011 passed on the merged tree; worktree removed. Phase 3 complete.
+* T7.2 (fpgas.online-test-designs Xilinx designs via LiteX + openXC7)
+  started.
