@@ -575,6 +575,9 @@ python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
   `fasm2frames` with and without its database cache, against golden
   reference results (`tests/corpus/xilinx/artix7/generated/`, written by
   `python3 tests/cli/test_xilinx_corpus.py --write-goldens`).
+  `tests/cli/test_gen_xilinx_corpus.py` needs no reference tools: the
+  generator's own model of prjxray (`--expected-frm`) against the Rust
+  `fasm2frames` on the test databases.
 
 See `docs/rewrite/DESIGN-xilinx-db.md` §8.9 for what is generated and
 compared, the run matrix and the timings.

@@ -2687,6 +2687,9 @@ xcfasm runs on each side:
   (including kintex7, whose PUDC_B features exist although
   `fasm2frames.py` notes its IOSTANDARD choice is wrong for K70T). No
   Rust bug was found this way.
+  `tests/cli/test_gen_xilinx_corpus.py` runs this cross check on the
+  test databases of `rust/fasm-xilinx/testdata` (and on xc7a35tcsg324-1
+  `--tiles first` when fetched), without reference tools.
 * Database facts found on the way: no unreachable segbits key in the four
   families; the most exclusive options per tile type need up to 21 files
   for the parts with few `_SING` IOB tiles.
