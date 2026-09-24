@@ -655,6 +655,58 @@ unsafe extern "C" fn reverse_key(group: *const c_char, _: usize, _: *mut c_void)
     -i64::from(group[0])
 }
 
+/// A non-deterministic key: the number of calls so far (per `user`
+/// counter), negated so that later calls sort first.
+unsafe extern "C" fn counter_key(group: *const c_char, len: usize, user: *mut c_void) -> i64 {
+    // SAFETY: `user` is the `Vec` passed by the test; `group` is NUL
+    // terminated with `len` bytes.
+    unsafe {
+        let calls = &mut *user.cast::<Vec<String>>();
+        let group = CStr::from_ptr(group).to_str().unwrap();
+        assert_eq!(group.len(), len);
+        calls.push(group.to_owned());
+        -(calls.len() as i64)
+    }
+}
+
+#[test]
+fn merge_and_sort_calls_the_key_once_per_group() {
+    // Enough groups that the sort compares each one several times.
+    let text: String = (0..50)
+        .map(|i| format!("T{:02}.F\n", (i * 37) % 50))
+        .collect();
+    let file = parse(&text);
+    let mut calls: Vec<String> = Vec::new();
+    // SAFETY: valid pointers; `counter_key` accepts `user`.
+    unsafe {
+        let merged = fasm_file_merge_and_sort_ex(
+            file,
+            None,
+            Some(counter_key),
+            ptr::from_mut(&mut calls).cast::<c_void>(),
+            ptr::null_mut(),
+        );
+        assert!(!merged.is_null(), "a non-deterministic key must not fail");
+        // Each group's key was computed exactly once...
+        let mut groups = calls.clone();
+        groups.sort();
+        groups.dedup();
+        assert_eq!(groups.len(), 50);
+        assert_eq!(calls.len(), 50);
+        // ... and the groups are in the order of those keys (the later a
+        // group was first seen, the smaller its key).
+        let expected: String = calls.iter().rev().map(|g| format!("{g}.F\n")).collect();
+        let expected = expected.replace(".F\n", ".F\n\n");
+        let expected = format!("{}\n", expected.trim_end());
+        assert_eq!(
+            take_string(fasm_file_to_string(merged, false, ptr::null_mut())),
+            expected
+        );
+        fasm_file_free(merged);
+        fasm_file_free(file);
+    }
+}
+
 #[test]
 fn merge_and_sort() {
     let file = parse("B.X[1]\n# about A\nA.Y\nB.X[0]\nC.ZERO\n");

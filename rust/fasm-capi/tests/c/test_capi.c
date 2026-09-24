@@ -558,6 +558,57 @@ static int64_t reverse_key(const char *group_id, size_t len, void *user) {
     return len > 0 ? -(int64_t)(unsigned char)group_id[0] : 0;
 }
 
+/* Calls of counter_key: the group ids (one letter each) in call order. */
+struct key_calls {
+    int count;
+    char order[64];
+};
+
+/* A non-deterministic key: minus the number of calls so far. */
+static int64_t counter_key(const char *group_id, size_t len, void *user) {
+    struct key_calls *calls = user;
+    if (len == 1 && calls->count < (int)sizeof(calls->order)) {
+        calls->order[calls->count] = group_id[0];
+    }
+    calls->count++;
+    return -(int64_t)calls->count;
+}
+
+static void test_merge_and_sort_counter_key(void) {
+    /* 26 groups A.F .. Z.F: the sort compares each several times. */
+    char text[26 * 4 + 1];
+    char expected[26 * 5 + 1];
+    char *p = text;
+    char *q = expected;
+    struct key_calls calls;
+    int i;
+    fasm_file *file;
+    fasm_file *merged;
+    fasm_error *err = NULL;
+
+    for (i = 0; i < 26; i++) {
+        *p++ = (char)('A' + i);
+        memcpy(p, ".F\n", 3);
+        p += 3;
+    }
+    *p = '\0';
+    memset(&calls, 0, sizeof(calls));
+    file = parse(text);
+    merged = fasm_file_merge_and_sort_ex(file, NULL, counter_key, &calls, &err);
+    REQUIRE(merged != NULL, "a non-deterministic key must not fail: %s", fasm_error_message(err));
+    REQUIRE(calls.count == 26, "sort key called once per group (%d calls)", calls.count);
+    /* The group seen last got the smallest key, so it is printed first. */
+    for (i = 25; i >= 0; i--) {
+        *q++ = calls.order[i];
+        memcpy(q, i > 0 ? ".F\n\n" : ".F\n", i > 0 ? 4 : 3);
+        q += i > 0 ? 4 : 3;
+    }
+    *q = '\0';
+    CHECK(take_eq(fasm_file_to_string(merged, false, NULL), expected), "counter key order");
+    fasm_file_free(merged);
+    fasm_file_free(file);
+}
+
 static void test_merge_and_sort(void) {
     fasm_file *file = parse("B.X[1]\n# about A\nA.Y\nB.X[0]\nC.ZERO\n");
     fasm_file *merged;
@@ -821,6 +872,7 @@ int main(int argc, char **argv) {
     test_errors();
     test_streaming();
     test_merge_and_sort();
+    test_merge_and_sort_counter_key();
     test_build();
     test_null_handling();
 
