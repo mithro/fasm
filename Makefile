@@ -205,6 +205,21 @@ difftest:
 
 .PHONY: difftest
 
+# Differential test of the Rust `fasm2frames` against the reference
+# f4pga-xc-fasm/prjxray tool (tools/difftest-xilinx.py, T5.4/T5.5): identical
+# .frm output, stdout, exit code and (normalised) stderr for every FASM file
+# of tests/corpus/xilinx/ (with the databases fetched by tools/fetch-db.sh,
+# under $FASM_DB_CACHE or tests/oracle/build/db) and tests/corpus/f4pga-xc-fasm/
+# (miniature database). Needs tests/oracle/setup-xilinx.sh; set ORACLE_DIR
+# to use another checkout's oracle. DIFFTEST_XILINX_ARGS can add e.g.
+# `--jobs N`, `--filter GLOB` or `-v`.
+xilinx-difftest: DIFFTEST_XILINX_ARGS ?=
+xilinx-difftest:
+	cargo build --release -p fasm-cli
+	python3 tools/difftest-xilinx.py --oracle $(ORACLE_DIR)/fasm2frames-oracle $(DIFFTEST_XILINX_ARGS)
+
+.PHONY: xilinx-difftest
+
 # C API (rust/fasm-capi, include/fasm/fasm.h; see docs/rewrite/DESIGN-capi.md).
 # ------------------------------------------------------------------------
 
