@@ -2119,8 +2119,12 @@ oracle is Python 3.11 with prjxray's lazy per-tile-type segbits loading):
 
 For small designs the run is dominated by opening the database (the Rust
 loader reads every tile type up front, 90 ms for xc7a35t, 170-190 ms for
-xc7a200t, where Python only reads the tile types the design uses); the
-binary cache of T5.3 addresses this. Breakdown of the 1M line run
+xc7a200t, where Python only reads the tile types the design uses), so
+the counter_test design is only 3-4x faster than the reference, short of
+the 10x target. This is accepted for now: making the database load cheap
+is exactly the job of the binary cache of T5.3 (a memory mapped, already
+indexed database), which should bring small designs to a few ms plus
+the assembly (1.4 ms for counter_test dense). Breakdown of the 1M line run
 (`cargo bench -p fasm-xilinx --bench assemble`): open 170 ms, parse
 150-170 ms, assemble 326 ms, `get_frames` dense 40-50 ms, `write_frm`
 20-25 ms (21.6 MiB).
