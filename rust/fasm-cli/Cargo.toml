@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Command line tools for FASM: the `fasm` binary (100% command line compatible with the original Python `fasm/tool.py`) and, later, the Xilinx bitstream tool binaries."
+description = "Command line tools for FASM: the `fasm` binary (100% command line compatible with the original Python `fasm/tool.py`) and the Xilinx bitstream tools (`fasm2frames`)."
 
 [lib]
 name = "fasm_cli"
@@ -16,8 +16,13 @@ path = "src/lib.rs"
 name = "fasm"
 path = "src/main.rs"
 
+[[bin]]
+name = "fasm2frames"
+path = "src/bin/fasm2frames.rs"
+
 [dependencies]
 fasm = { path = "../fasm" }
+fasm-xilinx = { path = "../fasm-xilinx" }
 
 # Only for the terminal width (`ioctl(TIOCGWINSZ)`), which argparse uses to
 # wrap the help and usage messages.

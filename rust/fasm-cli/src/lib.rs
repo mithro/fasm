@@ -17,13 +17,17 @@
 //! Command line tools for FASM, as a library shared by the binaries:
 //!
 //! * `fasm` ([`tool`]): a byte for byte compatible replacement for the
-//!   original Python `fasm` console script (`fasm/tool.py`).
+//!   original Python `fasm` console script (`fasm/tool.py`);
+//! * `fasm2frames` ([`fasm2frames`]): a replacement for f4pga-xc-fasm's
+//!   `xc_fasm.fasm2frames` (FASM -> `.frm` frames for Xilinx 7 series
+//!   parts).
 //!
-//! The tools parse their arguments with an emulation of Python's argparse
+//! Both parse their arguments with an emulation of Python's argparse
 //! ([`argparse`]). The known differences to the original tools are listed
 //! in `docs/rewrite/COMPAT.md`.
 
 pub mod argparse;
+pub mod fasm2frames;
 pub mod pystr;
 pub mod terminal;
 pub mod tool;
