@@ -438,3 +438,12 @@ what happened, branch/commit references, open issues.
   Fixes requested; also COMPAT/difftest notes (STEPDOWN KeyError tile is
   PYTHONHASHSEED dependent in Python; parser level differences; explicit
   value range rule in difftest-xilinx.py; hot path allocation numbers).
+* T5.4/T5.5 done: fixes 1842161 (parse error precedence in fasm2frames),
+  15ed304 (ROI required_features object keeps file order), a12b8d3
+  (warning line rendered once per feature), 1a1ec26 (tests), b1b16ae
+  (docs). Orchestrator re-ran both reviewer repros: identical to the
+  oracle. Merged with --no-ff; on the merged tree: 378 Rust tests, `make
+  xilinx-difftest` 87/87 identical, tests/cli 1364 passed 12 skipped;
+  worktree removed.
+* T5.6 (Series7 bitstream writer/reader, xc7frames2bit compatible CLI)
+  started.
