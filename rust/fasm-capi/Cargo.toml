@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
+rust-version.workspace = true
 description = "C ABI (libfasm) for the fasm crate: header include/fasm/fasm.h generated with cbindgen, plus the header-only C++ wrapper include/fasm/fasm.hpp."
 
 [lib]

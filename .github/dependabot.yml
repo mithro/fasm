@@ -1,0 +1,21 @@
+# Dependabot configuration. See docs/rewrite/TASKS.md T0.5.
+#
+# Only the Rust workspace (Cargo) and the GitHub Actions workflows
+# themselves are covered here; the Python package's dependencies
+# (requirements.txt/setup.py) are not (Phase 3 of the rewrite replaces the
+# Python packaging with maturin, so pinning that churn now is not useful).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci(deps)"

@@ -1,0 +1,119 @@
+# CI for the Cargo workspace in rust/ (see docs/rewrite/PLAN.md,
+# docs/rewrite/TASKS.md T0.5). This is additional to, and does not replace,
+# the existing Python workflows (presubmit.yml, wheel.yml,
+# publish-to-pypi.yml, check-install.yml); those keep covering the Python
+# package until Phase 3 of the rewrite replaces them.
+#
+# Not covered here (deliberately):
+#   * The Xilinx oracle (tests/oracle/setup-xilinx.sh: prjxray/prjuray
+#     Python packages + C++ tools + prjxray-db/prjuray-db checkouts) is not
+#     built in CI: the databases alone are gigabytes per family and the
+#     build takes far longer than fits a normal CI budget. It stays a
+#     manual/local step until Phase 5/6 need it continuously, at which
+#     point it should get its own opt-in, longer-running workflow.
+#   * The openXC7 (nextpnr-xilinx) / OSS CAD Suite toolchain
+#     (tools/e2e/setup-openxc7.sh) is not installed in CI either, for the
+#     same reason (large downloads, long build). tests/e2e/test_openxc7.py
+#     skips cleanly (via pytest.mark.skipif on its .setup-ok marker) when
+#     the toolchain has not been set up, so it is harmless to leave out of
+#     the `oracle` job's pytest invocation below rather than worth adding
+#     just to watch it skip.
+name: rust
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --workspace
+        run: cargo test --workspace
+      # The workspace is pure Rust with no platform specific code paths
+      # yet, so this is expected to pass on every OS; no
+      # continue-on-error for windows.
+      - name: cargo doc --no-deps --workspace
+        # Doc generation is platform independent; only run it once
+        # (ubuntu-latest) instead of on every matrix leg.
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --no-deps --workspace
+
+  msrv:
+    name: msrv (1.88.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # dtolnay/rust-toolchain has no per-version release tags to pin by
+      # major version (unlike actions/checkout etc.); @master with an
+      # explicit `toolchain:` input is the documented way to install a
+      # specific, non-"stable" Rust version.
+      # Keep this version in sync with `workspace.package.rust-version`
+      # in the root Cargo.toml.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-1.88.0
+      - name: cargo build --workspace (MSRV)
+        run: cargo build --workspace
+      - name: cargo test --workspace (MSRV)
+        run: cargo test --workspace
+
+  oracle:
+    name: oracle differential test infra
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # tests/oracle/setup.sh checks out a pinned historical commit
+          # (ORACLE_COMMIT) as a `git worktree`; that commit must be
+          # reachable, so the checkout needs full history, not the
+          # default shallow clone.
+          fetch-depth: 0
+      - name: Install oracle build dependencies (Ubuntu)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake default-jre-headless uuid-dev libantlr4-runtime-dev
+      - name: Cache oracle venv
+        uses: actions/cache@v4
+        with:
+          path: tests/oracle/venv
+          # Keyed on the setup script (whose content embeds the pinned
+          # ORACLE_COMMIT default, so a pin change changes this hash too)
+          # plus the OS. tests/oracle/build/ (the pristine git worktree,
+          # install logs, status.json) is intentionally NOT cached: it is
+          # tied to this run's own .git object store and setup.sh's
+          # marker-file fast path (tests/oracle/venv/.oracle-setup-ok)
+          # already makes a cache hit on venv/ alone skip the rebuild.
+          key: oracle-venv-${{ runner.os }}-${{ hashFiles('tests/oracle/setup.sh') }}
+      - name: Set up oracle venv
+        run: tests/oracle/setup.sh
+      - name: Run oracle self tests
+        run: tests/oracle/venv/bin/pytest tests/oracle/test_oracle.py -v
