@@ -395,6 +395,9 @@ mod tests {
         assert_eq!(digits("", 4301, ""), None);
         assert_eq!(py_int(&s(&format!("{}50", "0".repeat(4299)))), None);
         assert_eq!(py_int(&s(&format!("{}50", "0".repeat(4298)))), Some(50));
-        assert_eq!(py_int(&s(&format!("{}1", "1_".repeat(4299)))), Some(i64::MAX));
+        assert_eq!(
+            py_int(&s(&format!("{}1", "1_".repeat(4299)))),
+            Some(i64::MAX)
+        );
     }
 }
