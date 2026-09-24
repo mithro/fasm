@@ -125,8 +125,9 @@ rust-check: rust-lint rust-doc rust-test
 # Differential test of the Rust `fasm` binary against the original Python
 # tool (tests/cli/test_cli_compat.py): identical stdout, stderr and exit
 # code over the FASM corpus and argparse edge cases; and of the Rust
-# `fasm2frames` command line against f4pga-xc-fasm's
-# (tests/cli/test_fasm2frames_compat.py, needs tests/oracle/setup-xilinx.sh).
+# `fasm2frames`, `xcfasm`, `xc7frames2bit` and `bitread` command lines
+# against f4pga-xc-fasm's and prjxray's (tests/cli/test_*_compat.py, need
+# tests/oracle/setup-xilinx.sh).
 # Needs the oracle venv (tests/oracle/setup.sh); to use another checkout's
 # oracle (e.g. from a worktree) set ORACLE_DIR to its tests/oracle
 # directory.
@@ -135,6 +136,8 @@ ORACLE_DIR ?= $(TOP_DIR)/tests/oracle
 cli-difftest:
 	cargo build --release -p fasm-cli
 	FASM_ORACLE=$(ORACLE_DIR)/fasm-oracle FASM2FRAMES_ORACLE=$(ORACLE_DIR)/fasm2frames-oracle \
+	XC7FRAMES2BIT_ORACLE=$(ORACLE_DIR)/xc7frames2bit-oracle BITREAD_ORACLE=$(ORACLE_DIR)/bitread-oracle \
+	XCFASM_ORACLE=$(ORACLE_DIR)/xcfasm-oracle \
 		$(ORACLE_DIR)/venv/bin/pytest tests/cli
 
 .PHONY: cli-difftest
@@ -155,13 +158,18 @@ difftest:
 # .frm output, stdout, exit code and (normalised) stderr for every FASM file
 # of tests/corpus/xilinx/ (with the databases fetched by tools/fetch-db.sh,
 # under $FASM_DB_CACHE or tests/oracle/build/db) and tests/corpus/f4pga-xc-fasm/
-# (miniature database). Needs tests/oracle/setup-xilinx.sh; set ORACLE_DIR
+# (miniature database); and of the Rust `xc7frames2bit`, `bitread` and
+# `xcfasm` against prjxray's and f4pga-xc-fasm's (T5.6/T5.7: identical .bit,
+# bitread output and xcfasm results). Needs tests/oracle/setup-xilinx.sh; set ORACLE_DIR
 # to use another checkout's oracle. DIFFTEST_XILINX_ARGS can add e.g.
 # `--jobs N`, `--filter GLOB` or `-v`.
 xilinx-difftest: DIFFTEST_XILINX_ARGS ?=
 xilinx-difftest:
 	cargo build --release -p fasm-cli
-	python3 tools/difftest-xilinx.py --oracle $(ORACLE_DIR)/fasm2frames-oracle $(DIFFTEST_XILINX_ARGS)
+	python3 tools/difftest-xilinx.py --oracle $(ORACLE_DIR)/fasm2frames-oracle \
+		--frames2bit-oracle $(ORACLE_DIR)/xc7frames2bit-oracle \
+		--bitread-oracle $(ORACLE_DIR)/bitread-oracle \
+		--xcfasm-oracle $(ORACLE_DIR)/xcfasm-oracle $(DIFFTEST_XILINX_ARGS)
 
 .PHONY: xilinx-difftest
 

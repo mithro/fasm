@@ -20,15 +20,24 @@
 //!   original Python `fasm` console script (`fasm/tool.py`);
 //! * `fasm2frames` ([`fasm2frames`]): a replacement for f4pga-xc-fasm's
 //!   `xc_fasm.fasm2frames` (FASM -> `.frm` frames for Xilinx 7 series
-//!   parts).
+//!   parts);
+//! * `xcfasm` ([`xcfasm`]): f4pga-xc-fasm's `xc_fasm.xc_fasm` (FASM ->
+//!   `.frm` -> `.bit` in one step);
+//! * `xc7frames2bit` ([`xc7frames2bit`]) and `bitread` ([`bitread`]):
+//!   prjxray's C++ tools (`.frm` -> `.bit`, `.bit` -> frames).
 //!
-//! Both parse their arguments with an emulation of Python's argparse
-//! ([`argparse`]). The known differences to the original tools are listed
+//! The Python tools parse their arguments with an emulation of Python's
+//! argparse ([`argparse`]), the prjxray tools with an emulation of gflags
+//! ([`gflags`]). The known differences to the original tools are listed
 //! in `docs/rewrite/COMPAT.md`.
 
 pub mod argparse;
+pub mod bitread;
 pub mod fasm2frames;
+pub mod gflags;
 pub mod pystr;
 pub mod terminal;
 pub mod tool;
 mod unicode_tables;
+pub mod xc7frames2bit;
+pub mod xcfasm;

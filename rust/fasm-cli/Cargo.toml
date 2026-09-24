@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
-description = "Command line tools for FASM: the `fasm` binary (100% command line compatible with the original Python `fasm/tool.py`) and the Xilinx bitstream tools (`fasm2frames`)."
+description = "Command line tools for FASM: the `fasm` binary (100% command line compatible with the original Python `fasm/tool.py`) and the Xilinx bitstream tools (`fasm2frames`, `xcfasm`, `xc7frames2bit`, `bitread`)."
 
 [lib]
 name = "fasm_cli"
@@ -19,6 +19,18 @@ path = "src/main.rs"
 [[bin]]
 name = "fasm2frames"
 path = "src/bin/fasm2frames.rs"
+
+[[bin]]
+name = "xcfasm"
+path = "src/bin/xcfasm.rs"
+
+[[bin]]
+name = "xc7frames2bit"
+path = "src/bin/xc7frames2bit.rs"
+
+[[bin]]
+name = "bitread"
+path = "src/bin/bitread.rs"
 
 [dependencies]
 fasm = { path = "../fasm" }

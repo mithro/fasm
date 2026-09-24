@@ -379,6 +379,143 @@ the Rust side: both become `<value range error>`, exit code 1); every
 other stderr difference fails. `tests/cli/test_fasm2frames_compat.py`
 applies rules 1 to 3.
 
+## `xc7frames2bit` and `bitread` (`rust/fasm-cli/src/{xc7frames2bit,bitread,gflags}.rs`, `rust/fasm-xilinx/src/bitstream/`, T5.6)
+
+### Rule
+
+The `xc7frames2bit` and `bitread` binaries are drop in replacements for
+prjxray's C++ tools of the same name (`tools/xc7frames2bit.cc`,
+`tools/bitread.cc`; the oracles `tests/oracle/xc7frames2bit-oracle` and
+`tests/oracle/bitread-oracle`) for the Series7 architecture:
+
+* the same flags, parsed by an emulation of the gflags version bundled
+  with prjxray (`rust/fasm-cli/src/gflags.rs`): `-flag`/`--flag`,
+  `=value` or the next argument, `-noflag` for booleans, the boolean and
+  int32 value syntax, the permutation of non flag arguments, `--`, the
+  error messages collected per flag and printed sorted by flag name
+  (exit code 1), `--help`/`--helpful`/`--helpshort`/`--helpon`/
+  `--helpmatch`/`--helppackage`/`--helpxml` (help on stdout, exit code 1)
+  with gflags' line breaking, `--version` (exit code 0), `--undefok`,
+  `--fromenv`, `--tryfromenv`; an unknown `--architecture` is Series7,
+  like the reference's default variant;
+* `xc7frames2bit`: the same messages and exit codes (`Part file X not
+  found or invalid`, `Unable to open frm file: X` / `Frames file X not
+  found or invalid`, the `Frame <address>: found <n> words instead of
+  101` warnings, `Unable to open file for writting: X` / `Failed to
+  write bitstream` / `Exitting` with exit code 0, an abort (SIGABRT) with
+  `terminate called after throwing an instance of
+  'std::invalid_argument'` (or `'std::out_of_range'`) / `what():  stoul`
+  for a `.frm` number `std::stoul` rejects, an empty line included), and
+  byte for byte the same `.bit` for the same `.frm`, part file, part name,
+  `--frm_file` path and time (header, sync words, packet sequence with the
+  part's IDCODE, every frame of the part in address order with its ECC,
+  two zero frames between rows, frames of the `.frm` outside the part
+  kept);
+* `bitread`: the same stdout (`Bitstream size`, `Config size`, `Number of
+  configuration frames`, `DONE`), stderr, exit codes and output for every
+  flag (`-x`, `-y`, `-p`, the hex dump, `-o`, `-z`, `-C`, `-f`, `-F`,
+  `--aux`; `-c` is accepted and ignored like in the reference), the input
+  read from the file (exactly one positional argument) or stdin, and the
+  reference's reader semantics (sync word searched anywhere, packet
+  parsing that stops at an incomplete packet or a header type above 2,
+  the `FAR`/`CMD`/`CTL1`/`MASK` register machine with the per frame CRC
+  quirk, the two padding frames skipped between rows, `IDCODE` checked:
+  `Bitstream does not appear to be for this part`);
+* the reference's handling of unusual files: `bitread` maps the input
+  with `mmap` after an `fstat`, so a file whose size is 0 (an empty
+  file, a pipe, a `/proc` file) is an empty input (`Bitstream size: 0
+  bytes`, `Input doesn't look like a bitstream`, exit code 1) and exactly
+  `st_size` bytes are read; `xc7frames2bit` writing to an unseekable
+  output (`--output_file=/dev/stdout | ...`) cannot seek back to fill in
+  the header's data length, which stays 0 (the 4 bytes after the `e`
+  tag); a `--part_file` that is a directory makes yaml-cpp's
+  `std::ifstream` throw: `terminate called after throwing an instance of
+  'std::__ios_failure'` / `what():  basic_filebuf::underflow error
+  reading the file: Is a directory`, SIGABRT (both tools; the Rust
+  binaries print the same and call `abort()`);
+* `bitread` streams its output (frame by frame, through a buffer) and
+  flushes stdout after the `Bitstream size`, `Config size` and `Number
+  of configuration frames` lines (the reference's `std::endl`) and before
+  anything goes to stderr, so stdout and stderr merged (`2>&1`) come out
+  in the reference's order; peak memory stays small (22 MiB for
+  `-x -o` on a dense random xc7a200t bitstream, a 340 MiB output; the
+  reference: 68 MiB).
+
+`part.yaml` files are read by the database loader's YAML subset; for
+Series7 it now also accepts the `configuration_ranges` form the C++
+decoder supports (prjxray's `lib/test_data/configuration_test.yaml`).
+
+`tools/difftest-xilinx.py` (`make xilinx-difftest`) turns the oracle's
+`.frm` of every successful dense, `--sparse`, `--emit_pudc_b_pullup`
+and ROI run of the artix7 corpus into a `.bit` with both
+`xc7frames2bit`s (identical files; the Rust tool gets the reference's
+header time through `SOURCE_DATE_EPOCH`) and reads it with both
+`bitread`s and eleven flag sets; it also runs both `bitread`s on the golden
+`smoke_x1y0.bit` and prjxray's reference bitstreams
+(`lib/test_data/configuration_test{,.debug,.perframecrc}.bit`, the
+Series7 `design.bit` and `bram.bit` of `ToolsTestData.tar.gz`, Vivado
+outputs). `tests/cli/test_xc7frames2bit_compat.py` and
+`tests/cli/test_bitread_compat.py` compare the command lines (help, flag
+errors, malformed `.frm`/`.bit` input, every output mode).
+
+### Differences
+
+| Case | Original (prjxray C++ tools) | Rust |
+|---|---|---|
+| Source file names in the help (`Flags from <file>:`, `<file>` of `--helpxml`) | the absolute paths of the build (`/…/prjxray/tools/xc7frames2bit.cc`, `/…/prjxray/third_party/gflags/src/gflags.cc`) | the same paths relative to the prjxray checkout (`tools/xc7frames2bit.cc`, `third_party/gflags/src/gflags.cc`), so `--helpmatch` with a part of the build directory matches nothing. The tests replace the reference's prefix |
+| `--flagfile=FILE` | reads more flags from `FILE` | `ERROR: --flagfile is not supported by this implementation of the prjxray tools`, exit code 1 |
+| `--tab_completion_word=WORD` | prints bash completions of `WORD`, exit code 0 | ignored |
+| gflags' "Did you really mean to set flag ..." warning | only for string flags whose help mentions `true`/`false` (none in these tools) | not implemented |
+| `--architecture=UltraScale`, `UltraScalePlus`, `Spartan6` | supported (UltraScale/UltraScale+ with the Series7 part types and ECC of the plain prjxray checkout) | `xc7frames2bit: --architecture=UltraScale is not supported yet (only Series7)` (or `bitread: ...`), exit code 1 (T6.2) |
+| A `part.yaml` of another architecture (`!<xilinx/xcupseries/part>`) given to these Series7 tools | depends on what yaml-cpp's Series7 decoder makes of it | `Part file ... not found or invalid` |
+| `.bit` header date and time | the current UTC time | the same, or the time of `$SOURCE_DATE_EPOCH` (seconds since the epoch) when it is set: an extension for reproducible builds, used by the tests. A value that is not an integer is reported (`warning: SOURCE_DATE_EPOCH="..." is not an integer, using the current time` on stderr) and the current time is used |
+| An error writing the `.bit` after the file was created (`ENOSPC`) | ignored: a truncated file, exit code 0 | `Error writing <file>: <error>`, `Failed to write bitstream`, `Exitting`, exit code 1 |
+| `bitread` on a bitstream whose length after the sync word is not a multiple of 4 bytes | `terminate called after throwing an instance of 'std::out_of_range'` / `what():  pos > size()`, SIGABRT | the incomplete last word is ignored |
+| `bitread --help`, `--helpxml` | | one more flag, `--frm_out=FILE` (listed under `rust/fasm-cli/src/bitread_extensions.rs`): writes the frames selected by `-z`, `-f` and `-F` as a `.frm` file (the ECC bits cleared unless `-C`), the inverse of `xc7frames2bit` |
+| A huge `configuration_ranges` range in a `part.yaml` (more than 2^26 frames) | allocates every address | an error |
+
+## `xcfasm` (`rust/fasm-cli/src/xcfasm.rs`, T5.7)
+
+### Rule
+
+The `xcfasm` binary is a drop in replacement for f4pga-xc-fasm's `xcfasm`
+console script (`xc_fasm.xc_fasm.main`, the oracle
+`tests/oracle/xcfasm-oracle`): the same arguments (argparse emulation:
+`--db-root` and `--part` with the `XRAY_*` defaults, `--part_file`
+(required), `--sparse`, `--roi`, `--emit_pudc_b_pullup`, `--debug`,
+`--frm2bit`, `--fn_in`, `--bit_out`, `--frm_out`), the same help and
+usage errors, the frames assembled exactly like `fasm2frames` (every rule
+and difference of the `fasm2frames` section above applies, including
+the error messages), the `.frm` written to `--frm_out`, and then the
+bitstream written to `--bit_out` like `xc7frames2bit --frm_file
+<frm_out> --output_file <bit_out> --part_name <part> --part_file
+<part_file>` would, with its messages (`Part file X not found or
+invalid`, `Unable to open file for writting: X` ... with exit code 0)
+and, when that tool would fail, the last line of the reference's
+traceback, `subprocess.CalledProcessError: Command '<frm2bit> --frm_file
+... --part_file <part_file>' returned non-zero exit status 1.` (exit code
+1). Like the reference, a missing `--fn_in` fails with `TypeError:
+encoding without a string argument` after the database was opened, and a
+missing `--bit_out` writes the bitstream to a file named `None`.
+
+`tools/difftest-xilinx.py` runs both tools on every FASM file of the
+artix7 corpus (dense, `--sparse`, `--sparse --debug
+--emit_pudc_b_pullup`, ROI) and compares the `.frm` and `.bit` files
+(the reference time injected), stdout, exit codes and the normalised
+stderr; `tests/cli/test_xcfasm_compat.py` covers the command line and the
+error cases.
+
+### Differences
+
+| Case | Original (`xc_fasm.xc_fasm`) | Rust |
+|---|---|---|
+| `--frm2bit TOOL` | the program run through the shell to write the `.bit` (`subprocess.check_output(..., shell=True)`): any tool; a missing one fails with `/bin/sh: 1: TOOL: not found` and `CalledProcessError ... exit status 127` | accepted and ignored: the bitstream is always written in process by the Rust `xc7frames2bit` code (byte for byte the reference's output) and `TOOL` only appears in the `CalledProcessError` message |
+| No `--frm_out` | the `.frm` is written to a `tempfile.mkstemp()` file that is never deleted; its path is in the `.bit` header and in error messages | no `.frm` file is written; the `.bit` header (field `a`) and the messages name the `--fn_in` path instead |
+| Paths with spaces or shell metacharacters | split or interpreted by the shell command line | used as given |
+| Errors of the bitstream step | the `xc7frames2bit` messages, then a traceback ending with the `CalledProcessError` line | the same messages, then only the `CalledProcessError` line. For a `--part_file` that is a directory the reference's `xc7frames2bit` aborts and `/bin/sh` (dash) prints `Aborted` and exits with 134: the Rust tool prints the same text and `... returned non-zero exit status 134.` (with another `/bin/sh`, e.g. bash, the reference's text differs) |
+| Anything `xc7frames2bit` prints on stdout | captured and discarded | nothing is printed |
+| `.bit` header time | the current UTC time | the same, or `$SOURCE_DATE_EPOCH` (see `xc7frames2bit`) |
+
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);

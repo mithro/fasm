@@ -149,7 +149,7 @@ pub fn prog_name(argv0: Option<&std::ffi::OsStr>) -> String {
 }
 
 /// An error writing the output (`OSError` of `f.write`).
-fn write_error(error: &io::Error) -> String {
+pub(crate) fn write_error(error: &io::Error) -> String {
     let text = error.to_string();
     let strerror = text
         .rfind(" (os error ")
@@ -204,22 +204,60 @@ pub fn run(
     code
 }
 
-fn path(values: &Values, dest: &str) -> PathBuf {
+pub(crate) fn path(values: &Values, dest: &str) -> PathBuf {
     PathBuf::from(values.str(dest).cloned().unwrap_or_default().to_os_string())
 }
 
 /// `main()` after `parse_args`: the error text (the last line of the
 /// Python traceback, with its newline) on failure.
 fn assemble(values: &Values, stdout: &mut dyn Write, stderr: &mut dyn Write) -> Result<(), String> {
-    let traceback = |e: AssemblerError| format!("{}\n", e.traceback_line());
     // `f_out=open(args.fn_out, 'w')` is evaluated before `fasm2frames()`.
     let fn_out = path(values, "fn_out");
-    let file = File::create(&fn_out).map_err(|source| {
-        traceback(AssemblerError::Io {
-            path: fn_out.clone(),
-            source,
-        })
-    })?;
+    let file = create_output(&fn_out)?;
+    let fn_in = path(values, "fn_in");
+    let frames = build_frames(values, Some(&fn_in), stderr)?;
+    write_frm_file(&frames, file)?;
+    if values.flag("debug") {
+        dump_frames_sparse(&frames, stdout).map_err(|e| write_error(&e))?;
+    }
+    Ok(())
+}
+
+/// `open(path, 'w')`, or the traceback line of its error.
+pub(crate) fn create_output(path: &Path) -> Result<File, String> {
+    File::create(path).map_err(|source| {
+        format!(
+            "{}\n",
+            AssemblerError::Io {
+                path: path.to_path_buf(),
+                source,
+            }
+            .traceback_line()
+        )
+    })
+}
+
+/// `dump_frm(f_out, frames)` and closing the file, or the traceback line
+/// of the error.
+pub(crate) fn write_frm_file(frames: &fasm_xilinx::Frames, file: File) -> Result<(), String> {
+    let mut out = BufWriter::with_capacity(1 << 16, file);
+    frames
+        .write_frm(&mut out)
+        .and_then(|()| out.flush())
+        .map_err(|e| write_error(&e))
+}
+
+/// `fasm2frames()` of `xc_fasm.fasm2frames` with the arguments of
+/// `values` (`db_root`, `part`, `sparse`, `roi`, `emit_pudc_b_pullup`):
+/// opens the database and assembles `fn_in`, or returns the traceback
+/// line of the error. `fn_in` of `None` (`xcfasm` without `--fn_in`)
+/// fails like the reference when the FASM file would be parsed.
+pub(crate) fn build_frames(
+    values: &Values,
+    fn_in: Option<&Path>,
+    stderr: &mut dyn Write,
+) -> Result<fasm_xilinx::Frames, String> {
+    let traceback = |e: AssemblerError| format!("{}\n", e.traceback_line());
     let db = Database::open(&path(values, "db_root"), Some(&path_str(values, "part")))
         .map_err(|e| traceback(e.into()))?;
     let options = Fasm2FramesOptions {
@@ -227,26 +265,23 @@ fn assemble(values: &Values, stdout: &mut dyn Write, stderr: &mut dyn Write) -> 
         roi: values.str("roi").map(|r| PathBuf::from(r.to_os_string())),
         emit_pudc_b_pullup: values.flag("emit_pudc_b_pullup"),
     };
-    let fn_in = path(values, "fn_in");
-    let frames = fasm2frames(&db, &fn_in, &options, &mut |warning| {
+    let Some(fn_in) = fn_in else {
+        // `bytes(None, 'ascii')` in the ANTLR wrapper, after the ROI has
+        // been read.
+        if let Some(roi) = options.roi.as_deref().filter(|r| !r.as_os_str().is_empty()) {
+            read_roi_design(roi).map_err(traceback)?;
+        }
+        return Err("TypeError: encoding without a string argument\n".to_string());
+    };
+    fasm2frames(&db, fn_in, &options, &mut |warning| {
         let _ = writeln!(stderr, "{warning}");
     })
     .map_err(|e| match e {
         AssemblerError::Parse(first) => traceback(AssemblerError::Parse(report_parse_error(
-            first, &db, &options, &fn_in,
+            first, &db, &options, fn_in,
         ))),
         e => traceback(e),
-    })?;
-    let mut out = BufWriter::with_capacity(1 << 16, file);
-    frames
-        .write_frm(&mut out)
-        .and_then(|()| out.flush())
-        .map_err(|e| write_error(&e))?;
-    drop(out);
-    if values.flag("debug") {
-        dump_frames_sparse(&frames, stdout).map_err(|e| write_error(&e))?;
-    }
-    Ok(())
+    })
 }
 
 /// The syntax error the reference reports for a FASM text whose first
@@ -297,7 +332,7 @@ fn report_parse_error(
 
 /// The part name as a string (a part name is always ASCII; other code
 /// points are replaced).
-fn path_str(values: &Values, dest: &str) -> String {
+pub(crate) fn path_str(values: &Values, dest: &str) -> String {
     values
         .str(dest)
         .cloned()

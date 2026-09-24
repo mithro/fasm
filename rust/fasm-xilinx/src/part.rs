@@ -155,14 +155,71 @@ impl Part {
         })
     }
 
+    /// The C++ `Part(idcode, addresses)` constructor (used by prjxray's
+    /// unit tests): the rows, buses and columns of the given frame
+    /// addresses, each column with `max(minor) + 1` frames.
+    ///
+    /// # Errors
+    ///
+    /// A message for an address with a reserved block type, or see
+    /// [`Part::new`].
+    pub fn from_frame_addresses(
+        architecture: Architecture,
+        idcode: u32,
+        addresses: impl IntoIterator<Item = FrameAddress>,
+    ) -> Result<Self, String> {
+        use std::collections::BTreeMap;
+        type Buses = BTreeMap<BlockType, BTreeMap<u32, u32>>;
+        let mut tree: BTreeMap<(bool, u32), Buses> = BTreeMap::new();
+        for address in addresses {
+            let block_type = address
+                .block_type(architecture)
+                .ok_or_else(|| format!("{address}: reserved block type"))?;
+            let key = if architecture.has_global_clock_regions() {
+                (
+                    address.is_bottom_half(architecture),
+                    u32::from(address.row(architecture)),
+                )
+            } else {
+                (false, u32::from(address.row_index(architecture)))
+            };
+            let count = tree
+                .entry(key)
+                .or_default()
+                .entry(block_type)
+                .or_default()
+                .entry(u32::from(address.column(architecture)))
+                .or_insert(0);
+            *count = (*count).max(u32::from(address.minor(architecture)) + 1);
+        }
+        let rows = tree
+            .into_iter()
+            .map(|((bottom, row), buses)| ConfigRow {
+                bottom,
+                row,
+                buses: buses
+                    .into_iter()
+                    .map(|(block_type, columns)| ConfigBus {
+                        block_type,
+                        columns: columns.into_iter().collect(),
+                    })
+                    .collect(),
+            })
+            .collect();
+        Part::new(architecture, idcode, rows)
+    }
+
     /// Reads a `part.yaml` file. The architecture is taken from the tag
     /// (`!<xilinx/xc7series/part>`, `xcuseries`, `xcupseries`), or is
     /// `default_arch` for an untagged document.
     ///
-    /// Only the nested `global_clock_regions` (Series7) / `rows`
-    /// (UltraScale/+) form is supported; the `configuration_ranges` form
-    /// the C++ decoder also accepts (never written by
-    /// `gen_part_base_yaml`) is reported as an error.
+    /// The nested `global_clock_regions` (Series7) / `rows` (UltraScale/+)
+    /// form written by `gen_part_base_yaml` is supported, and for Series7
+    /// also the `configuration_ranges` form the C++ decoder accepts (a
+    /// list of `[begin, end)` frame address ranges, used by prjxray's
+    /// `lib/test_data/configuration_test.yaml`), which is turned into rows
+    /// like the C++ `Part(idcode, addresses)` constructor
+    /// ([`Part::from_frame_addresses`]).
     ///
     /// # Errors
     ///
@@ -193,6 +250,15 @@ impl Part {
         let mut rows = Vec::new();
         if arch.has_global_clock_regions() {
             let Some(regions) = doc.get("global_clock_regions")? else {
+                if let Some(ranges) = doc.get("configuration_ranges")? {
+                    let addresses = configuration_ranges(arch, ranges)?;
+                    return Part::from_frame_addresses(arch, idcode, addresses).map_err(
+                        |message| YamlError {
+                            line: doc.line,
+                            message,
+                        },
+                    );
+                }
                 return Err(unsupported_form(&doc));
             };
             for (name, bottom) in [("top", false), ("bottom", true)] {
@@ -309,8 +375,10 @@ impl Part {
     /// 2. (Series7) from the top region, row 0 of the bottom region;
     /// 3. `BLOCK_RAM`, then `CFG_CLB`, row 0 column 0 of the top region.
     ///
-    /// Returns `None` after the last frame (or for an address that is not
-    /// in a known row/bus/column).
+    /// Returns `None` after the last frame. Addresses that are not in the
+    /// part get the reference's answer too: a minor beyond its column
+    /// continues with the next column, an unknown row, bus or column with
+    /// steps 2 and 3.
     pub fn next_frame_address(&self, address: FrameAddress) -> Option<FrameAddress> {
         let arch = self.architecture;
         let block_type = u32::from(address.block_type_raw(arch));
@@ -365,9 +433,9 @@ impl Part {
         let j = bus.column_index(u32::from(address.column(arch)))?;
         let minor = u32::from(address.minor(arch));
         let frame_count = bus.columns[j].1;
-        if minor >= frame_count {
-            return None;
-        }
+        // `ConfigurationColumn::GetNextFrameAddress` returns nothing for a
+        // minor beyond the column, and the bus then tries the next column
+        // like for the last minor.
         if minor + 1 < frame_count {
             return Some(FrameAddress(address.0 + 1));
         }
@@ -404,9 +472,59 @@ impl Part {
     }
 }
 
+/// The frame addresses of a `configuration_ranges` sequence: every
+/// address in `[begin, end)` of each `configuration_frame_range`
+/// (`YAML::convert<xc7series::Part>::decode`).
+fn configuration_ranges(arch: Architecture, ranges: &Node) -> Result<Vec<FrameAddress>, YamlError> {
+    let address = |node: &Node| -> Result<u32, YamlError> {
+        let tag_ok = matches!(
+            node.tag.as_deref(),
+            Some("xilinx/xc7series/frame_address" | "xilinx/xc7series/configuration_frame_address")
+        );
+        let bad = |message: &str| YamlError {
+            line: node.line,
+            message: message.to_owned(),
+        };
+        if !tag_ok {
+            return Err(bad(
+                "expected a !<xilinx/xc7series/configuration_frame_address>",
+            ));
+        }
+        let block_type = BlockType::from_name(node.require("block_type")?.as_str()?)
+            .ok_or_else(|| bad("unknown block_type"))?;
+        let bottom = match node.require("row_half")?.as_str()? {
+            "top" => false,
+            "bottom" => true,
+            _ => return Err(bad("row_half is neither top nor bottom")),
+        };
+        Ok(FrameAddress::compose_masked(
+            arch,
+            u32::from(block_type.raw()),
+            bottom,
+            node.require("row")?.as_u32()?,
+            node.require("column")?.as_u32()?,
+            node.require("minor")?.as_u32()?,
+        )
+        .0)
+    };
+    let mut addresses = Vec::new();
+    for range in ranges.as_seq()? {
+        let begin = address(range.require("begin")?)?;
+        let end = address(range.require("end")?)?;
+        if end.saturating_sub(begin) > 1 << 26 {
+            return Err(YamlError {
+                line: range.line,
+                message: "configuration range too large".to_owned(),
+            });
+        }
+        addresses.extend((begin..end).map(FrameAddress));
+    }
+    Ok(addresses)
+}
+
 fn unsupported_form(doc: &Node) -> YamlError {
     let message = if doc.get("configuration_ranges").ok().flatten().is_some() {
-        "the configuration_ranges form of part.yaml is not supported"
+        "the configuration_ranges form of part.yaml is only supported for Series7"
     } else {
         "part.yaml has no global_clock_regions / rows"
     };
