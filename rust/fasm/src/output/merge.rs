@@ -300,6 +300,25 @@ impl MergeModel {
         }
     }
 
+    /// The grouped lines accumulated so far.
+    ///
+    /// After [`Self::finish`] and [`Self::merge_addresses`], these are the
+    /// final groups [`Self::output_sorted_lines`] sorts and flattens.
+    /// Exposed (read only) for a caller that needs to reproduce
+    /// `output_sorted_lines`'s grouping/sorting with its own per-group
+    /// callbacks instead of the `K: Ord` generic `dyn Fn` closures this
+    /// type's own method takes: the Python bindings
+    /// (`rust/fasm-python/src/merge.rs`, the `fasm._fasm_rs.merge_and_sort`
+    /// fast path) need `zero_function`/`sort_key` to be Python callables
+    /// that may raise, which a `dyn Fn(&str) -> bool` / `-> K` cannot
+    /// represent (it cannot return `Result`, and `K: Ord` cannot be an
+    /// arbitrary Python object compared with rich comparison); see
+    /// `docs/rewrite/DESIGN-python.md`.
+    #[must_use]
+    pub fn groups(&self) -> &[Vec<FasmLine>] {
+        &self.groups
+    }
+
     /// Merges address-only features when possible. Call after all lines
     /// have been added (and [`Self::finish`] called).
     ///

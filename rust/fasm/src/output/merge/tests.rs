@@ -265,6 +265,25 @@ fn merge_and_sort_of_empty_model_is_empty() {
     assert!(out.is_empty());
 }
 
+/// [`MergeModel::groups`] (added for the Python bindings, T3.3 — see
+/// `rust/fasm-python/src/merge.rs`): reflects the same groups
+/// [`MergeModel::output_sorted_lines`] would sort and flatten, after
+/// [`MergeModel::finish`] and [`MergeModel::merge_addresses`].
+#[test]
+fn groups_reflects_merge_addresses_output() {
+    let mut merged = MergeModel::new();
+    merged.add_to_model(feature_line("A", Some(0)));
+    merged.add_to_model(feature_line("A", Some(1)));
+    merged.add_to_model(feature_line("B", None));
+    merged.finish();
+    merged.merge_addresses().unwrap();
+
+    // "A[0]"/"A[1]" merge into a single group; "B" is its own group; a
+    // fresh MergeModel starts empty.
+    assert_eq!(merged.groups().len(), 2);
+    assert!(MergeModel::new().groups().is_empty());
+}
+
 /// Regression/correctness test (review finding on T1.4) for
 /// `merge_addresses`'s order-preserving indexed map: many distinct
 /// eligible feature names, each split across two single-bit lines that
