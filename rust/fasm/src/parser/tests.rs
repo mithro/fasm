@@ -758,6 +758,26 @@ fn lines_iterator_stops_after_error() {
 }
 
 #[test]
+fn lines_before_invalid_utf8_parse() {
+    // The input is not UTF-8 as a whole: text is validated per piece.
+    let input = "A.B[3:0] = 4'hF { n = \"\u{e9}\" } # \u{e9}\nC\n# \u{ff}\u{ff}\n";
+    let mut bytes = input.as_bytes().to_vec();
+    let bad = bytes.len() - 2;
+    bytes[bad] = 0xFF;
+    let mut lines = parse_lines(&bytes);
+    assert_eq!(
+        render_line(&lines.next().unwrap().unwrap()),
+        "A.B[3:0]=15/VERILOG_HEX {n=\"\u{e9}\"} #\" \u{e9}\""
+    );
+    assert_eq!(render_line(&lines.next().unwrap().unwrap()), "C=1/-");
+    let e = lines.next().unwrap().unwrap_err();
+    assert_eq!(
+        (e.line, e.column, e.kind),
+        (3, 3, ParseErrorKind::InvalidUtf8)
+    );
+}
+
+#[test]
 fn lines_iterator_is_lazy() {
     // Lines before an error are returned before the error is seen.
     let first: Vec<_> = parse_lines(b"a\nb\n= bad").take(2).collect();

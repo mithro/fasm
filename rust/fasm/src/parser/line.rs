@@ -121,16 +121,20 @@ pub(super) struct LineOutcome {
     pub(super) last_newline: Option<usize>,
 }
 
-/// Parses the logical line of `buf` starting at `start`. `first_line` is
-/// `true` for the first line of a file (it only changes the position of
-/// some errors, see [`Scanner::unexpected_la`]).
-pub(super) fn parse_logical_line(
-    buf: &[u8],
+/// Parses the logical line of `buf` starting at `start`. `text` is `buf`
+/// as a `str` if the whole buffer is valid UTF-8 (then text is sliced
+/// out of it without validating it again). `first_line` is `true` for the
+/// first line of a file (it only changes the position of some errors, see
+/// [`Scanner::unexpected_la`]).
+pub(super) fn parse_logical_line<'a>(
+    buf: &'a [u8],
+    text: Option<&'a str>,
     start: usize,
     first_line: bool,
 ) -> Result<LineOutcome, RawError> {
     let mut s = Scanner {
         buf,
+        text,
         pos: start,
         newlines: 0,
         last_newline: None,
@@ -205,6 +209,8 @@ impl After {
 
 struct Scanner<'a> {
     buf: &'a [u8],
+    /// `buf` as a `str`, if it is valid UTF-8.
+    text: Option<&'a str>,
     pos: usize,
     newlines: usize,
     last_newline: Option<usize>,
@@ -371,9 +377,21 @@ impl<'a> Scanner<'a> {
     }
 
     /// Validates `bytes` (found at offset `base`) as UTF-8.
-    fn utf8(&self, bytes: &[u8], base: usize, what: &str) -> Result<Box<str>, RawError> {
-        match std::str::from_utf8(bytes) {
-            Ok(s) => Ok(s.into()),
+    fn utf8(&self, base: usize, end: usize, what: &str) -> Result<Box<str>, RawError> {
+        self.str(base, end, what).map(Box::from)
+    }
+
+    /// The text from `base` to `end` as a `str`: sliced from
+    /// [`Scanner::text`] when the input is known to be UTF-8 (`get` only
+    /// checks that both ends are character boundaries), validated
+    /// otherwise.
+    #[inline]
+    fn str(&self, base: usize, end: usize, what: &str) -> Result<&'a str, RawError> {
+        if let Some(s) = self.text.and_then(|t| t.get(base..end)) {
+            return Ok(s);
+        }
+        match std::str::from_utf8(self.slice(base, end)) {
+            Ok(s) => Ok(s),
             Err(e) => Err(self.error(
                 base + e.valid_up_to(),
                 ParseErrorKind::InvalidUtf8,
@@ -444,18 +462,8 @@ impl<'a> Scanner<'a> {
                 break;
             }
         }
-        let name = self.slice(feature_start, self.pos);
-        let name = match std::str::from_utf8(name) {
-            Ok(name) => name,
-            // Unreachable: the feature name is ASCII by construction.
-            Err(_) => {
-                return Err(self.error(
-                    feature_start,
-                    ParseErrorKind::InvalidUtf8,
-                    "feature name is not valid UTF-8",
-                ))
-            }
-        };
+        // ASCII by construction, so never an error.
+        let name = self.str(feature_start, self.pos, "feature name")?;
         let feature = IdString::new(name);
         let mut after = After::Feature;
         self.skip_ws();
@@ -792,11 +800,7 @@ impl<'a> Scanner<'a> {
             let name_start = self.pos;
             self.pos += 1;
             self.skip_class(IDENT_CONT);
-            let name = self.utf8(
-                self.slice(name_start, self.pos),
-                name_start,
-                "annotation name",
-            )?;
+            let name = self.utf8(name_start, self.pos, "annotation name")?;
             self.skip_ws();
             if self.peek() != Some(b'=') {
                 return Err(self.unexpected_la("'=' after the annotation name", Mode::Annotation));
@@ -866,11 +870,7 @@ impl<'a> Scanner<'a> {
         }
         let value_end = self.pos;
         self.pos += 1;
-        self.utf8(
-            self.slice(value_start, value_end),
-            value_start,
-            "annotation value",
-        )
+        self.utf8(value_start, value_end, "annotation value")
     }
 
     /// `'#' [^\n\r]*`; the current byte is `#`. Returns the text after the
@@ -883,7 +883,7 @@ impl<'a> Scanner<'a> {
             .position(|&b| b == b'\n' || b == b'\r')
             .unwrap_or(rest.len());
         self.pos = start + len;
-        self.utf8(self.slice(start, self.pos), start, "comment")
+        self.utf8(start, self.pos, "comment")
     }
 }
 
