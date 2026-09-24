@@ -32,22 +32,43 @@ For every committed design/board:
    available.
 
 2. When the Rust `fasm-xilinx` frame assembler exists as a CLI binary
-   (`target/release/fasm2frames`) *and* the corresponding prjxray-db
-   database is available, its output on the corpus FASM is compared byte
-   for byte against the committed dense `top.frm.xz` (regenerated with
-   the oracle `fasm2frames-oracle` by tools/e2e/run-fpgas-online.sh, see
-   each design's README.md). As of this session `target/release/fasm2frames`
-   does not exist yet in this checkout (T5.4/T5.5, the Rust frame
-   assembler + fasm2frames CLI, is `[r]` in docs/rewrite/TASKS.md -- in
-   review, not yet merged into this branch) so this comparison is skipped
-   cleanly everywhere; the test is written to pick it up automatically
-   once that binary lands, without needing to be edited.
+   (`target/release/fasm2frames`) *and* the openXC7 **snap's own bundled**
+   prjxray-db is available (`tools/e2e/build/openxc7/root/opt/
+   nextpnr-xilinx/external/prjxray-db`, resolved the same way
+   `tools/e2e/openxc7-env.sh` resolves it), its output on the corpus FASM
+   is compared byte for byte against the committed dense `top.frm.xz`
+   (regenerated with the oracle `fasm2frames-oracle` against that same
+   snap db by tools/e2e/run-fpgas-online.sh, see each design's
+   README.md). This deliberately uses the snap db and **never** falls
+   back to the differently-pinned `tests/oracle/build/db/prjxray-db`
+   (fetched by `tools/fetch-db.sh` for the rest of this repo's Xilinx
+   differential tests): the two databases have verified, real content
+   differences (see tools/e2e/README.md, "A note on prjxray-db
+   provenance"), and at least one design here (`spi-flash-id`, all four
+   boards) emits a tag that legitimately only exists in the snap db --
+   comparing against the pinned db there would be a false failure, not a
+   Rust rewrite bug. Skipped cleanly, per design/board, whenever either
+   the binary or the snap db is missing (this session: no
+   `target/release/fasm2frames` in this checkout at all -- T5.4/T5.5 is
+   `[r]` in docs/rewrite/TASKS.md, in review, not yet merged into this
+   branch -- so always skipped here; picks it up automatically once that
+   binary lands and `tools/e2e/setup-openxc7.sh` has been run, without
+   needing to be edited).
 
 3. If tools/difftest-xilinx.py (T5.9's frames differential test driver)
-   exists in this checkout, it is run over every corpus FASM file found
-   here and its outcome is asserted; skipped cleanly if the script is not
+   exists in this checkout, it is run with `--db-cache` pointed at the
+   snap db's cache-shaped parent directory and `--filter` scoped to the
+   one subset of this corpus its own hardcoded single-part-per-family
+   table (`FAMILY_PARTS = {'artix7': 'xc7a35tcsg324-1'}`) can validly
+   cover -- the *arty*-board, plain-text (non-`.xz`, it only recognises
+   a literal `.fasm` extension) FASM files, all built for that exact part
+   -- and its outcome is asserted; skipped cleanly if the script is not
    present (it lives on a branch not yet merged here either -- see
-   tools/e2e/README.md, "fpgas.online-test-designs corpus (T7.2)").
+   tools/e2e/README.md, "fpgas.online-test-designs corpus (T7.2)"). The
+   rest of the corpus (other boards/parts, and every `.xz`-compressed
+   FASM regardless of board) is intentionally left to
+   `test_corpus_frames_match_rust_fasm2frames` above instead, which knows
+   each file's actual part.
 
 Does not touch the openXC7/LiteX build flow itself (that's
 tests/e2e/test_openxc7.py's job for the shared toolchain, and
@@ -55,8 +76,6 @@ tools/e2e/run-fpgas-online.sh, run by hand, for producing new corpus
 entries); this only checks what's already committed.
 """
 import lzma
-import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,8 +85,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CORPUS_ROOT = (
     REPO_ROOT / 'tests' / 'corpus' / 'xilinx' / 'artix7' / 'designs' /
-    'fpgas-online-test-designs' if False else
-    REPO_ROOT / 'tests' / 'corpus' / 'xilinx' / 'artix7' / 'designs' /
     'fpgas.online-test-designs')
 
 ORACLE_PYTHON = REPO_ROOT / 'tests' / 'oracle' / 'venv' / 'bin' / 'python'
@@ -76,8 +93,23 @@ RUST_FASM_BIN = REPO_ROOT / 'target' / 'release' / 'fasm'
 RUST_FASM2FRAMES_BIN = REPO_ROOT / 'target' / 'release' / 'fasm2frames'
 DIFFTEST_XILINX = REPO_ROOT / 'tools' / 'difftest-xilinx.py'
 
-PRJXRAY_DB_DIR = (
-    REPO_ROOT / 'tests' / 'oracle' / 'build' / 'db' / 'prjxray-db')
+# The openXC7 SNAP's own bundled prjxray-db -- deliberately NOT
+# tests/oracle/build/db/prjxray-db (the independently pinned f4pga
+# prjxray-db `tools/fetch-db.sh` fetches for the rest of this repo's
+# Xilinx differential tests). This corpus's .frm/.bit were regenerated
+# against the snap db specifically (it is what nextpnr-xilinx's chipdb
+# and the whole LiteX openxc7 flow are built against for these designs),
+# and the two databases have verified, real content differences -- see
+# tools/e2e/README.md, "A note on prjxray-db provenance" (T7.2 review).
+# Resolved the same way tools/e2e/openxc7-env.sh resolves PRJXRAY_DB_DIR
+# (that script is bash-only, not sourced from here).
+OPENXC7_ROOT = REPO_ROOT / 'tools' / 'e2e' / 'build' / 'openxc7' / 'root'
+SNAP_PRJXRAY_DB_DIR = (
+    OPENXC7_ROOT / 'opt' / 'nextpnr-xilinx' / 'external' / 'prjxray-db')
+# tools/difftest-xilinx.py's --db-cache expects <db-cache>/prjxray-db/
+# <family>; the snap's own directory already ends in .../prjxray-db, so
+# the db-cache to pass it is that directory's parent.
+SNAP_DB_CACHE = SNAP_PRJXRAY_DB_DIR.parent
 
 
 def _discover_designs():
@@ -128,8 +160,11 @@ def _pick_fasm_parser():
     """Return (kind, callable(path) -> CompletedProcess-like) or None."""
     if RUST_FASM_BIN.exists():
         def run_rust(path):
+            # `fasm <file>` (no subcommand) -- matches the original
+            # Python `fasm/tool.py` CLI's own usage: `FASM tool [-h]
+            # [--canonical] [--parser PARSER] file`.
             return subprocess.run(
-                [str(RUST_FASM_BIN), 'parse', str(path)],
+                [str(RUST_FASM_BIN), str(path)],
                 capture_output=True, text=True, timeout=60)
         return ('rust-cli', run_rust)
 
@@ -197,18 +232,19 @@ def test_corpus_fasm_is_substantial(design, board, fasm_path):
         f"({len(lines)})")
 
 
-def _part_for(design, board):
-    """Read the part name for design/board from run-fpgas-online.sh's own
+def _config_for(design, board):
+    """Read (part, family) for design/board from run-fpgas-online.sh's own
     table via --config, so this test never duplicates it."""
     script = REPO_ROOT / 'tools' / 'e2e' / 'run-fpgas-online.sh'
     if not script.exists():
-        return None
+        return None, None
     result = subprocess.run(
         ['bash', str(script), '--config', design, board],
         capture_output=True, text=True, timeout=10)
     if result.returncode != 0 or not result.stdout.strip():
-        return None
-    return result.stdout.strip().split('|')[1]
+        return None, None
+    fields = result.stdout.strip().split('|')
+    return fields[1], fields[2]  # part, family
 
 
 require_rust_fasm2frames = pytest.mark.skipif(
@@ -219,19 +255,34 @@ require_rust_fasm2frames = pytest.mark.skipif(
         "checkout yet (docs/rewrite/TASKS.md marks it '[r]', in review); "
         "this test will start comparing automatically once it lands"))
 
+require_snap_db = pytest.mark.skipif(
+    not SNAP_PRJXRAY_DB_DIR.is_dir(),
+    reason=(
+        f"{SNAP_PRJXRAY_DB_DIR} not found (run tools/e2e/setup-openxc7.sh "
+        "first). This corpus's .frm/.bit were regenerated specifically "
+        "against the openXC7 snap's own bundled prjxray-db (see "
+        "tools/e2e/README.md, 'A note on prjxray-db provenance'), so this "
+        "test deliberately never falls back to the differently-pinned "
+        "tests/oracle db -- that pairing can legitimately disagree for "
+        "some designs (e.g. spi-flash-id's STARTUPE2 usage) and would "
+        "produce a false failure, not a real one."))
+
 
 @require_designs
 @require_rust_fasm2frames
+@require_snap_db
 @pytest.mark.parametrize(
     'design,board,fasm_path', DESIGNS,
     ids=[f'{d}-{b}' for d, b, _ in DESIGNS])
 def test_corpus_frames_match_rust_fasm2frames(design, board, fasm_path, tmp_path):
-    """Rust fasm2frames output matches the committed reference .frm."""
-    part = _part_for(design, board)
-    assert part, f"could not resolve the part for {design}/{board}"
-    db_root = PRJXRAY_DB_DIR / 'artix7'
+    """Rust fasm2frames output (against the snap's own prjxray-db) matches
+    the committed reference .frm (also regenerated against the snap db)."""
+    part, family = _config_for(design, board)
+    assert part and family, f"could not resolve the part/family for {design}/{board}"
+    db_root = SNAP_PRJXRAY_DB_DIR / family
     if not db_root.is_dir():
-        pytest.skip(f"{db_root} not found; run tests/oracle/fetch the db first")
+        pytest.skip(f"{db_root} not found under the snap's prjxray-db "
+                     f"(family {family!r}); run tools/e2e/setup-openxc7.sh")
 
     board_dir = fasm_path.parent
     frm_xz = board_dir / 'top.frm.xz'
@@ -258,13 +309,22 @@ def test_corpus_frames_match_rust_fasm2frames(design, board, fasm_path, tmp_path
         "differential test driver lives on a branch not yet merged here; "
         "per the T7.2 brief this step is skipped when it is absent -- see "
         "tools/e2e/README.md)"))
+@require_snap_db
 @require_designs
 def test_difftest_xilinx_over_corpus():
-    """Run tools/difftest-xilinx.py over the fpgas.online-test-designs
-    corpus, if it exists in this checkout."""
+    """Run tools/difftest-xilinx.py, pointed at the snap's prjxray-db,
+    over the one part of this corpus its own hardcoded single-part-per-
+    family table (FAMILY_PARTS = {'artix7': 'xc7a35tcsg324-1'} as of this
+    session) can validly cover: the arty-board, plain-text (non-`.xz`; the
+    script only recognises a literal .fasm extension) FASM files -- see
+    the module docstring, point 3, for why the rest of the corpus is left
+    to test_corpus_frames_match_rust_fasm2frames instead."""
     result = subprocess.run(
-        [sys.executable, str(DIFFTEST_XILINX), str(CORPUS_ROOT)],
-        capture_output=True, text=True, timeout=600)
+        [sys.executable, str(DIFFTEST_XILINX),
+         '--db-cache', str(SNAP_DB_CACHE),
+         '--filter',
+         'tests/corpus/xilinx/artix7/designs/fpgas.online-test-designs/*/arty/*.fasm'],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
     assert result.returncode == 0, (
-        f"tools/difftest-xilinx.py reported failures over {CORPUS_ROOT}:\n"
-        f"stdout: {result.stdout}\nstderr: {result.stderr}")
+        f"tools/difftest-xilinx.py reported failures over the arty subset "
+        f"of {CORPUS_ROOT}:\nstdout: {result.stdout}\nstderr: {result.stderr}")
