@@ -2292,6 +2292,257 @@ of the 25.7 MiB text 94 / 113 ms (the bulk of the binary's time), ECC 4 /
 The `.bit` writing itself is far below the 0.5 s target; `bitread`'s
 bit lines are formatted by hand (3.4x faster than `format!`).
 
+### 8.8 Implementation notes (T5.3)
+
+The binary cache of an opened part (`rust/fasm-xilinx/src/cache/`:
+`mod.rs` API, header, validation and I/O; `format.rs` byte layout and
+payload encoder/decoder; `sources.rs` source file set and fingerprints;
+`tests.rs`), the `fasm-db-cache` tool (`rust/fasm-cli/src/db_cache.rs`,
+`src/bin/fasm-db-cache.rs`) and where they deviate from the sketch of
+§8.2.
+
+**API.** `Database::open` is unchanged (no cache).
+`Database::open_cached(db_root, part, &CacheOptions)` returns a database
+equal (`==`, every field including the derived indexes; `Database`,
+`Grid`, `TileSegbits`, ... now derive `PartialEq`) to what `open`
+returns, and exactly `open`'s errors: a cache problem is never an error.
+`cache::open` also returns a `CacheOutcome` (`Disabled`, `Hit { restat
+}`, `Rebuilt { reason, write_error }`). `CacheOptions::from_env()`:
+
+| variable | meaning |
+|---|---|
+| `FASM_XDB_CACHE` | cache directory; `0` or empty disables the cache; unset: `$XDG_CACHE_HOME/fasm/db` (if absolute), else `$HOME/.cache/fasm/db`, else disabled |
+| `FASM_XDB_CACHE_VERBOSE` | non-empty and not `0`: hits (with the time of each step), rebuilds and their reason, write errors on stderr |
+
+The task brief named the directory variable `FASM_DB_CACHE`, but that
+name already means the directory of the *text* databases fetched by
+`tools/fetch-db.sh` (read by the tests, benches, `tools/difftest-xilinx.py`
+and `tests/oracle/xilinx-env.sh`): reusing it would have mixed cache
+files into the fetched databases and made `FASM_DB_CACHE=0` break every
+database lookup, hence `FASM_XDB_CACHE` (after the `FASM XDB` magic).
+`fasm2frames` and `xcfasm` read it through `fasm2frames::Environment`
+(new field `db_cache`, disabled in `Environment::default()`, so the
+in-process tests do not touch the user's cache); there is no command line
+flag, the command lines stay the reference ones. `xc7frames2bit` and
+`bitread` never open a database. `open_cached` without a part is `open`.
+
+**File.** `<dir>/<layout>-<part>-<h>-v<format>.fasmxdb`, `h` = first 8
+bytes (hex) of the BLAKE3 hash of the canonical database root (characters
+of the part outside `[A-Za-z0-9._-]` become `_`). Layout (all little
+endian):
+
+```
+prefix (88 bytes): magic "FASMXDB1", format_version u32 (1), header_len u32,
+                   payload_len u64, BLAKE3(header) [32], BLAKE3(payload) [32]
+header:  loader fingerprint, crate version, layout, architecture, part,
+         canonical db root, creation time, BLAKE3 of the tile type name
+         list, source records (path, kind, size, stat fingerprint, BLAKE3)
+payload: section table (count; kind u8 + length u64 each), then the
+         sections: 4 groups of consecutive tile types (balanced by entry
+         count), the grid, the part data
+section: two string tables (count, u32 lengths, UTF-8 blob), then
+         fixed size records referring to strings by index
+```
+
+Records mirror the loader's flat tables one to one (§8.5): tile types
+(name, `TileTypeFiles` bits, `foreign_lines`, segbits entries 13 bytes,
+bits 9 bytes, pseudo PIPs, the `addressed` map as `(base, address,
+entry)`), grid tiles (65 bytes: name, type, location, clock region,
+type index, the four spans), bits blocks, aliases, pairs, prohibited
+site names, and the part data (frame tree rows/buses/columns, IDCODE,
+`iobanks`, package pins, required features). The derived indexes are
+rebuilt on load exactly as the loader builds them: `by_name` /
+`ppip_index` of every tile type, the grid's `by_name` / `by_loc`,
+`tile_type_index`, the `BanksTilesRegistry`; `PartInfo::directory` and
+`Database::root` come from the `db_root` argument, like `open`. Every
+index, span and enum value is bounds checked while decoding, so even a
+crafted file with valid hashes can only produce an error (tested by
+decoding every one-byte mutation and every truncation of a payload).
+
+**Deviation from §8.2: no `mmap`, no zero copy.** Names are `IdString`s
+of the process global interner, whose handle values depend on the
+interning order, so the cache stores the names as text and interns them
+on load; the crate is also `#![forbid(unsafe_code)]`. The serialisation
+is hand written (a small `Writer`/`Reader` pair): `postcard`/`bincode`
+would need `serde` derives on the internal types and change nothing about
+the interning, `rkyv`'s zero copy does not apply to interned handles.
+The only new dependency is `blake3` (workspace dependency, 1.8): content
+hashes of the sources and integrity hashes of header and payload.
+BLAKE3 was chosen over SHA-256 (`sha2`: more dependencies, 3-10x slower
+without SHA-NI) and over a hand-rolled 64-bit hash (a content hash must
+detect *any* change; the payload hash is on the load path, BLAKE3 does
+14.9 MiB in 3 ms here with its SIMD code, which falls back to Rust
+intrinsics without a C compiler). The loader fingerprint is FNV-1a 64
+over `src/**` computed by `build.rs` (a change detector of our own
+sources, not an adversarial setting: a collision would need two builds
+whose sources hash alike), so a cache file written by a build with
+different loader or cache code is rebuilt; `FORMAT_VERSION` is in the file name and header, so
+builds with different layouts do not overwrite each other's files.
+
+**Validation.** On load: the prefix (magic, version, lengths against the
+file size) and the header hash; the header's loader fingerprint, part,
+canonical root and layout; the layout detection and the tile type list
+(the family directory is listed again, as the loader does; the set of
+files the loader reads is a function of the layout, this list, the
+fabric (itself from the recorded `mapping/*.yaml`) and the part); then
+every recorded source:
+
+* `Content` (tilegrid.json, `mapping/parts.yaml`, `mapping/devices.yaml`,
+  `part.yaml`, `part.json`, `package_pins.csv`, `required_features.fasm`,
+  every `segbits_*.db`, `segbits_*.block_ram.db`, `ppips_*.db` that
+  exists): must still be a regular file of the same size; if its stat
+  fingerprint (Unix: device, inode, `mtime` and `ctime` with nanoseconds)
+  is the recorded one it is trusted, otherwise it is hashed and compared
+  with the recorded BLAKE3 hash. Same content: the cache is used and its
+  header rewritten with the new fingerprints (atomically, reusing the
+  payload bytes), e.g. after a fresh checkout of the database.
+* `Absent` (every probed file that did not exist): must still not be a
+  regular file. `Present` (`mask_*.db`, only probed): must still exist.
+
+Stat fingerprints younger than 5 s when taken are not recorded (the
+"racy git" problem: with coarse timestamps a file rewritten right after
+it was fingerprinted can keep size and times); those files are hashed on
+every load until one finds them old enough. Without Unix metadata (no
+inode, no `ctime`) no stat fingerprint is recorded at all: every load
+hashes the sources (about 5-10 ms for 12-30 MiB). `fasm-db-cache verify`
+(`cache::verify_file`) always hashes every source and also checks the
+payload hash, the file name and that the payload decodes. Any mismatch,
+unreadable or truncated file, wrong magic/version/fingerprint or corrupt
+payload means: load the text files, write a new cache file. Writing
+(`build_from_text`) stats the sources *before* the text load, hashes them
+on a second thread *during* the load, and stats them (and lists the tile
+types, re-derives the fabric) again *after* it; if anything differs the
+file is not written. That alone is not enough: the loader and the hashing
+thread read each file at different moments, and on a file system with
+coarse timestamps (1 s on ext3) a same size rewrite within the same
+second leaves both stats equal, so the recorded hash could be of other
+bytes than the tables (the review reproduced this on an ext3 image with a
+concurrent writer; later loads then re-hash, match, and serve stale
+tables). So the file is also not written when any `Content` source's
+modification or status change time (from either stat) is less than 5 s
+before the build started, or later (`sources::changed_recently`; without
+Unix stats, the modification time); the first open of a database changed
+in the last 5 s just loads the text files, the next one writes the cache.
+Files are written to `.<name>.<pid>.<nanos>.tmp` in the cache
+directory and renamed; any error (read-only or missing directory, full
+disk) is reported only with `FASM_XDB_CACHE_VERBOSE` and never fails the
+tool.
+
+**Loading.** The file is read with 4 positional reads in parallel (the
+time is the page faults of the fresh 9-15 MiB buffer, which the kernel
+serves concurrently), then the payload hash, the source check and the
+decoding run concurrently (the decoded database is dropped if a check
+fails), and the sections are decoded on scoped threads; the grid section
+builds `by_loc` from the raw records on its own thread from the start and
+the tiles/`by_name` on another as soon as the tile names are interned,
+while the site names are interned. Files and payloads under 1 MiB (the
+test databases) are handled on the calling thread, and so is any work
+for which the operating system refuses a thread (`cache/task.rs`:
+`std::thread::Scope::spawn` would panic); a worker that panics is a
+cache error (rebuild, or no write), never a failure of the tool.
+
+**Measurements** (release, this machine: 4 cores, Firecracker VM;
+`cargo bench -p fasm-xilinx --bench db`, each open in a fresh process
+with an empty interner, best of 3):
+
+| part (fabric) | text files (first open) | cache hit | cache file | text load + cache write |
+|---|---|---|---|---|
+| xc7a35tcsg324-1 (xc7a50t) | 102-138 ms | 23 ms | 9.0 MiB, 519 sources (12.5 MiB) | 125-149 ms |
+| xc7a200tffg1156-1 (xc7a200t) | 176-196 ms | 40-42 ms | 14.9 MiB, 519 sources (30.7 MiB) | 251-283 ms |
+| xczu3eg-sfvc784-1-e | 100-124 ms | 24-25 ms | 10.0 MiB, 637 sources (17.4 MiB) | 140-187 ms |
+
+`fasm2frames` wall time (binary, best of 7, output written to a file):
+
+| input | oracle | no cache (`FASM_XDB_CACHE=0`) | first run (writes the cache) | cache hit |
+|---|---|---|---|---|
+| counter_test, xc7a35tcsg324-1, dense | 441 ms | 94-101 ms | 147-161 ms | 31-34 ms |
+| counter_test, `--sparse` | | 87-95 ms | 127 ms | 23-27 ms |
+| empty FASM, xc7a35tcsg324-1, dense | | 95 ms | 129-138 ms | 29-31 ms |
+| empty FASM, xc7a200tffg1156-1, dense (25 MiB `.frm`) | | 199-206 ms | 300-331 ms | 70-75 ms |
+
+So counter_test is now 14x faster than the reference (3-4x before), and
+a cache hit costs about a fifth of a text load. It does not reach the
+"few ms" hoped for in §8.6, and the reasons are measured: of the 23 ms
+for xc7a35t (40 ms for xc7a200t), most is interning the 98 k (195 k)
+distinct names (tile, site, feature and base names) into the global
+`IdString` interner, which costs ~170 ns per *new* string here (~45 ns
+for a known one; inserting from several threads into the same level
+table is slower than from one, so the grid's 130 k level-0 names are
+interned serially), and first-touch page faults, which cost ~1.8 us per
+4 KiB page in this VM (6.5 ms per 14 MiB, several times bare metal) for
+the file buffer, the interner tables and the database itself (~40 MiB
+for xc7a200t). The rest (reading 2-4 ms, payload hash 2-3 ms, source
+stats ~1 ms for ~520 paths, hash map rebuilding) runs concurrently. The
+next steps, if needed, are outside this task: a bulk insertion API in
+the interner (one lock per shard and one reservation per batch, T8.2),
+or making the database lazy (per tile type segbits, or a grid that
+interns names on first lookup), which changes `Database`'s data model.
+
+Writing the cache costs 25-60% on top of the text load, once per part
+and database change (encoding ~35 ms for xc7a200t, the grid section's
+string table dominates; the source hashing is hidden behind the load).
+
+**Tests.** `src/cache/tests.rs` (22, plus 1 in `task.rs`): every field round trips
+(`mini-db`, `synthetic-db`, with and without a part, sequential and
+parallel decoding), second open is a hit, `open_cached == open` and the
+same errors (unknown part, unknown device, not a database, missing
+root), wrong magic / version / truncation / extension, *every* bit 0 and
+bit 7 flip of a cache file is rejected before decoding, end to end flips
+(all of the prefix, a sample of header and payload) are rebuilt, every
+one-byte mutation and truncation of a payload with valid hashes decodes
+to an error or a database, never a panic; changed sources: size change,
+same size with the modification time restored, tilegrid, an absent file
+appearing, a mask file or a part file disappearing, a new tile type, the
+part moving to another fabric; touched files are re-hashed and the
+header updated, not rebuilt; header identity (loader fingerprint, part,
+root, layout, tile type list, recorded size); `verify_file` (and
+`CacheOptions::verify_contents`) hashes even when the stat fingerprints
+match; unwritable cache directory; 8 threads
+opening concurrently (one file, no temporary file left); two copies of a
+database get two files, another spelling of a root the same one; a
+synthetic prjuray-db layout; `build`/`clear`/`cache_files`/
+`family_parts`; the environment; the racy window, and no cache file
+written for sources changed within the window (explicit one hour window
+on a fresh copy; then written with old enough timestamps). `tests/cache_real_db.rs`
+(skipped without the databases): xc7a35tcsg324-1, xc7a200tffg1156-1 and
+xczu3eg-sfvc784-1-e round trip and verify. `rust/fasm-cli/tests/db_cache.rs`:
+`fasm2frames` (mini-db: 6 FASM files x 3 flag sets; synthetic-db
+including an unknown feature and an unknown part) and `xcfasm`
+(synthetic-db; artix7 counter_test dense/sparse/xcfasm when the database
+is present) give identical output files, stdout, stderr and exit codes
+with `FASM_XDB_CACHE=0`, when writing and when loading the cache, and
+the last run is checked to be a hit; `fasm-db-cache` commands and exit
+codes. `make xilinx-difftest` with `FASM_XDB_CACHE` set (cache written by
+the first runs, 4 parallel jobs): 107 fasm2frames runs, 60 xcfasm runs
+and 6 reference bitstreams x 11 bitread flag sets, all identical.
+
+**`fasm-db-cache`.** `fasm-db-cache [--cache-dir DIR] COMMAND`: `build
+DB_ROOT PART...` / `build --all DB_ROOT` (the keys of
+`mapping/parts.yaml`, or every prjuray-db directory with a
+`tilegrid.json`), `verify [FILE...]`, `info [FILE...]` (header and every
+source record), `list`, `clear` (cache files and leftover temporary
+files). The directory defaults to the `FASM_XDB_CACHE` rules (`verify`
+and `info` with explicit files need none). Exit codes: 0 success, 1 a
+failed build or verification, unreadable file, or no cache directory
+(disabled, or `HOME` unset: the message says which), 2 usage error. Plain hand-written argument parsing (no Python
+counterpart to be compatible with).
+
+**Limitations.** One file per part repeats the family's segbits tables
+(about 6 MiB of each artix7 file), so `build --all` for the 88 artix7
+parts takes about 1 GiB; there is no size limit or eviction (`clear`).
+In the parallel path the payload is decoded while its hash is checked,
+so the names of a *corrupt* file may be interned (leaked) before it is
+rejected. A cache file is trusted like the database it was built from:
+anyone who can write the cache directory can make the tools use other
+tables (the default directory is per user). The loader fingerprint also
+changes on edits that do not change the loader's results (one rebuild).
+On network file systems the stat fast path is only as good as the
+client's attribute cache (NFS may report stale sizes and times for a few
+seconds after another client writes) and inode numbers may not be stable
+across remounts (then files are just re-hashed); use
+`CacheOptions::verify_contents` / `fasm-db-cache verify` where that
+matters.
+
 ## 9. Open questions / risks
 
 1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**

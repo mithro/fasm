@@ -60,7 +60,7 @@ pub struct TileTypeFiles {
 
 /// One tile type of the family (`prjxray.tile.TileDbs` + its loaded
 /// `TileSegbits`).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TileType {
     /// Name, e.g. `CLBLL_L` (upper case, from `tile_type_<NAME>.json`).
     pub name: IdString,
@@ -71,7 +71,7 @@ pub struct TileType {
 }
 
 /// Part level data (the `<db_root>/<part>/` directory).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartInfo {
     /// Part name, e.g. `xc7a35tcsg324-1`.
     pub name: String,
@@ -106,16 +106,22 @@ pub struct PartInfo {
 /// `required_features.fasm`. It never reads `mask_*.db`,
 /// `*.origin_info.db`, `tileconn.json`, `node_wires.json`,
 /// `tile_type_*.json` (only their names) or `site_type_*.json`.
-#[derive(Clone, Debug)]
+///
+/// [`Database::open_cached`] opens the same database through the binary
+/// cache of [`crate::cache`]; `==` compares every field (the tables and
+/// their indexes), which is how the cache is tested against this loader.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Database {
-    root: PathBuf,
-    layout: Layout,
-    architecture: Architecture,
-    tile_types: Vec<TileType>,
-    tile_type_index: HashMap<IdString, u32>,
-    grid: Option<Grid>,
-    part: Option<PartInfo>,
-    banks: Option<BanksTilesRegistry>,
+    // Crate visible for the binary cache (`crate::cache`), which stores
+    // and restores these fields.
+    pub(crate) root: PathBuf,
+    pub(crate) layout: Layout,
+    pub(crate) architecture: Architecture,
+    pub(crate) tile_types: Vec<TileType>,
+    pub(crate) tile_type_index: HashMap<IdString, u32>,
+    pub(crate) grid: Option<Grid>,
+    pub(crate) part: Option<PartInfo>,
+    pub(crate) banks: Option<BanksTilesRegistry>,
 }
 
 impl Database {
@@ -140,15 +146,9 @@ impl Database {
     /// ([`DbError::MissingFile`]) or any parse error of the files listed
     /// above, with the file and line.
     pub fn open(db_root: &Path, part: Option<&str>) -> Result<Self, DbError> {
-        let layout = if db_root.join("mapping").is_dir() {
-            Layout::Prjxray
-        } else if db_root.join("tile_types").is_dir() {
-            Layout::Prjuray
-        } else {
-            return Err(DbError::UnknownLayout {
-                root: db_root.to_path_buf(),
-            });
-        };
+        let layout = detect_layout(db_root).ok_or_else(|| DbError::UnknownLayout {
+            root: db_root.to_path_buf(),
+        })?;
         let default_arch = match layout {
             Layout::Prjxray => Architecture::Series7,
             Layout::Prjuray => Architecture::UltraScalePlus,
@@ -672,11 +672,21 @@ pub struct EccReport {
     pub unplaceable: Vec<EccFinding>,
 }
 
-/// Lists and loads the tile types of a family.
-fn load_tile_types(
-    root: &Path,
-    layout: Layout,
-) -> Result<(Vec<TileType>, HashMap<IdString, u32>), DbError> {
+/// The layout of a family directory: `mapping/` (prjxray-db), else
+/// `tile_types/` (prjuray-db), else `None`.
+pub(crate) fn detect_layout(root: &Path) -> Option<Layout> {
+    if root.join("mapping").is_dir() {
+        Some(Layout::Prjxray)
+    } else if root.join("tile_types").is_dir() {
+        Some(Layout::Prjuray)
+    } else {
+        None
+    }
+}
+
+/// The tile type names of a family (upper case, sorted, from the
+/// `tile_type_*.json` file names).
+pub(crate) fn tile_type_names(root: &Path, layout: Layout) -> Result<Vec<String>, DbError> {
     let dir = match layout {
         Layout::Prjxray => root.to_path_buf(),
         Layout::Prjuray => root.join("tile_types"),
@@ -699,18 +709,38 @@ fn load_tile_types(
     }
     names.sort();
     names.dedup();
+    Ok(names)
+}
+
+/// The files of tile type `name` in the family directory, in the order
+/// `segbits_<t>.db`, `segbits_<t>.block_ram.db`, `ppips_<t>.db`,
+/// `mask_<t>.db` (`<t>` is the lower case name).
+pub(crate) fn tile_type_file_names(name: &str) -> [String; 4] {
+    let lower = name.to_ascii_lowercase();
+    [
+        format!("segbits_{lower}.db"),
+        format!("segbits_{lower}.block_ram.db"),
+        format!("ppips_{lower}.db"),
+        format!("mask_{lower}.db"),
+    ]
+}
+
+/// Lists and loads the tile types of a family.
+fn load_tile_types(
+    root: &Path,
+    layout: Layout,
+) -> Result<(Vec<TileType>, HashMap<IdString, u32>), DbError> {
+    let names = tile_type_names(root, layout)?;
     let mut tile_types = Vec::with_capacity(names.len());
     let mut index = HashMap::default();
     for name in names {
-        let lower = name.to_ascii_lowercase();
-        let segbits_path = root.join(format!("segbits_{lower}.db"));
-        let block_ram_path = root.join(format!("segbits_{lower}.block_ram.db"));
-        let ppips_path = root.join(format!("ppips_{lower}.db"));
+        let [segbits_path, block_ram_path, ppips_path, mask_path] =
+            tile_type_file_names(&name).map(|f| root.join(f));
         let files = TileTypeFiles {
             segbits: is_file(&segbits_path),
             block_ram_segbits: is_file(&block_ram_path),
             ppips: is_file(&ppips_path),
-            mask: is_file(&root.join(format!("mask_{lower}.db"))),
+            mask: is_file(&mask_path),
         };
         let mut builder = TileSegbitsBuilder::new(&name);
         if files.ppips {
@@ -742,7 +772,7 @@ fn yaml_error(path: &Path) -> impl Fn(YamlError) -> DbError + '_ {
 }
 
 /// `get_part_information` + `get_fabric_for_part`.
-fn prjxray_fabric(root: &Path, part: &str) -> Result<(String, String), DbError> {
+pub(crate) fn prjxray_fabric(root: &Path, part: &str) -> Result<(String, String), DbError> {
     let parts_path = root.join("mapping").join("parts.yaml");
     let parts = yaml::parse(&read_text(&parts_path)?).map_err(yaml_error(&parts_path))?;
     let entry = parts

@@ -33,6 +33,10 @@
 //! (the reference writes a temporary file it never deletes) and the
 //! bitstream header names the `--fn_in` file instead. See the `xcfasm`
 //! section of `docs/rewrite/COMPAT.md`.
+//!
+//! Like `fasm2frames`, the database is opened through the binary cache
+//! configured by the environment (`FASM_XDB_CACHE`, see
+//! [`fasm_xilinx::cache`]).
 
 #![forbid(unsafe_code)]
 
@@ -116,7 +120,7 @@ pub fn run(
             return 2;
         }
     };
-    let code = match assemble(&values, process_env, stdout, stderr) {
+    let code = match assemble(&values, env, process_env, stdout, stderr) {
         Ok(code) => code,
         Err(message) => {
             let _ = stderr.write_all(message.as_bytes());
@@ -130,6 +134,7 @@ pub fn run(
 
 fn assemble(
     values: &Values,
+    env: &Environment,
     process_env: &Env,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
@@ -137,7 +142,7 @@ fn assemble(
     let frm_out = values.str("frm_out").map(|_| path(values, "frm_out"));
     let file = frm_out.as_deref().map(create_output).transpose()?;
     let fn_in = values.str("fn_in").map(|_| path(values, "fn_in"));
-    let frames = build_frames(values, fn_in.as_deref(), stderr)?;
+    let frames = build_frames(values, fn_in.as_deref(), &env.db_cache, stderr)?;
     if values.flag("debug") {
         fasm_xilinx::dump_frames_sparse(&frames, stdout)
             .map_err(|e| crate::fasm2frames::write_error(&e))?;

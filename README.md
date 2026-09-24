@@ -53,7 +53,9 @@ the Cargo workspace under `rust/`:
 * `rust/fasm`: the core library crate (parsing, the in-memory model,
   output formatting/canonicalisation).
 * `rust/fasm-cli`: the `fasm` command line tool (a drop-in replacement for
-  the original `fasm/tool.py` console script).
+  the original `fasm/tool.py` console script), the Xilinx tools
+  `fasm2frames`, `xcfasm` (f4pga-xc-fasm), `xc7frames2bit` and `bitread`
+  (prjxray), and `fasm-db-cache`.
 * `rust/fasm-xilinx`: Xilinx 7 series database loading and bitstream
   generation (in progress, see `docs/rewrite/TASKS.md`).
 * `rust/fasm-capi`: the C ABI (`libfasm_capi`), with a generated header at
@@ -76,6 +78,29 @@ PREFIX=/some/prefix` installs both headers, `libfasm_capi.{so,a}` and a
 `fasm.pc` pkg-config file for either language (`rust/fasm-capi/fasm.pc.in`,
 `rust/fasm-capi/examples/cpp` for a minimal C++ example that builds
 against it with `pkg-config --cflags --libs fasm`).
+
+### Xilinx database cache
+
+`fasm2frames` and `xcfasm` keep a binary cache of each prjxray-db /
+prjuray-db part they open, so that only the first run of a part pays for
+parsing the text database (about 4-6x faster opens: e.g. 23 ms instead of
+about 100 ms for xc7a35t). A cache file is only used when none of the files
+it was built from changed (size, stat fingerprint, BLAKE3 content hash),
+otherwise it is silently rebuilt; the output is identical either way.
+It is configured by the environment only (the command lines stay those
+of the reference tools):
+
+* `FASM_XDB_CACHE`: the cache directory (default
+  `$XDG_CACHE_HOME/fasm/db`, else `~/.cache/fasm/db`); `0` or empty
+  disables the cache. (`FASM_DB_CACHE` is where `tools/fetch-db.sh` puts
+  the text databases.)
+* `FASM_XDB_CACHE_VERBOSE=1`: report cache hits, rebuilds and their
+  reason on stderr.
+
+`fasm-db-cache build DB_ROOT PART...` (or `build --all DB_ROOT`) fills
+the cache ahead of time; `verify` re-hashes every source file, `info`,
+`list` and `clear` do what they say (`fasm-db-cache --help`). See
+`docs/rewrite/DESIGN-xilinx-db.md` §8.8.
 
 ## What changed in this rewrite
 

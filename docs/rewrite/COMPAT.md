@@ -368,6 +368,7 @@ variables, error cases).
 | Non-ASCII FASM file name | `UnicodeEncodeError` (the ANTLR wrapper encodes the name as ASCII) | the file is read |
 | Segbit whose frame address does not fit in 32 bits, or whose word is more than one frame before the frame start (impossible with the prjxray databases) | a 9+ digit frame address in the `.frm` / `IndexError` | `OverflowError: ...` / `IndexError: list index out of range` |
 | Architecture | Series7 only (101 words per frame; prjuray has its own `fasm2frames.py`) | the word count and the bit unit come from the database's architecture; UltraScale/UltraScale+ output is not verified yet (T6.x) |
+| Database cache | none: every run parses the text database (lazily, per tile type) | the opened part is kept in a binary cache file in `$FASM_XDB_CACHE` (default `$XDG_CACHE_HOME/fasm/db` or `~/.cache/fasm/db`; `0` disables it), written (atomically) by the first run of a part and after any change of its source files. Same output, exit codes and messages with and without it (checked by `rust/fasm-cli/tests/db_cache.rs` and `make xilinx-difftest`); `FASM_XDB_CACHE_VERBOSE=1` adds messages on stderr. See `DESIGN-xilinx-db.md` §8.8 |
 
 `tools/difftest-xilinx.py` applies rules 1 (drops the oracle's
 `Traceback (most recent call last):` line and the indented frame lines),
@@ -515,6 +516,7 @@ error cases.
 | Errors of the bitstream step | the `xc7frames2bit` messages, then a traceback ending with the `CalledProcessError` line | the same messages, then only the `CalledProcessError` line. For a `--part_file` that is a directory the reference's `xc7frames2bit` aborts and `/bin/sh` (dash) prints `Aborted` and exits with 134: the Rust tool prints the same text and `... returned non-zero exit status 134.` (with another `/bin/sh`, e.g. bash, the reference's text differs) |
 | Anything `xc7frames2bit` prints on stdout | captured and discarded | nothing is printed |
 | `.bit` header time | the current UTC time | the same, or `$SOURCE_DATE_EPOCH` (see `xc7frames2bit`) |
+| Database cache | none | as for `fasm2frames` (`$FASM_XDB_CACHE`) |
 
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 

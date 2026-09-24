@@ -18,6 +18,7 @@ fasm = { path = "../fasm" }
 foldhash = "0.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+blake3 = { workspace = true }
 
 [[bench]]
 name = "db"
