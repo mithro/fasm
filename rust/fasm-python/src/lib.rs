@@ -94,8 +94,8 @@ fn parse_fasm_string(py: Python<'_>, s: PyBackedStr) -> PyResult<Bound<'_, PyLis
     lines_to_py(py, result)
 }
 
-/// Parses FASM text given as ``bytes`` (or another buffer), returning a
-/// list of ``fasm.model.FasmLine``.
+/// Parses FASM text given as ``bytes`` or ``bytearray``, returning a list
+/// of ``fasm.model.FasmLine``.
 ///
 /// Only comments and annotation values must be valid UTF-8. Raises
 /// ``FasmParseError`` on the first error of the input.

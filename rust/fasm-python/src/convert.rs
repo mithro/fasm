@@ -115,9 +115,7 @@ impl PyModel {
         py: Python<'py>,
         set_feature: &SetFasmFeature,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let feature = set_feature
-            .feature
-            .with_str(|name| PyString::new(py, name));
+        let feature = set_feature.feature.with_str(|name| PyString::new(py, name));
         let value_format = set_feature
             .value_format
             .map(|format| self.value_formats[format as usize].bind(py));

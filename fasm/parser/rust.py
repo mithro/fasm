@@ -62,7 +62,7 @@ def parse_fasm_bytes(data):
     'a.b.c'
 
     Args:
-        data: The bytes (or other buffer) containing FASM source to parse.
+        data: The bytes or bytearray containing FASM source to parse.
 
     Returns:
         A list of fasm.model.FasmLine.

@@ -106,7 +106,9 @@ fn value(obj: &Bound<'_, PyAny>) -> Option<FeatureValue> {
         return None;
     }
     let bits: usize = obj.call_method0("bit_length").ok()?.extract().ok()?;
-    let bytes = obj.call_method1("to_bytes", (bits.div_ceil(8), "little")).ok()?;
+    let bytes = obj
+        .call_method1("to_bytes", (bits.div_ceil(8), "little"))
+        .ok()?;
     let bytes = bytes.cast::<PyBytes>().ok()?;
     Some(FeatureValue::from_le_limbs(&le_limbs(bytes.as_bytes())))
 }
