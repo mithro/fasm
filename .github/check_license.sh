@@ -22,7 +22,7 @@ echo "==========================="
 echo
 
 ERROR_FILES=""
-FILES_TO_CHECK=`git ls-files | grep -ve '^third_party\|^\.' | grep -e '\.sh$\|\.py$\|\.cpp$\|\.h$\|CMakeLists.txt$\|Makefile$'`
+FILES_TO_CHECK=`git ls-files | grep -ve '^third_party\|^\.' | grep -e '\.sh$\|\.py$\|\.cpp$\|\.h$\|\.hpp$\|\.pc\.in$\|CMakeLists.txt$\|Makefile$'`
 
 for file in $FILES_TO_CHECK; do
     echo "Checking $file"

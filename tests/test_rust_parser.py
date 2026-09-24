@@ -165,8 +165,8 @@ def rust_stricter_than_textx(path):
     rel = os.path.relpath(path, os.path.join(ROOT, 'tests', 'corpus'))
     if rel.startswith(os.path.join('synthetic', 'invalid') + os.sep):
         return True
-    manifest = os.path.join(ROOT, 'tests', 'corpus', 'synthetic',
-                            'edge-cases', 'manifest.json')
+    manifest = os.path.join(
+        ROOT, 'tests', 'corpus', 'synthetic', 'edge-cases', 'manifest.json')
     if rel.startswith('synthetic' + os.sep) and os.path.exists(manifest):
         with open(manifest) as f:
             entries = json.load(f)
@@ -414,7 +414,7 @@ def test_threads():
 
 def test_textx_fallback_without_extension(tmp_path):
     """ Without the extension module, fasm.parser falls back to textX with
-    the RuntimeWarning of the original package. """
+    a RuntimeWarning. """
     code = '\n'.join(
         [
             'import sys, warnings',
@@ -423,8 +423,10 @@ def test_textx_fallback_without_extension(tmp_path):
             '    warnings.simplefilter("always")',
             '    import fasm.parser',
             'print(fasm.parser.available, fasm.parser.implementation)',
-            'print([str(x.message).splitlines()[0] for x in w',
-            '       if x.category is RuntimeWarning])',
+            'print([x.category is RuntimeWarning and',
+            '       "Unable to import the fasm._fasm_rs Rust parser "',
+            '       "extension" in str(x.message) and',
+            '       "falling back" in str(x.message) for x in w])',
         ])
     out = subprocess.check_output(
         [sys.executable, '-c', code],
@@ -432,7 +434,7 @@ def test_textx_fallback_without_extension(tmp_path):
         universal_newlines=True)
     assert out.splitlines() == [
         "['textx'] textx",
-        "['Unable to import fast Antlr4 parser implementation.']",
+        "[True]",
     ]
 
 

@@ -354,3 +354,53 @@ what happened, branch/commit references, open issues.
   public API of Grid::from_json_slice, Part::new visibility, workspace dep
   comment.
 * T5.4 (frame assembler) started.
+* T3.2 implemented on branch `worktree-agent-a88301b57c5b468a9` (6 commits):
+  legacy ANTLR/Cython/CMake build, setup.py, MANIFEST.in, update_version.py,
+  third_party submodules, conda Makefile targets and the four legacy Python
+  workflows removed (grammars moved to docs/specification/antlr/); new
+  .github/workflows/python.yml (lint, test 3.9/3.11/3.13, abi3 manylinux
+  wheels x86_64+aarch64, sdist, trusted publishing on v* tags); tox.ini for
+  tox 4; .flake8; README rewritten. Found and fixed a NameError in the
+  missing-extension fallback path. In review.
+* T3.2 done: review APPROVE after one doc fix (17152c8: grammar files now
+  referenced and literalincluded from docs/specification/syntax.rst).
+  Merged with --no-ff; on the merged tree: cargo tests pass, oracle tests
+  9 passed (the oracle uses the pristine ffafe82 checkout), `maturin
+  develop` gives ['rust', 'textx'], flake8 and check-license clean;
+  worktree removed. Note: PyPI trusted publishing must be configured on
+  pypi.org before a `v*` tag can publish.
+* T4.2 (C++ header only wrapper) started.
+* T4.2 implemented on branch `worktree-agent-a3e944fe1ed19b3ec` (4 commits):
+  include/fasm/fasm.hpp (C++17 header only: Error, String, Value,
+  SetFeature, Line, File with iterators, exception trampoline for
+  callbacks, streaming parse_each), C++ test (203 checks) + header only
+  compile matrix (g++/clang++ x C++17/20 -Werror), `make capi-install
+  PREFIX=` with fasm.pc, pkg-config example. 12/12 ctest incl. valgrind.
+  In review.
+* T4.2 review: REQUEST CHANGES. Real bug: merge_and_sort's exception
+  trampolines keep the LAST exception (the C zero/sort key callbacks have
+  no early stop, so callbacks keep running); plus misleading trampoline
+  docs, a missing test, and a broken static link recipe in fasm.pc.in
+  (`--libs.private` is not a pkg-config option). Everything else verified
+  (12/12 tests, -Wshadow -Wconversion clean, 5000 char names, self move,
+  non-UTF-8 paths, pkg-config shared build). Fixes in progress.
+* T4.2 done: fixes d4ea350 (first exception kept), 2fdcf2b (tests),
+  f4bce2a (verified static/shared pkg-config recipes, docs), 9ce0806
+  (check_license.sh scans .hpp/.pc.in). Merged with --no-ff; `make
+  capi-test` 12/12 incl. valgrind and the compiler matrix; worktree
+  removed. Phase 4 (C and C++ wrappers) complete.
+* T3.3 (Python fast paths: fasm_tuple_to_string, merge_and_sort) started.
+* Integration fix (orchestrator): the CLI difftest tests/cli had been
+  failing on the T1.5 synthetic divergence corpus since the T2.1 merge (the
+  earlier "715 passed" run predated the corpus); documented divergent
+  classes and the invalid set are now skipped there (tools/difftest.py
+  covers them). Result: 1132 passed, 12 skipped in 59 s (was 21 minutes
+  with 149 failures). Noted: yapf 0.24.0 cannot parse
+  tests/cli/test_cli_compat.py (control characters in string literals);
+  CI's yapf job only covers fasm/ and tests/*.py.
+* T5.4/T5.5 interim (branch `worktree-agent-a201f3154dd57871c`, 11
+  commits): assembler + .frm + fasm2frames CLI done; mini-db fixtures and
+  the counter design match the oracle .frm byte for byte (dense, sparse,
+  PUDC_B); xilinx-difftest 69/69 identical; 1M line xc7a200t assembly 0.9 s
+  vs 28 s (31x); counter design only 3-4x because of the eager database
+  load (T5.3 cache will fix). Waiting for the final report.

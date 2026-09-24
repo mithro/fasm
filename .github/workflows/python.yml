@@ -1,0 +1,115 @@
+# CI/CD for the fasm Python package (fasm/, pyproject.toml, maturin build
+# of rust/fasm-python; see docs/rewrite/DESIGN-python.md). Replaces the
+# legacy wheel.yml, publish-to-pypi.yml, check-install.yml and the Python
+# parts of presubmit.yml, all removed in T3.2 along with the setuptools +
+# CMake + ANTLR build they drove.
+name: python
+on: [push, pull_request]
+
+jobs:
+  lint:
+    name: flake8 + yapf
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install lint tools
+        run: python -m pip install flake8 yapf==0.24.0
+      - name: flake8
+        run: flake8 fasm tests/*.py
+      - name: yapf --diff
+        run: yapf --diff --recursive fasm tests/*.py
+      - name: Check license headers
+        run: make check-license
+      - name: Check Python script headers
+        run: make check-python-scripts
+
+  test:
+    name: test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the package and its dev dependencies
+        run: python -m pip install '.[dev]'
+      - name: Run the Python test suite against the installed package
+        # See tests/README.md: --import-mode=importlib and a cwd outside
+        # the checkout keep pytest from importing the source tree's fasm/
+        # (which has no compiled extension) instead of the installed one.
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pytest-run"
+          cd "${RUNNER_TEMP}/pytest-run"
+          pytest --import-mode=importlib \
+            "${GITHUB_WORKSPACE}/tests/test_simple.py" \
+            "${GITHUB_WORKSPACE}/tests/test_rust_parser.py"
+
+  wheels:
+    name: wheels (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build abi3 manylinux_2_28 wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: 2_28
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Publishes to PyPI with trusted publishing (no stored token) when a
+  # `v*` tag is pushed. Configure the "pypi" trusted publisher for this
+  # repository/workflow on https://pypi.org/manage/project/fasm/settings/
+  # (or the project's initial publish) before this job can succeed.
+  publish:
+    name: publish to PyPI
+    needs: [lint, test, wheels, sdist]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

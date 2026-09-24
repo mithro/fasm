@@ -18,8 +18,10 @@ build-backend = "maturin"
 
 [project]
 name = "fasm"
-# TODO(T3.2): derive the version from `git describe` like update_version.py
-# (fasm/version.py) did for the setup.py build.
+# TODO(T8.4): a real release version scheme (the legacy setup.py build
+# derived it from `git describe` in update_version.py, generating
+# fasm/version.py; that build is gone, see docs/rewrite/DESIGN-python.md).
+# Static for now.
 version = "0.1.0.dev0"
 description = "FPGA Assembly (FASM) Parser and Generation library"
 readme = "README.md"
@@ -41,6 +43,18 @@ Homepage = "https://github.com/chipsalliance/fasm"
 
 [project.scripts]
 fasm = "fasm.tool:main"
+
+[project.optional-dependencies]
+# Everything needed to build, test and lint the Python package from a
+# checkout: `pip install .[dev]` (see tests/README.md, tox.ini,
+# .github/workflows/python.yml).
+dev = [
+    "maturin>=1.9.4,<2",
+    "textx",
+    "pytest",
+    "flake8",
+    "yapf==0.24.0",
+]
 
 [tool.maturin]
 manifest-path = "rust/fasm-python/Cargo.toml"

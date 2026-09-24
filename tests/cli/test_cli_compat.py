@@ -62,6 +62,7 @@ A result is only normalised by rule 2 or 3 when the other side is a Rust
 parse error, so every file that the original tool accepts must be
 accepted with the same output, and every rejected file must be rejected.
 """
+import json
 import os
 import re
 import subprocess
@@ -86,10 +87,61 @@ if not RUST_CLI.exists():
         allow_module_level=True)
 
 
+# Classes of tests/corpus/synthetic/edge-cases/manifest.json whose files are
+# documented (docs/rewrite/COMPAT.md) to be accepted/decoded differently by
+# the Rust parser and the original ANTLR parser.  The library level
+# differential test (tools/difftest.py) checks those against their expected
+# class; here they can only produce expected differences, so they are
+# skipped.  `same_all_three` and `rust_follows_antlr_over_textx` files must
+# match the ANTLR oracle and are kept.
+DIVERGENT_MANIFEST_CLASSES = {
+    'rust_relaxes_antlr',
+    'antlr_bug_wrong_decode',
+    'rust_stricter',
+    'non_ascii_antlr_exception',
+}
+
+
+def manifest_class(rel):
+    """The manifest class of a synthetic edge case file (path relative to
+    ROOT), or None for every other file."""
+    parts = Path(rel).parts
+    if parts[:4] != ('tests', 'corpus', 'synthetic', 'edge-cases'):
+        return None
+    manifest = ROOT / 'tests' / 'corpus' / 'synthetic' / 'edge-cases' / \
+        'manifest.json'
+    with open(manifest) as f:
+        entry = json.load(f).get(str(Path(*parts[3:])))
+    return None if entry is None else entry.get('class')
+
+
+def synthetic_divergent(path):
+    """True for synthetic corpus files that differ from the ANTLR oracle by
+    design: the invalid-input set (the Rust error positions are checked by
+    tools/difftest.py; the oracle is also extremely slow on some of them)
+    and the divergent manifest classes."""
+    rel = path.relative_to(ROOT / 'tests' / 'corpus')
+    parts = rel.parts
+    if parts[:2] == ('synthetic', 'invalid'):
+        return True
+    if parts[:2] == ('synthetic', 'edge-cases'):
+        manifest = ROOT / 'tests' / 'corpus' / 'synthetic' / 'edge-cases' / \
+            'manifest.json'
+        with open(manifest) as f:
+            entries = json.load(f)
+        entry = entries.get(str(Path(*parts[1:])))
+        return entry is not None and \
+            entry.get('class') in DIVERGENT_MANIFEST_CLASSES
+    return False
+
+
 def fasm_files():
     """The FASM files to run both tools on, relative to ROOT."""
     files = sorted((ROOT / 'examples').glob('*.fasm'))
-    files += sorted((ROOT / 'tests' / 'corpus').glob('**/*.fasm'))
+    files += [
+        f for f in sorted((ROOT / 'tests' / 'corpus').glob('**/*.fasm'))
+        if not synthetic_divergent(f)
+    ]
     files += sorted((ROOT / 'tests' / 'cli' / 'fixtures').glob('*.fasm'))
     return [str(f.relative_to(ROOT)) for f in files]
 
@@ -301,6 +353,10 @@ FILE_CASES = [(args + [f], parser) for f in fasm_files()
 @pytest.mark.parametrize(
     'argv,parser', FILE_CASES, ids=[case_id(a) for a, _ in FILE_CASES])
 def test_file(argv, parser):
+    if parser == 'textx' and manifest_class(argv[-1]) == \
+            'rust_follows_antlr_over_textx':
+        pytest.skip('documented divergence: textX rejects, the Rust and '
+                    'ANTLR parsers accept (docs/rewrite/COMPAT.md)')
     check(argv, parser)
 
 
