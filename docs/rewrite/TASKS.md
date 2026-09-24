@@ -142,7 +142,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T7.1 `tools/e2e/setup-openxc7.sh`: fetch openXC7 snap (unsquashfs) or
       build nextpnr-xilinx + chipdb for the needed parts; yosys from OSS CAD
       Suite; document versions.
-- [~] T7.2 fpgas.online-test-designs: build every Xilinx design (LiteX +
+- [r] T7.2 fpgas.online-test-designs: build every Xilinx design (LiteX +
       openXC7), collect FASM into the corpus, run Rust `fasm2frames` /
       bitstream and compare against the reference flow (after T7.1, T5.9).
 - [ ] T7.3 f4pga-examples: set up the f4pga (VPR based) flow, build all xc7

@@ -447,3 +447,20 @@ what happened, branch/commit references, open issues.
   worktree removed.
 * T5.6 (Series7 bitstream writer/reader, xc7frames2bit compatible CLI)
   started.
+* T7.2 implemented on branch `worktree-agent-a413aea60a910a8c3` (10 commits):
+  LiteX + openXC7 flow scripts (setup-litex.sh, run-fpgas-online.sh), 18 of
+  20 Xilinx design/board combinations built (uart, pmod-loopback,
+  pmod-pin-id, spi-flash-id, ethernet-test, ddr-memory on Arty A7-35T,
+  NeTV2 xc7a35tfgg484-2, LiteFury xc7a100tfgg484-2, Acorn
+  xc7a200tfbg484-3; the xc7a200t chipdb export succeeded this time, 349 s,
+  8.5 GiB peak); the two PCIe designs fail for structural reasons (LitePCIe
+  needs Vivado only IP / toolchain attributes). Corpus: 11 MiB of FASM with
+  dense/sparse reference .frm. Quirks fixed: LiteX chipdb name parsing,
+  yosys `$buf` cells need a techmap for nextpnr-xilinx.
+  Orchestrator check with the merged Rust fasm2frames: 14/18 identical;
+  the 4 spi-flash-id designs differed because their goldens were produced
+  with the openXC7 snap's bundled prjxray-db (a fork that knows STARTUP
+  features such as CFG_CENTER_MID.STARTUP.USRCCLKO_CONNECTED, absent from
+  the pinned f4pga/prjxray-db, where both the oracle and Rust reject the
+  file identically). With the snap database Rust matches all 18. The
+  corpus must name that database; in review.
