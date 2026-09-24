@@ -109,6 +109,12 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [r] T5.3 Binary cache for a loaded part database (versioned, content
       hashed, memory mappable) + `fasm-db-cache` maintenance subcommand
       (after T5.2).
+- [ ] T5.3b Cache follow-ups from the T5.3 review: loader fingerprint in the
+      cache file name (two builds sharing a cache directory currently
+      overwrite each other), lazy per tile type decoding / interner bulk
+      insert to reach the few ms open target, skip the payload hash when
+      the stat fingerprints match, document NFS attribute caching (after
+      T5.3).
 - [x] T5.4 Frame assembler: `FasmAssembler` (feature lookup, multi bit
       features, `!` cleared bits, pseudo pips, unknown feature errors, sparse
       vs full frames, ROI, required features, PUDC_B, STEPDOWN) (after T5.2).

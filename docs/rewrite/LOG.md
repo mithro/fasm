@@ -545,3 +545,12 @@ what happened, branch/commit references, open issues.
   short of the few ms target), counter_test fasm2frames 31-34 ms vs
   94-101 ms (14x vs reference). xilinx-difftest identical with the cache
   on. Independent review (Opus) started.
+* T5.3 review (Opus): byte identical with and without the cache on 7 real
+  designs incl. error paths, ~9k mutation iterations 0 panics, 8 process
+  race clean, 15 staleness scenarios correct. REQUEST CHANGES: on 1 s
+  timestamp filesystems (ext3 -I 128 reproduced) a source rewritten in
+  place during the cache build could leave a permanently stale cache
+  (12/40 builds); fix requested (do not write when a source timestamp is
+  inside the racy window / hash the parsed bytes) plus tests. Follow-ups
+  recorded under T5.3b (loader fingerprint in the file name, lazy tile
+  type decode, skip payload hash on stat hit, NFS caveat).
