@@ -69,7 +69,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 3: Python bindings
 
-- [~] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
+- [r] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
       `parse_fasm_string`, `parse_fasm_filename` returning the existing
       namedtuples; maturin `pyproject.toml`; `fasm/parser/rust.py`;
       `fasm.parser.available` update; keep textX fallback (after T1.4).

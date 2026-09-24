@@ -279,3 +279,15 @@ what happened, branch/commit references, open issues.
   fixed in the next commit keeping both targets. Lesson recorded in
   WORKFLOW.md: never chain `git commit -a` after a merge without checking
   its exit status.
+* T3.1 implemented on branch `worktree-agent-a7576ae0294e12fea` (11 commits):
+  pyo3 0.29 `fasm._fasm_rs` (abi3-py39, GIL released, cyclic GC paused
+  while building big results), returns the existing namedtuples, `rust`
+  parser default with textX fallback, maturin packaging (static version
+  0.1.0.dev0, TODO T3.2), `FasmParseError`, fast path
+  `_fasm_rs.fasm_tuple_to_string`. Benchmarks: 100k line file 66 ms (Rust)
+  vs 1.08 s (ANTLR) vs 22.4 s (textX); 781 line design 0.3 ms vs 3.5 ms.
+  Noted: the plain cargo workspace build now needs a Python interpreter
+  (consider excluding fasm-python from default-members); the error
+  precedence emulation lives in fasm-cli only (Python reports the first
+  error): documented in COMPAT.md, candidate follow up to move it into
+  fasm::parser. In review.
