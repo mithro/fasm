@@ -26,7 +26,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `tests/oracle/setup.sh` (T5.8 implementer saw it succeed once and fall
       back to textX on another identical run); make the build deterministic
       or fail loudly (after T0.4).
-- [ ] T0.5 CI: GitHub Actions workflow for `cargo fmt --check`, `clippy`,
+- [~] T0.5 CI: GitHub Actions workflow for `cargo fmt --check`, `clippy`,
       `cargo test`, Python tests. (Keep the existing Python workflows
       working until Phase 3 replaces them.)
 
@@ -48,7 +48,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       grammar with exact ANTLR/textX compatible acceptance and error
       behaviour; streaming and whole-file APIs; tests from
       `examples/*.fasm` and a hand written edge case table (after T1.2).
-- [r] T1.4 `output` module: string formatting, canonicalisation,
+- [x] T1.4 `output` module: string formatting, canonicalisation,
       `merge_features`, `merge_and_sort` (MergeModel) with tests ported from
       Python behaviour (after T1.2).
 - [ ] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test

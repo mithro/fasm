@@ -190,3 +190,10 @@ what happened, branch/commit references, open issues.
   in `merge_addresses` is O(G^2) in distinct feature names (fast follow
   needed before full chip use), and the CLI will need a small
   fmt::Write-over-io::Write adapter. Fix in progress.
+* T1.4 done: fixes 0f50186 (checked width validation in write_set_feature,
+  shared EndWithoutStart/EndBeforeStart/AddressRangeTooWide errors, O(1)
+  HashMap index for merge_addresses keeping insertion order, 500 name
+  test) and 15c8dd8 (canonical line/tuple paths use try_canonical_features).
+  Orchestrator re-ran the reviewer's harness: all 11 suites 0 mismatches.
+  Merged with --no-ff; 205 tests pass, fmt/clippy clean; worktree removed.
+* T0.5 (CI workflow) started.
