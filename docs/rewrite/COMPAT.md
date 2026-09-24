@@ -306,3 +306,15 @@ error it resumes parsing after that line and reports the first later
 error that is not a value range error, if there is one
 (`tool::error_to_report` in `rust/fasm-cli/src/tool.rs`), and the first
 value range error otherwise.
+
+## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
+
+The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);
+where C cannot express the Python behaviour exactly:
+
+| Case | Python | C API |
+|---|---|---|
+| `merge_and_sort(model, sort_key=...)` | `sort_key(group_id)` returns any comparable object; called once per group by `sorted()`; groups with equal keys keep their order of first appearance in the model (stable sort over dict insertion order) | `fasm_file_merge_and_sort_ex`: the key is an `int64_t`; called exactly once per group (cached); groups with equal keys are ordered by group id (string order), so the output never depends on hash map order |
+| `merge_and_sort(model, zero_function=...)` | called with the feature name | `fasm_zero_fn` is called with a NUL terminated copy of the feature name (and its length) |
+| Feature values | unbounded `int` | bit length, `uint64_t` when it fits, bits, little endian bytes or digit strings (`fasm_set_feature_value_*`) |
+| `value_format` | `ValueFormat` or `None` | `fasm_value_format`: the same values 0 to 4, `FASM_VALUE_FORMAT_NONE` (-1) for `None` |
