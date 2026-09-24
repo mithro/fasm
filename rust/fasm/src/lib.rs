@@ -31,6 +31,8 @@
 //! None of the above modules exist yet; this crate currently only exposes
 //! its own version for the workspace skeleton (task T0.3).
 
+pub mod idstring;
+
 /// The version of this crate, taken from `Cargo.toml` at compile time.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
