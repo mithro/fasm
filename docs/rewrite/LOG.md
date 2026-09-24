@@ -533,3 +533,15 @@ what happened, branch/commit references, open issues.
   difftest.py 100/100 explained. Worktree removed.
 * T5.3 (binary database cache + fasm-db-cache tool) started (Opus) in the
   slot freed by the hardening merge; T6.2 still running.
+* T5.3 implemented on branch `worktree-agent-a4735f947a5fdafa9` (10
+  commits): rust/fasm-xilinx/src/cache/ (magic FASMXDB1, BLAKE3 header
+  and payload hashes, per source stat fingerprint + content hash, loader
+  fingerprint from build.rs, atomic writes, parallel section decode),
+  `Database::open_cached`, env `FASM_XDB_CACHE` (not FASM_DB_CACHE, which
+  names the fetched text databases) / `FASM_XDB_CACHE_VERBOSE`,
+  `fasm-db-cache` build/verify/info/list/clear binary, fasm2frames/xcfasm
+  use it with no new flags. Measured cached open 23 ms xc7a35t / 41 ms
+  xc7a200t vs 100-200 ms text load (interning 98k-195k names dominates;
+  short of the few ms target), counter_test fasm2frames 31-34 ms vs
+  94-101 ms (14x vs reference). xilinx-difftest identical with the cache
+  on. Independent review (Opus) started.
