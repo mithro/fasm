@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use fasm_xilinx::bitstream::{bitstream_bytes, ecc, BitHeader, BitstreamOptions, BitstreamReader};
-use fasm_xilinx::{Architecture, FrameAddress, Frames, Part};
+use fasm_xilinx::{Architecture, Frames, Part};
 
 use common::{real_db, repo_root};
 
@@ -275,50 +275,6 @@ fn counter_matches_reference_xc7frames2bit() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The frame addresses of a `configuration_ranges` `part.yaml` (the form
-/// of prjxray's `lib/test_data/configuration_test.yaml`, which the
-/// database loader does not support): every address in `[begin, end)`
-/// of each range, like `YAML::convert<Part>::decode`.
-fn configuration_ranges_part(text: &str) -> Part {
-    let mut idcode = 0;
-    let mut addresses = Vec::new();
-    let mut fields = [0u32; 5];
-    let mut current: Vec<u32> = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        let Some((key, value)) = line.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        let set = |i: usize, v: u32, fields: &mut [u32; 5]| fields[i] = v;
-        match key.trim_start_matches("- ") {
-            "idcode" => idcode = u32::from_str_radix(value.trim_start_matches("0x"), 16).unwrap(),
-            "block_type" => set(
-                0,
-                ["CLB_IO_CLK", "BLOCK_RAM", "CFG_CLB"]
-                    .iter()
-                    .position(|b| *b == value)
-                    .unwrap() as u32,
-                &mut fields,
-            ),
-            "row_half" => set(1, u32::from(value == "bottom"), &mut fields),
-            "row" => set(2, value.parse().unwrap(), &mut fields),
-            "column" => set(3, value.parse().unwrap(), &mut fields),
-            "minor" => {
-                set(4, value.parse().unwrap(), &mut fields);
-                let [bt, half, row, column, minor] = fields;
-                current.push((bt << 23) | (half << 22) | (row << 17) | (column << 7) | minor);
-                if current.len() == 2 {
-                    addresses.extend((current[0]..current[1]).map(FrameAddress));
-                    current.clear();
-                }
-            }
-            _ => {}
-        }
-    }
-    Part::from_frame_addresses(Architecture::Series7, idcode, addresses).unwrap()
-}
-
 /// prjxray's `lib/test_data`, in the oracle's checkout.
 fn prjxray_test_data() -> Option<PathBuf> {
     let mut candidates =
@@ -345,9 +301,9 @@ fn prjxray_test_bitstreams_give_equal_configurations() {
     let Some(dir) = prjxray_test_data() else {
         return;
     };
-    let part = configuration_ranges_part(
-        &std::fs::read_to_string(dir.join("configuration_test.yaml")).unwrap(),
-    );
+    // The `configuration_ranges` form of part.yaml.
+    let part =
+        Part::from_yaml_file(&dir.join("configuration_test.yaml"), Architecture::Series7).unwrap();
     let read = |name: &str| std::fs::read(dir.join(name)).unwrap();
     let (normal, debug, perframecrc) = (
         read("configuration_test.bit"),

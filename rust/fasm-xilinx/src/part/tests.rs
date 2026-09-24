@@ -243,9 +243,67 @@ rows:
 }
 
 #[test]
+fn configuration_ranges_form() {
+    let text = "\
+!<xilinx/xc7series/part>
+idcode: 0x362c093
+configuration_ranges:
+  - !<xilinx/xc7series/configuration_frame_range>
+    begin: !<xilinx/xc7series/configuration_frame_address>
+      block_type: CLB_IO_CLK
+      row_half: top
+      row: 0
+      column: 0
+      minor: 0
+    end: !<xilinx/xc7series/configuration_frame_address>
+      block_type: CLB_IO_CLK
+      row_half: top
+      row: 0
+      column: 0
+      minor: 3
+  - !<xilinx/xc7series/configuration_frame_range>
+    begin: !<xilinx/xc7series/frame_address>
+      block_type: BLOCK_RAM
+      row_half: bottom
+      row: 1
+      column: 2
+      minor: 0
+    end: !<xilinx/xc7series/frame_address>
+      block_type: BLOCK_RAM
+      row_half: bottom
+      row: 1
+      column: 2
+      minor: 1
+";
+    let part = Part::from_yaml_str(text, Architecture::Series7).unwrap();
+    assert_eq!(part.idcode, 0x362c093);
+    let frames: Vec<FrameAddress> = part.iter_frame_addresses().collect();
+    assert_eq!(
+        frames,
+        [
+            addr(0, false, 0, 0, 0),
+            addr(0, false, 0, 0, 1),
+            addr(0, false, 0, 0, 2),
+        ]
+    );
+    // Bottom row 1 without a row 0: not reached by the walk (prjxray).
+    assert!(part.is_valid_frame_address(addr(1, true, 1, 2, 0)));
+    assert_eq!(part.frame_count(), 4);
+    let flat = Part::from_yaml_str(
+        "!<xilinx/xcupseries/part>\nidcode: 1\nconfiguration_ranges: []\n",
+        Architecture::Series7,
+    );
+    assert!(flat.is_err());
+}
+
+#[test]
 fn invalid_parts() {
     let cases = [
-        ("idcode: 1\nconfiguration_ranges: {}\n", "configuration_ranges"),
+        ("idcode: 1\nconfiguration_ranges: {}\n", "expected a sequence"),
+        (
+            "idcode: 1\nconfiguration_ranges:\n  - begin: {}\n    end: {}\n",
+            "configuration_frame_address",
+        ),
         ("idcode: 1\n", "no global_clock_regions"),
         ("!<xilinx/other/part>\nidcode: 1\n", "unknown part tag"),
         ("global_clock_regions: {top: {}, bottom: {}}\n", "idcode"),

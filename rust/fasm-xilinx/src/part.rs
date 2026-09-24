@@ -213,10 +213,13 @@ impl Part {
     /// (`!<xilinx/xc7series/part>`, `xcuseries`, `xcupseries`), or is
     /// `default_arch` for an untagged document.
     ///
-    /// Only the nested `global_clock_regions` (Series7) / `rows`
-    /// (UltraScale/+) form is supported; the `configuration_ranges` form
-    /// the C++ decoder also accepts (never written by
-    /// `gen_part_base_yaml`) is reported as an error.
+    /// The nested `global_clock_regions` (Series7) / `rows` (UltraScale/+)
+    /// form written by `gen_part_base_yaml` is supported, and for Series7
+    /// also the `configuration_ranges` form the C++ decoder accepts (a
+    /// list of `[begin, end)` frame address ranges, used by prjxray's
+    /// `lib/test_data/configuration_test.yaml`), which is turned into rows
+    /// like the C++ `Part(idcode, addresses)` constructor
+    /// ([`Part::from_frame_addresses`]).
     ///
     /// # Errors
     ///
@@ -247,6 +250,15 @@ impl Part {
         let mut rows = Vec::new();
         if arch.has_global_clock_regions() {
             let Some(regions) = doc.get("global_clock_regions")? else {
+                if let Some(ranges) = doc.get("configuration_ranges")? {
+                    let addresses = configuration_ranges(arch, ranges)?;
+                    return Part::from_frame_addresses(arch, idcode, addresses).map_err(
+                        |message| YamlError {
+                            line: doc.line,
+                            message,
+                        },
+                    );
+                }
                 return Err(unsupported_form(&doc));
             };
             for (name, bottom) in [("top", false), ("bottom", true)] {
@@ -460,9 +472,59 @@ impl Part {
     }
 }
 
+/// The frame addresses of a `configuration_ranges` sequence: every
+/// address in `[begin, end)` of each `configuration_frame_range`
+/// (`YAML::convert<xc7series::Part>::decode`).
+fn configuration_ranges(arch: Architecture, ranges: &Node) -> Result<Vec<FrameAddress>, YamlError> {
+    let address = |node: &Node| -> Result<u32, YamlError> {
+        let tag_ok = matches!(
+            node.tag.as_deref(),
+            Some("xilinx/xc7series/frame_address" | "xilinx/xc7series/configuration_frame_address")
+        );
+        let bad = |message: &str| YamlError {
+            line: node.line,
+            message: message.to_owned(),
+        };
+        if !tag_ok {
+            return Err(bad(
+                "expected a !<xilinx/xc7series/configuration_frame_address>",
+            ));
+        }
+        let block_type = BlockType::from_name(node.require("block_type")?.as_str()?)
+            .ok_or_else(|| bad("unknown block_type"))?;
+        let bottom = match node.require("row_half")?.as_str()? {
+            "top" => false,
+            "bottom" => true,
+            _ => return Err(bad("row_half is neither top nor bottom")),
+        };
+        Ok(FrameAddress::compose_masked(
+            arch,
+            u32::from(block_type.raw()),
+            bottom,
+            node.require("row")?.as_u32()?,
+            node.require("column")?.as_u32()?,
+            node.require("minor")?.as_u32()?,
+        )
+        .0)
+    };
+    let mut addresses = Vec::new();
+    for range in ranges.as_seq()? {
+        let begin = address(range.require("begin")?)?;
+        let end = address(range.require("end")?)?;
+        if end.saturating_sub(begin) > 1 << 26 {
+            return Err(YamlError {
+                line: range.line,
+                message: "configuration range too large".to_owned(),
+            });
+        }
+        addresses.extend((begin..end).map(FrameAddress));
+    }
+    Ok(addresses)
+}
+
 fn unsupported_form(doc: &Node) -> YamlError {
     let message = if doc.get("configuration_ranges").ok().flatten().is_some() {
-        "the configuration_ranges form of part.yaml is not supported"
+        "the configuration_ranges form of part.yaml is only supported for Series7"
     } else {
         "part.yaml has no global_clock_regions / rows"
     };

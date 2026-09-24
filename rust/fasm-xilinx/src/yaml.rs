@@ -18,10 +18,13 @@
 //! `part.yaml` (nested block mappings with `!<...>` tags) and
 //! `mapping/{parts,devices}.yaml` (two level mappings of scalars).
 //!
-//! Supported: block mappings (indentation by spaces), plain, single and
-//! double quoted scalars, `!<verbatim>` and `!shorthand` tags, one line
-//! flow mappings (`{frame_count: 30}`), `#` comments, a leading `---`.
-//! Anything else (sequences, anchors, block scalars, multi line flow
+//! Supported: block mappings (indentation by spaces), block sequences
+//! indented under their key (`- item`, `- !<tag>` followed by a nested
+//! mapping, `- key: value` compact mappings; used by the
+//! `configuration_ranges` form of `part.yaml`), plain, single and double
+//! quoted scalars, `!<verbatim>` and `!shorthand` tags, one line flow
+//! mappings (`{frame_count: 30}`), `#` comments, a leading `---`.
+//! Anything else (anchors, block scalars, flow sequences, multi line flow
 //! collections, tabs in indentation) is reported as an error with its
 //! line instead of being guessed at.
 //!
@@ -50,6 +53,8 @@ pub(crate) enum Value {
     Scalar(String),
     /// A mapping, in file order.
     Map(Vec<(String, Node)>),
+    /// A sequence.
+    Seq(Vec<Node>),
 }
 
 /// A YAML error: 1-based line and message.
@@ -78,6 +83,14 @@ impl Node {
         match &self.value {
             Value::Map(entries) => Ok(entries),
             _ => error(self.line, "expected a mapping"),
+        }
+    }
+
+    /// The items of a sequence node.
+    pub(crate) fn as_seq(&self) -> Result<&[Node], YamlError> {
+        match &self.value {
+            Value::Seq(items) => Ok(items),
+            _ => error(self.line, "expected a sequence"),
         }
     }
 
@@ -133,6 +146,7 @@ pub(crate) fn parse_u32(s: &str) -> Option<u32> {
     u32::from_str_radix(digits, radix).ok()
 }
 
+#[derive(Clone, Copy)]
 struct Line<'a> {
     number: usize,
     indent: usize,
@@ -271,9 +285,13 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    /// Parses the block mapping whose entries are at `indent`.
+    /// Parses the block mapping (or sequence) whose entries are at
+    /// `indent`.
     fn block(&mut self, indent: usize) -> Result<Node, YamlError> {
         let first_line = self.lines[self.pos].number;
+        if is_item(self.lines[self.pos].text) {
+            return self.sequence(indent);
+        }
         let mut entries: Vec<(String, Node)> = Vec::new();
         while let Some(line) = self.lines.get(self.pos) {
             if line.indent < indent {
@@ -284,8 +302,8 @@ impl Parser<'_> {
                 return error(number, "unexpected indentation");
             }
             let text = line.text;
-            if text == "-" || text.starts_with("- ") {
-                return error(number, "YAML sequences are not supported");
+            if is_item(text) {
+                return error(number, "a sequence item where a mapping key was expected");
             }
             let (key, rest) = split_key(text, number)?;
             if entries.iter().any(|(k, _)| *k == key) {
@@ -314,6 +332,70 @@ impl Parser<'_> {
             tag: None,
             line: first_line,
             value: Value::Map(entries),
+        })
+    }
+}
+
+fn is_item(text: &str) -> bool {
+    text == "-" || text.starts_with("- ")
+}
+
+/// `true` if `text` starts a (compact) block mapping: `key: value` or
+/// `key:`, not a quoted scalar or flow collection.
+fn is_mapping_start(text: &str) -> bool {
+    !text.starts_with(['"', '\'', '{', '[']) && (text.contains(": ") || text.ends_with(':'))
+}
+
+impl Parser<'_> {
+    /// Parses the block sequence whose `- ` items are at `indent`.
+    fn sequence(&mut self, indent: usize) -> Result<Node, YamlError> {
+        let first_line = self.lines[self.pos].number;
+        let mut items = Vec::new();
+        while let Some(&line) = self.lines.get(self.pos) {
+            if line.indent < indent {
+                break;
+            }
+            let number = line.number;
+            if line.indent > indent {
+                return error(number, "unexpected indentation");
+            }
+            if !is_item(line.text) {
+                return error(number, "expected a `- ` sequence item");
+            }
+            let (tag, rest) = split_tag(line.text[1..].trim_start(), number)?;
+            let mut node = if rest.is_empty() {
+                self.pos += 1;
+                match self.lines.get(self.pos) {
+                    Some(next) if next.indent > indent => self.block(next.indent)?,
+                    _ => Node {
+                        tag: None,
+                        line: number,
+                        value: Value::Null,
+                    },
+                }
+            } else if is_mapping_start(rest) || is_item(rest) {
+                // `- key: value` (or `- - item`): the mapping (sequence)
+                // continues at the column of `key`.
+                let column = indent + (line.text.len() - rest.len());
+                self.lines[self.pos] = Line {
+                    number,
+                    indent: column,
+                    text: rest,
+                };
+                self.block(column)?
+            } else {
+                self.pos += 1;
+                inline_value(rest, number)?
+            };
+            if tag.is_some() {
+                node.tag = tag;
+            }
+            items.push(node);
+        }
+        Ok(Node {
+            tag: None,
+            line: first_line,
+            value: Value::Seq(items),
         })
     }
 }
@@ -524,6 +606,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sequences() {
+        let text = "\
+ranges:
+  - !<range>
+    begin: !<addr>
+      row: 1
+    end: {row: 2}
+  - a: 1
+    b: 'x'
+  - plain
+  -
+  - - nested
+";
+        let doc = parse(text).unwrap();
+        let items = doc.require("ranges").unwrap().as_seq().unwrap();
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].tag.as_deref(), Some("range"));
+        let begin = items[0].require("begin").unwrap();
+        assert_eq!(begin.tag.as_deref(), Some("addr"));
+        assert_eq!(begin.require("row").unwrap().as_u32().unwrap(), 1);
+        assert_eq!(
+            items[0]
+                .require("end")
+                .unwrap()
+                .require("row")
+                .unwrap()
+                .as_u32()
+                .unwrap(),
+            2
+        );
+        assert_eq!(items[1].require("b").unwrap().as_str().unwrap(), "x");
+        assert_eq!(items[2].as_str().unwrap(), "plain");
+        assert_eq!(items[3].value, Value::Null);
+        assert_eq!(items[4].as_seq().unwrap()[0].as_str().unwrap(), "nested");
+        assert!(doc.as_seq().is_err());
+        assert_eq!(parse("- 1\n- 2\n").unwrap().as_seq().unwrap().len(), 2);
+    }
+
+    #[test]
     fn part_yaml_shape() {
         let text = "!<xilinx/xc7series/part>\nidcode: 0x362d093\nglobal_clock_regions:\n  top: !<xilinx/xc7series/global_clock_region>\n    rows:\n      0: !<xilinx/xc7series/row>\n        configuration_buses:\n          CLB_IO_CLK: !<xilinx/xc7series/configuration_bus>\n            configuration_columns:\n              0: !<xilinx/xc7series/configuration_column>\n                frame_count: 42\n              1: {frame_count: 30}  # comment\n  bottom: !<xilinx/xc7series/global_clock_region>\n    rows: {}\n";
         let doc = parse(text).unwrap();
@@ -599,7 +720,8 @@ mod tests {
     #[test]
     fn unsupported_is_an_error_with_a_line() {
         let cases = [
-            ("a:\n  - 1\n", 2, "sequences"),
+            ("a:\n- 1\n", 2, "sequence item"),
+            ("a:\n  - 1\n  b: 2\n", 3, "sequence item"),
             ("a: 1\n  b: 2\n", 2, "indentation"),
             ("a: 1\na: 2\n", 2, "duplicate"),
             ("a: [1, 2]\n", 1, "unsupported"),
