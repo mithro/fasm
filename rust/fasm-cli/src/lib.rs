@@ -24,7 +24,10 @@
 //! * `xcfasm` ([`xcfasm`]): f4pga-xc-fasm's `xc_fasm.xc_fasm` (FASM ->
 //!   `.frm` -> `.bit` in one step);
 //! * `xc7frames2bit` ([`xc7frames2bit`]) and `bitread` ([`bitread`]):
-//!   prjxray's C++ tools (`.frm` -> `.bit`, `.bit` -> frames).
+//!   prjxray's C++ tools (`.frm` -> `.bit`, `.bit` -> frames);
+//! * `fasm-db-cache` ([`db_cache`]): maintenance of the binary database
+//!   cache that `fasm2frames` and `xcfasm` use (Rust only, no reference
+//!   tool).
 //!
 //! The Python tools parse their arguments with an emulation of Python's
 //! argparse ([`argparse`]), the prjxray tools with an emulation of gflags
@@ -33,6 +36,7 @@
 
 pub mod argparse;
 pub mod bitread;
+pub mod db_cache;
 pub mod fasm2frames;
 pub mod gflags;
 pub mod pystr;
