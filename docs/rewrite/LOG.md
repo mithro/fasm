@@ -59,3 +59,16 @@ what happened, branch/commit references, open issues.
   ANTLR but fail with textX (`fasm.tx` ordered choice matches a lone `\`
   first). The corpus (T1.5) must include this case and COMPAT.md must
   record which behaviour the Rust parser follows (ANTLR).
+* T0.4 done: oracle fix commit 03b4f7e re-reviewed (APPROVE), branch merged
+  with --no-ff (one trivial .gitignore conflict resolved by keeping both
+  hunks). `tests/oracle/setup.sh` run in the main tree: both ANTLR and textX
+  parsers available, pinned to ffafe82, 9 oracle tests pass. Optional
+  suggestion left open: surface build/worktree.log when `git worktree add`
+  fails.
+* T1.1 implemented on branch `worktree-agent-a1361d4f5c2229f2a` (11 commits,
+  design doc docs/rewrite/DESIGN-idstring.md). Implementer chose 3 levels
+  with 24/20/20 bit indexes (measured on the full xc7a200t feature space:
+  46,611 tiles, 6,888 / 7,790 entries on the other levels) and a lock free
+  sharded index (foldhash only runtime dependency). Sent for independent
+  review.
+* T5.1 (Xilinx database format study) started.

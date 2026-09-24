@@ -17,7 +17,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `rust-toolchain.toml`; `.gitignore` for `target/`; `deny.toml`/
       `clippy` config; `Makefile` targets `rust-build`, `rust-test`,
       `rust-lint`.
-- [~] T0.4 Oracle setup: `tests/oracle/setup.sh` creates a venv with the
+- [x] T0.4 Oracle setup: `tests/oracle/setup.sh` creates a venv with the
       original Python package (textX parser always, ANTLR parser when the
       C++ build succeeds) from the git history (`git worktree` of the
       pre-rewrite commit) so it can be used as a golden reference.
@@ -28,7 +28,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 1: Core library crate `fasm`
 
-- [~] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
+- [r] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
 - [ ] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
       `SetFasmFeature`, `Annotation`, `FasmLine` + tests.
@@ -78,7 +78,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 5: Xilinx 7 series bitstream generation
 
-- [ ] T5.1 Database format study: `docs/rewrite/DESIGN-xilinx-db.md`
+- [~] T5.1 Database format study: `docs/rewrite/DESIGN-xilinx-db.md`
       describing prjxray-db and prjuray-db layouts, segbits/ppips/mask
       formats, part.yaml, tilegrid.json bits blocks, ROI, required
       features, and how `fasm_assembler.py` + `fasm2frames.py` +
