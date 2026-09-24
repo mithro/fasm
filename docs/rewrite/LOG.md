@@ -256,3 +256,9 @@ what happened, branch/commit references, open issues.
   other differences are documented. Measured: 11 MB file, plain output
   0.15 s / 35 MB RSS vs 5.7 s / 1.08 GB for the original; canonical 1.6 s /
   304 MB vs 14.3 s / 1.2 GB. Fixes in progress.
+* T2.1 done: fixes 30e8052/6010c23 (int() 4300 digit limit for COLUMNS),
+  cd2dcd1 (closed stdout test), c8bd28f/e07484c (COMPAT.md, generator
+  doc). Merged with --no-ff; 264 Rust tests pass; CLI difftest in the main
+  tree: 715 passed, 0 differences. T2.2 (CLI differential test) is covered
+  by tests/cli/test_cli_compat.py and `make cli-difftest`, so marked done.
+* T3.1 (Python bindings) started.

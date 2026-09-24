@@ -60,16 +60,16 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 2: Command line tool
 
-- [r] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
+- [x] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
       text, identical output/exit behaviour (including `Error: ...` on
       stdout) (after T1.4).
-- [ ] T2.2 CLI differential test: run oracle `fasm` and Rust `fasm` over the
+- [x] T2.2 CLI differential test: run oracle `fasm` and Rust `fasm` over the
       corpus with every option combination; compare stdout, stderr, exit
       code byte for byte (after T2.1, T1.5).
 
 ## Phase 3: Python bindings
 
-- [ ] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
+- [~] T3.1 `fasm-python` pyo3 crate producing `fasm._fasm_rs` with
       `parse_fasm_string`, `parse_fasm_filename` returning the existing
       namedtuples; maturin `pyproject.toml`; `fasm/parser/rust.py`;
       `fasm.parser.available` update; keep textX fallback (after T1.4).
