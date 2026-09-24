@@ -44,7 +44,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `Display` padding test (after T1.1).
 - [x] T1.2 `model` module: `ValueFormat`, `FeatureValue` (arbitrary width),
       `SetFasmFeature`, `Annotation`, `FasmLine` + tests.
-- [r] T1.3 `parser` module: tokenizer + line parser implementing the full
+- [x] T1.3 `parser` module: tokenizer + line parser implementing the full
       grammar with exact ANTLR/textX compatible acceptance and error
       behaviour; streaming and whole-file APIs; tests from
       `examples/*.fasm` and a hand written edge case table (after T1.2).
@@ -60,7 +60,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 2: Command line tool
 
-- [ ] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
+- [~] T2.1 `fasm` binary: argparse compatible parsing, identical `--help`
       text, identical output/exit behaviour (including `Error: ...` on
       stdout) (after T1.4).
 - [ ] T2.2 CLI differential test: run oracle `fasm` and Rust `fasm` over the

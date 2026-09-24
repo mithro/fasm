@@ -220,3 +220,12 @@ what happened, branch/commit references, open issues.
   different from ANTLR), corpus 0 unexplained, stress inputs all fast except
   ONE remaining quadratic case: decimals with millions of leading zeros on a
   wide address (heap limb sizing counts leading zeros). Fix requested.
+* T1.3 done: final fix 2cc3224 (linear time leading zeros; 10 MB of zeros now
+  48 ms instead of 226 s), 4dcf3cc (validate input as UTF-8 once; realistic
+  file 235 MB/s, pip heavy 156-164 MB/s), 8393d01 (COMPAT.md). Orchestrator
+  rebuilt the reviewer's harness on the final branch: 5092 files, 0
+  unexplained, parse trees identical to the previously reviewed run. Merged
+  with --no-ff (lib.rs re-export conflict with the output branch resolved
+  by keeping both); 228 tests pass, fmt/clippy/doc/MSRV clean; worktree
+  removed.
+* T2.1 (compatible `fasm` CLI) started.
