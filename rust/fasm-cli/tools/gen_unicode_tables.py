@@ -32,6 +32,10 @@ Unicode 14.0.0) so the tables match it exactly:
 
     tests/oracle/venv/bin/python rust/fasm-cli/tools/gen_unicode_tables.py \\
         > rust/fasm-cli/src/unicode_tables.rs
+    cargo fmt --all
+
+The committed file is the rustfmt formatted output (`cargo fmt --all
+--check` must pass), so always run `cargo fmt` after generating it.
 """
 import sys
 import unicodedata
