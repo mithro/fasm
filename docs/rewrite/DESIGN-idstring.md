@@ -126,57 +126,76 @@ multi-byte UTF-8 sequence.
 Interner
  +-- hasher: OnceLock<foldhash::fast::RandomState>   (per interner seed)
  +-- levels[0..3]: Table   (limits 2^24-2, 2^20-1, 2^20-1)
- +-- overflow:     Table   (limit u32::MAX - 1, whole strings)
+ +-- overflow:     Table   (limit u32::MAX, whole strings)
 
 Table
  +-- next:   AtomicU32                              reserved entry count
  +-- slots:  [OnceLock<Box<[OnceLock<&'static str>]>>; 27]
  |           append only, segment k holds 64 << k entries, never moved
- +-- shards: [RwLock<Shard>; 16]      shard = bits 40..44 of the hash
+ +-- shards: [Shard; 16]              shard = low 4 bits of the hash
       Shard
-       +-- map:   hashbrown::HashTable<u32>   entry number, hashed by text
-       +-- arena: leaked byte chunks (1 KiB doubling up to 64 KiB) holding
-                  the component text; strings over 4 KiB get their own
-                  leaked allocation
+       +-- generations: [OnceLock<Box<[AtomicU64]>>; 30]
+       |                open addressing index, generation g has 16 << g
+       |                buckets; bucket = 0 or (hash >> 32) << 32 | entry+1
+       +-- current:     AtomicUsize         generation readers probe
+       +-- writer:      Mutex<{ len, arena }>
+                        arena: leaked byte chunks (1 KiB doubling up to
+                        64 KiB) holding the text; strings over 4 KiB get
+                        their own leaked allocation
 ```
 
-**Intern** (`Interner::intern`): for each level, hash the component once,
-take the shard read lock and probe the `HashTable` (comparisons read the
-candidate's text through `slots`, which needs no lock). On a hit the index is
-returned without allocating. On a miss the shard write lock is taken, the
-probe is repeated, an entry number is reserved from `next` (a compare and
-swap loop that refuses to go past the limit), the text is copied into the
-shard arena, the slot is published with `OnceLock::set` and the entry number
-is inserted into the map.
+**Intern** (`Interner::intern`): split the string into its levels (a word at
+a time search for `.`), then for each level hash the piece once and probe the
+shard index *without any lock*: load `current`, walk the linear probe
+sequence from `tag & mask`, and for a bucket whose 32 bit tag matches read
+the candidate's text through `slots` and compare. On a hit the entry number
+is returned without allocating or writing anything. On a miss the shard's
+writer mutex is taken, the probe is repeated on the current generation
+(authoritative, only lock holders change it), the index is grown if it would
+exceed 3/4 load, an entry number is reserved from `next` (a compare and swap
+loop that refuses to go past the limit), the text is copied into the shard
+arena, the slot is published with `OnceLock::set` and finally the bucket is
+written with `Release` ordering.
+
+**Growing the index** builds generation `g + 1` (twice as large) from
+generation `g` under the writer lock and publishes it with a `Release` store
+of `current`. Old generations are never modified again and are kept until the
+interner is dropped because readers may still be probing them; this at most
+doubles the index memory. A reader that probes an old generation can miss an
+entry added a moment ago; `intern` then finds it under the lock, and `get`
+simply reports it as not yet present (there is no happens-before relation
+with that insertion anyway).
 
 **Resolve**: `slots` is an append only segmented array whose segments never
 move and whose entries are written exactly once, so reading an entry is two
 `Acquire` loads (segment pointer, slot) and takes no lock. All texts live in
 leaked memory, so the resolved pieces are `&'static str`.
 
-**Sharding**: 16 shards per table make concurrent interning from several
-parser threads scale; entry numbers are still dense per table because they
-come from the shared atomic counter.
+**Sharding**: 16 shards per table let several parser threads insert
+concurrently; entry numbers are still dense per table because they come from
+the shared atomic counter.
 
-**Hashing**: `foldhash` (the default hasher of `hashbrown`, a small crate
-with no dependencies) is several times faster than `SipHash` on 10 to 30 byte
-keys. A per interner random seed keeps adversarial FASM input from forcing
-collisions. The seed only affects the hash table layout, never the handles
-(entry numbers are allocation order), so ids stay deterministic for a given
+**Hashing**: `foldhash` (a small crate with no dependencies, the default
+hasher of `hashbrown`) is several times faster than `SipHash` on 10 to 30
+byte keys. A per interner random seed keeps adversarial FASM input from
+forcing collisions. The seed only affects the index layout, never the handles
+(entry numbers are allocation order), so ids are deterministic for a given
 insertion order.
 
-**Why `hashbrown::HashTable`**: it stores just the `u32` entry number (4
-bytes plus 1 control byte per bucket) and lets the equality and rehash
-closures look the text up in `slots`; `std::collections::HashMap` would need
-the key stored in the map (16 bytes for a `&str`) because the raw entry API is
-not stable.
+**Why not `RwLock` + `hashbrown::HashTable<u32>`**: that was the first
+implementation (see the git history). Profiling showed that the two atomic
+read-modify-write operations of every read lock/unlock (one pair per level)
+were a large part of an intern hit and made 8 concurrent threads 3 times
+slower than the lock free index. The custom index costs more memory per
+entry (8 byte buckets at at most 3/4 load, plus old generations) but the
+tables are tiny compared to the 8 bytes per feature.
 
 **No `unsafe`**: the arena hands out `&'static str` by splitting a leaked
 `&'static mut [u8]` chunk (`split_at_mut`) and validating the copied bytes
-with `str::from_utf8`; publication uses `OnceLock`. The only cost compared to
-a hand written tagged pointer table is 16 extra bytes per distinct component
-(a `OnceLock<&str>` slot is 24 bytes instead of 8), i.e. about 1 MB for the
-full 200T feature space, which is negligible next to the 8 bytes per feature.
+with `str::from_utf8`; publication uses `OnceLock` and atomics. The cost
+compared to a hand written tagged pointer table is about 16 bytes per
+distinct component (a `OnceLock<&str>` slot is 24 bytes instead of 8), i.e.
+about 1 MB for the full 200T feature space.
 
 **Lifetime**: interned text is never freed. This is what makes `&'static str`
 access sound and resolving lock free. A private `Interner` frees its index
@@ -196,7 +215,7 @@ integer `Eq`/`Hash` correct:
 
 * A table only ever grows and a full table stays full forever.
 * Inserting a component (or deciding that it is missing from a full table) is
-  serialised by the shard lock of that component.
+  serialised by the writer lock of that component's shard.
 * So a string goes to the overflow table only if one of its components is
   missing from a full table, and that component can never be added later:
   the string can never become hierarchical. Conversely, once all components of
@@ -207,10 +226,11 @@ integer `Eq`/`Hash` correct:
 Components inserted into earlier levels before a later level turned out to be
 full stay in their tables (harmless, they may be shared by later names).
 
-The overflow table itself is limited to `u32::MAX - 1` entries (the layout
+The overflow table itself is limited to `u32::MAX` entries (the layout
 reserves 40 bits for a future increase). Reaching it would require more than
 4 billion distinct overflowed names, i.e. well over 100 GiB of text, and is
-treated like an allocation failure (panic with an explicit message).
+treated like an allocation failure (panic with an explicit message). A shard
+index that cannot grow any more (2^33 buckets) is treated like a full table.
 
 `Interner::with_level_limit(n)` builds an interner whose level tables hold at
 most `n` entries each (the handle layout is unchanged); the tests use it to
@@ -223,9 +243,12 @@ requires table lookups:
 
 1. equal handles are `Equal` (no lookup);
 2. for two hierarchical handles, leading levels with equal indexes are equal
-   texts and are skipped without a lookup;
-3. the remaining pieces of both sides (joined by `.`) are compared chunk by
-   chunk with `memcmp`, without allocating.
+   texts and are skipped without a lookup; if one side has no more levels it
+   is a prefix of the other and sorts first (no lookup);
+3. otherwise the two texts of the first differing level are read and
+   compared; unless one is a prefix of the other they decide the order;
+4. in the remaining cases (and for overflowed handles) the rest of both
+   strings is compared chunk by chunk with `memcmp`, without allocating.
 
 `Ord` for private interners is `Interner::cmp`.
 
@@ -239,8 +262,7 @@ impl IdString {
     pub fn from_bytes(b: &[u8]) -> Result<IdString, Utf8Error>;
     pub fn get(s: &str) -> Option<IdString>;                   // no interning
     pub fn resolve(self) -> String;
-    pub fn with_str<R>(self, f: impl FnOnce(&str) -> R) -> R;  // no heap
-                                   // allocation for names up to 256 bytes
+    pub fn with_str<R>(self, f: impl FnOnce(&str) -> R) -> R;
     pub fn resolved(self) -> Resolved;
     pub fn components(self) -> impl Iterator<Item = &'static str>;
     pub fn first_component(self) -> &'static str;
@@ -249,9 +271,10 @@ impl IdString {
     pub fn is_empty(self) -> bool;
 }
 // Display, Debug (IdString("A.B")), From<&str>, FromStr (Infallible),
-// PartialEq<str>, PartialEq<&str>, Ord/PartialOrd by string value.
+// PartialEq<str>, PartialEq<&str> (both directions), Ord/PartialOrd by
+// string value.
 
-pub struct Interner { .. }
+pub struct Interner { .. }            // Default, Debug (entry counts)
 impl Interner {
     pub const fn new() -> Interner;
     pub const fn with_level_limit(limit: u32) -> Interner;
@@ -261,14 +284,23 @@ impl Interner {
     pub fn resolve(&self, id: IdString) -> String;
     pub fn with_str<R>(&self, id: IdString, f: impl FnOnce(&str) -> R) -> R;
     pub fn cmp(&self, a: IdString, b: IdString) -> Ordering;
+    pub fn stats(&self) -> InternerStats;
 }
 pub static GLOBAL: Interner;
 
+#[non_exhaustive]
+pub struct InternerStats {
+    pub level_entries: [usize; 3],
+    pub overflow_entries: usize,
+    pub heap_bytes: usize,
+}
+
 /// The resolved pieces of a handle (up to three `&'static str` joined by
 /// '.'); all string operations are implemented here once.
-pub struct Resolved { .. }   // Copy; Display, Debug, Ord, PartialEq<str>
+pub struct Resolved { .. }   // Copy; Display, Debug, Eq, Ord, PartialEq<str>
 impl Resolved {
-    pub fn len(&self) -> usize;  pub fn is_empty(&self) -> bool;
+    pub fn len(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
     pub fn components(&self) -> impl Iterator<Item = &'static str>;
     pub fn first_component(&self) -> &'static str;
     pub fn starts_with_component(&self, prefix: &str) -> bool;
@@ -277,15 +309,28 @@ impl Resolved {
 }
 ```
 
+* `get(s)` returns the handle `s` *would* have if it can be produced without
+  adding anything to the tables. That is the case for every string interned
+  before, but also for a string never interned whole whose levels are all
+  known (after `A.B.C` and `X.Y`, `get("A.Y")` is `Some`). It is a cheap
+  lookup, not a set membership test.
+* `with_str` passes a single piece handle (one component, or overflowed)
+  directly; other names up to 1024 bytes are joined in a reused per thread
+  `String`, so there is no heap allocation in steady state. Longer names and
+  calls nested inside the callback join into a new `String`. `Display`
+  writes the pieces directly (and pads through `with_str` when a width or
+  precision is given).
 * `components()` yields every `.` separated component (the remainder level is
   split too), independent of the internal representation, so an overflowed
   handle behaves exactly like a hierarchical one.
 * `starts_with_component(p)` is true when the name equals `p` or starts with
   `p` followed by `.` (a prefix aligned on component boundaries).
+* `stats()` reports entries per table and the exact heap bytes the tables
+  allocated (text, slots, index generations); used by the benchmark.
 * All methods on `IdString` use `GLOBAL`. A handle created by a private
   `Interner` must only be used through that interner's methods; using it with
-  another interner either panics (index out of range) or yields another
-  string. Handles do not record their interner to keep them 8 bytes.
+  another interner either panics (unknown entry) or yields another string.
+  Handles do not record their interner to keep them 8 bytes.
 
 ## Trade offs and alternatives considered
 
@@ -302,7 +347,55 @@ impl Resolved {
 * **Freeing strings**: would need reference counting or an epoch scheme and
   would make resolve slower; FASM tools are batch processes, so leaking the
   (small) component tables is the right trade.
+* **Interning cost**: an intern hit does three hash lookups, so it costs
+  about twice a single whole-string `HashMap` lookup when everything is in
+  cache, and less than one when the whole-string map would not fit in cache
+  (see below). The design optimises memory and handle operations
+  (`Eq`/`Hash`/copy) rather than the one-time intern.
 
 ## Benchmarks
 
-See the numbers section added after implementation below.
+Machine: 4 vCPU Intel Xeon @ 2.10 GHz (cloud VM), Rust 1.94.1, release
+profile. `cargo bench -p fasm --bench idstring` (harness-less, best of 5
+rounds; numbers vary by about 10 % between runs).
+
+**Default input**: the 3 distinct feature names of `examples/many.fasm`, each
+repeated over a 150 x 150 tile grid (`INT_L_X{x}Y{y}.SW6BEG0.WW2END0`, ...):
+67,500 distinct names, 32.5 bytes on average, 67,500 distinct tile names.
+
+| operation                                   | ns/op  |
+|---------------------------------------------|-------:|
+| intern, miss (new name, new tile)           | 181    |
+| intern, hit                                 | 83     |
+| intern, hit, 8 threads (wall clock / ops)   | 35     |
+| `get`, hit                                  | 73     |
+| `with_str`                                  | 21     |
+| `resolve` (new `String`)                    | 29     |
+| sort `Vec<IdString>` (per element)          | 170    |
+| sort `Vec<String>` (per element)            | 66     |
+| `HashMap<String, u32>::get` (baseline)      | 36     |
+
+Interner heap: 6.28 MB = 93 bytes per distinct table entry (here every name
+has its own tile, so also per name). For the 67,500 entry level 0 table this
+splits into slots 46.6 bytes (24 byte `OnceLock<&str>`, segment 10 just
+started so half of it is unused), index 31 bytes (8 byte buckets, current plus
+old generations) and text plus arena slack about 15 bytes.
+
+**prjxray sample**: `FASM_IDSTRING_BENCH_FILE` with 2,000,000 features drawn
+at random from the full `xc7a200t` feature space (38,924 / 1,842 / 2,104
+distinct level entries): intern miss 111 ns, hit 95 ns, 8 threads 27 ns,
+`get` 93 ns, `with_str` 34 ns, `resolve` 41 ns, sort 260 ns/element vs 197
+for `String`, and `HashMap<String, u32>::get` 188 ns (its 2M entries do not
+fit in cache).
+Interner heap 4.0 MB = **2.0 bytes per distinct name** (plus the 8 byte
+handle), versus 56 bytes for a `String` (24 byte header + text, before
+allocator overhead).
+
+**Full feature space** (scratch program, not in the repository): interning
+all 90,246,253 names of the `xc7a200t` feature space (2.79 GB of text) into
+`GLOBAL` while reading them from a file took 12.6 s (139 ns per name
+including I/O). Level tables: 46,611 / 6,888 / 7,790 entries (exactly the
+measured distinct counts, no overflow), interner heap 5.05 MB (82 bytes per
+entry, 0.06 bytes per name), `Vec<IdString>` 721 MB, peak RSS 713 MB. The
+same names as `Vec<String>` would need more than 5 GB. Sorting 10 million of
+the handles took 2.5 s (252 ns per element).
