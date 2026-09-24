@@ -132,6 +132,24 @@ impl FeatureValue {
         Self::from_u64(u64::from(b))
     }
 
+    /// Builds a `FeatureValue` from little endian `u64` limbs (least
+    /// significant limb first). High zero limbs are ignored; a heap
+    /// allocation happens only if the value needs more than
+    /// [`INLINE_BITS`] bits. Used by the parser to build values without
+    /// the per digit work of [`Self::from_digits`].
+    #[must_use]
+    pub fn from_le_limbs(limbs: &[u64]) -> Self {
+        let used = limbs.iter().rposition(|&l| l != 0).map_or(0, |i| i + 1);
+        let limbs = &limbs[..used];
+        if used <= INLINE_LIMBS {
+            let mut arr = [0u64; INLINE_LIMBS];
+            arr[..used].copy_from_slice(limbs);
+            FeatureValue(Repr::Inline(arr))
+        } else {
+            FeatureValue(Repr::Heap(limbs.into()))
+        }
+    }
+
     /// Parses `digits` (ASCII digits of the given `radix`, `_` separators
     /// ignored) into a `FeatureValue`, mirroring
     /// `int(text.replace('_', ''), radix)` in the Python parsers.
