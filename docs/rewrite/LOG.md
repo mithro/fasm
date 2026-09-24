@@ -384,3 +384,8 @@ what happened, branch/commit references, open issues.
   (`--libs.private` is not a pkg-config option). Everything else verified
   (12/12 tests, -Wshadow -Wconversion clean, 5000 char names, self move,
   non-UTF-8 paths, pkg-config shared build). Fixes in progress.
+* T4.2 done: fixes d4ea350 (first exception kept), 2fdcf2b (tests),
+  f4bce2a (verified static/shared pkg-config recipes, docs), 9ce0806
+  (check_license.sh scans .hpp/.pc.in). Merged with --no-ff; `make
+  capi-test` 12/12 incl. valgrind and the compiler matrix; worktree
+  removed. Phase 4 (C and C++ wrappers) complete.
