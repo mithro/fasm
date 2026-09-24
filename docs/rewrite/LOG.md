@@ -36,3 +36,9 @@ what happened, branch/commit references, open issues.
   authorised for mithro/fasm in this session). Work continues locally;
   pushes are retried after each merge.
 * T0.3 and T0.4 started (sub-agents in isolated worktrees).
+* Corpus research: VTR keeps its FASM tests in `utils/fasm/test`
+  (test_fasm.cpp generates FASM from `test_fasm_arch.xml` + `wire.eblif`
+  at test time; no golden `.fasm` files are stored). RapidWright's public
+  repository has no FASM writer and no public bitstream package, so the
+  RapidWright path for T7.5 will be RapidWright -> FPGA interchange physical
+  netlist -> python-fpga-interchange `fasm_generators` (xc7) -> FASM.
