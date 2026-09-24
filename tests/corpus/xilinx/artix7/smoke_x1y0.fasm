@@ -1,0 +1,17 @@
+# Smoke-test FASM for the Xilinx oracle wrappers (tests/oracle/README.md,
+# "Xilinx reference tools"; docs/rewrite/TASKS.md T5.8). Every feature here
+# is real, taken straight from the pinned prjxray-db artix7 fabric
+# xc7a50t's database (part xc7a35tcsg324-1):
+#
+#   CLBLL_L_X2Y0.SLICEL_X0.ALUT.INIT[00]  segbits_clbll_l.db: "CLBLL_L.SLICEL_X0.ALUT.INIT[00] 32_15"
+#   CLBLL_L_X2Y0.SLICEL_X0.ALUT.INIT[01]  segbits_clbll_l.db: "CLBLL_L.SLICEL_X0.ALUT.INIT[01] 33_15"
+#   INT_L_X2Y0.EL1BEG_N3.LOGIC_OUTS_L0    segbits_int_l.db:   "INT_L.EL1BEG_N3.LOGIC_OUTS_L0 11_05 14_05"
+#
+# Tile instances: CLBLL_L_X2Y0 (grid_x=10, grid_y=155) and its paired
+# INT_L_X2Y0 (grid_x=11, grid_y=155), from
+# prjxray-db/artix7/xc7a50t/tilegrid.json. See
+# tests/corpus/xilinx/artix7/README.md for exactly how this file and its
+# golden .frm/.bit/.bitread.txt outputs were produced.
+CLBLL_L_X2Y0.SLICEL_X0.ALUT.INIT[00]
+CLBLL_L_X2Y0.SLICEL_X0.ALUT.INIT[01]
+INT_L_X2Y0.EL1BEG_N3.LOGIC_OUTS_L0
