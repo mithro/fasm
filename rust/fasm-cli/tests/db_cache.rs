@@ -396,4 +396,30 @@ fn fasm_db_cache_tool() {
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("disabled"));
+    let out = Command::new(DB_CACHE)
+        .args(["list"])
+        .env_remove("FASM_XDB_CACHE")
+        .env_remove("XDG_CACHE_HOME")
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("are unset"));
+    // Explicit files need no cache directory.
+    let file = std::fs::read_dir(dir)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    for command in ["verify", "info"] {
+        let out = Command::new(DB_CACHE)
+            .arg(command)
+            .arg(&file)
+            .env("FASM_XDB_CACHE", "0")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{command}");
+    }
 }

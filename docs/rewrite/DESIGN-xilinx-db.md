@@ -2521,9 +2521,10 @@ DB_ROOT PART...` / `build --all DB_ROOT` (the keys of
 `mapping/parts.yaml`, or every prjuray-db directory with a
 `tilegrid.json`), `verify [FILE...]`, `info [FILE...]` (header and every
 source record), `list`, `clear` (cache files and leftover temporary
-files). The directory defaults to the `FASM_XDB_CACHE` rules. Exit codes:
-0 success, 1 a failed build or verification, unreadable file or disabled
-cache, 2 usage error. Plain hand-written argument parsing (no Python
+files). The directory defaults to the `FASM_XDB_CACHE` rules (`verify`
+and `info` with explicit files need none). Exit codes: 0 success, 1 a
+failed build or verification, unreadable file, or no cache directory
+(disabled, or `HOME` unset: the message says which), 2 usage error. Plain hand-written argument parsing (no Python
 counterpart to be compatible with).
 
 **Limitations.** One file per part repeats the family's segbits tables

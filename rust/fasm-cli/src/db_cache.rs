@@ -149,12 +149,21 @@ pub fn run(
             &format!("wrong arguments for {:?}", args.command.as_str()),
         );
     }
-    let Some(dir) = args.cache_dir.clone().or_else(|| env.directory.clone()) else {
-        let _ = writeln!(
-            stderr,
-            "fasm-db-cache: the cache is disabled ({}=0) and no --cache-dir was given",
-            cache::CACHE_DIR_ENV
-        );
+    let dir = args.cache_dir.clone().or_else(|| env.directory.clone());
+    // `verify FILE...` and `info FILE...` need no cache directory.
+    let needs_dir = !matches!(args.command.as_str(), "verify" | "info") || rest.is_empty();
+    let Some(dir) = dir.or_else(|| (!needs_dir).then(PathBuf::new)) else {
+        let reason = match std::env::var_os(cache::CACHE_DIR_ENV) {
+            Some(_) => format!(
+                "the cache is disabled ({}=0 or empty)",
+                cache::CACHE_DIR_ENV
+            ),
+            None => format!(
+                "no cache directory ({}, XDG_CACHE_HOME and HOME are unset)",
+                cache::CACHE_DIR_ENV
+            ),
+        };
+        let _ = writeln!(stderr, "fasm-db-cache: {reason}; use --cache-dir DIR");
         return 1;
     };
     let result = match args.command.as_str() {
