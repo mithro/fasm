@@ -42,7 +42,9 @@ These rules apply to every agent working on this effort.
    `APPROVE` / `REQUEST CHANGES` with concrete findings.
 4. Send findings back to the implementer (or a fresh fixer agent); repeat
    until `APPROVE`.
-5. Merge with `--no-ff`, run the full test suite on the merged tree, update
+5. Merge with `--no-ff` (check the merge exit status; resolve conflicts
+   explicitly and never `git commit -a` over unmerged paths), run the full
+   test suite on the merged tree, update
    `TASKS.md`/`LOG.md`, commit, push.
 
 ## Commit message conventions

@@ -274,3 +274,8 @@ what happened, branch/commit references, open issues.
   unexplained. Optional follow ups: cover the remaining COMPAT.md rows in
   gen-corpus.py and commit one small `.fasm.xz` to exercise decompression.
 * T4.1 (C API) started.
+* Orchestrator error: merge commit fc5cb8d (T1.5) was recorded with an
+  unresolved Makefile conflict (the `cli-difftest` vs `difftest` targets);
+  fixed in the next commit keeping both targets. Lesson recorded in
+  WORKFLOW.md: never chain `git commit -a` after a merge without checking
+  its exit status.
