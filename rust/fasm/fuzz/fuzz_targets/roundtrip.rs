@@ -25,16 +25,23 @@
 //!   `Err` here is a real bug).
 //! * The rendered text must itself parse back successfully (our own
 //!   output must always be valid FASM source).
-//! * Rendering is idempotent: rendering the re-parsed model produces
-//!   byte-identical text to the first rendering. This is the practical
-//!   form of "parse -> print -> parse gives the same model": two models
-//!   that always print identically are indistinguishable through the
-//!   public string API, which is what every real caller (the CLI,
-//!   `tools/difftest.py`) actually observes, and it is robust to any
-//!   internal representation detail that does not affect output (unlike
-//!   a raw `FasmLine` equality check, which would make this target
-//!   trivially find "divergences" for representation-only differences
-//!   that were never a difftest failure).
+//! * In *non-canonical* mode specifically, the re-parsed model must be
+//!   exactly equal (`FasmLine`'s derived `PartialEq`, i.e. every field of
+//!   every line) to the original parsed model: non-canonical rendering
+//!   only normalises optional whitespace (see `fasm_tuple_to_string`'s
+//!   doc comment), so nothing about the model itself should be able to
+//!   change across a render/re-parse. This is the direct "parse -> print
+//!   -> parse gives the same model" check; unlike canonical mode (below),
+//!   there is no dedup/sort/expansion step here that would make an exact
+//!   equality check meaningless.
+//! * Rendering is idempotent in both modes: rendering the re-parsed model
+//!   produces byte-identical text to the first rendering. In canonical
+//!   mode this is the practical stand-in for "same model" (canonical
+//!   rendering dedups, sorts and expands, so two models that always print
+//!   identically post-canonicalisation are indistinguishable through the
+//!   public string API, which is what every real caller — the CLI,
+//!   `tools/difftest.py` — actually observes); in non-canonical mode it
+//!   is implied by, and checked in addition to, the model equality above.
 //! * In canonical mode specifically, every re-parsed line is checked to
 //!   actually be in canonical form (single bit, value 1, no
 //!   `value_format`) — i.e. the parse of canonical output is the
@@ -62,6 +69,14 @@ fuzz_target!(|data: &[u8]| {
                  --- rendered text ---\n{text1}"
             )
         });
+
+        if !canonical {
+            assert_eq!(
+                model, reparsed,
+                "non-canonical roundtrip changed the model: original {model:?}, \
+                 re-parsed {reparsed:?}\n--- rendered text ---\n{text1}"
+            );
+        }
 
         if canonical {
             for line in &reparsed {

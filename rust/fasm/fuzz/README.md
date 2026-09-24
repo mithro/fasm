@@ -21,7 +21,7 @@ rustup toolchain install nightly
 | Target | File | What it checks |
 |---|---|---|
 | `parse` | `fuzz_targets/parse.rs` | `parse_fasm_bytes` on arbitrary bytes never panics and finishes (T1.3 already makes parsing linear time; this exercises everything else libFuzzer's mutations reach — malformed UTF-8, truncated annotations/values, degenerate whitespace, ...). |
-| `roundtrip` | `fuzz_targets/roundtrip.rs` | For every input that parses: `fasm_tuple_to_string` never errors on a parser-produced model; the rendered text always re-parses; re-rendering the re-parsed model is byte-identical to the first rendering (idempotence — see the file's doc comment for why this, rather than raw `FasmLine` equality, is the round trip property checked); and, in canonical mode, every re-parsed line is actually in canonical form (single bit, value 1, no `value_format`). |
+| `roundtrip` | `fuzz_targets/roundtrip.rs` | For every input that parses: `fasm_tuple_to_string` never errors on a parser-produced model; the rendered text always re-parses; in non-canonical mode, the re-parsed model is exactly equal to the original (`FasmLine`'s derived `PartialEq`, every field); re-rendering the re-parsed model is byte-identical to the first rendering in both modes (idempotence — in canonical mode this is the round trip property checked, since canonical rendering dedups/sorts/expands so exact model equality does not apply there; see the file's doc comment); and, in canonical mode, every re-parsed line is actually in canonical form (single bit, value 1, no `value_format`). |
 | `merge` | `fuzz_targets/merge.rs` | `merge_and_sort` on models built by parsing arbitrary bytes never panics; an invalid combination (e.g. a bit set by one feature and cleared by another) comes back as `Err`, not a panic. Skips models containing a feature wider than `MAX_FEATURE_WIDTH` (64Ki bits) — see the file's doc comment and "Known, accepted cost: `merge_features`" below. |
 
 ## Running
@@ -37,12 +37,13 @@ cd rust/fasm && cargo +nightly fuzz run parse -- -max_total_time=600 -jobs=2
 ```
 
 `make fuzz`/`seed-corpus.sh` populate `fuzz/corpus/<target>/` (gitignored)
-from every `tests/corpus/**/*.fasm` and `examples/*.fasm` file in the
-repository — real, parseable FASM, so fuzzing starts from meaningful
-inputs instead of an empty corpus. What's committed to git is
-`seed-corpus.sh` (i.e. the *list* of source files it draws from, expressed
-as those two globs) plus the source corpus itself under `tests/corpus/`
-and `examples/`; the copies under `fuzz/corpus/` and anything libFuzzer
+from every `tests/corpus/**/*.fasm`, `tests/corpus/**/*.fasm.xz`
+(decompressed) and `examples/*.fasm` file in the repository — real,
+parseable FASM, so fuzzing starts from meaningful inputs instead of an
+empty corpus. What's committed to git is `seed-corpus.sh` (i.e. the
+*list* of source files it draws from, expressed as those globs) plus the
+source corpus itself under `tests/corpus/` and `examples/`; the copies
+under `fuzz/corpus/` and anything libFuzzer
 finds under `fuzz/artifacts/` are not (`fuzz/.gitignore`).
 
 ## Known, accepted cost: `merge_features`
