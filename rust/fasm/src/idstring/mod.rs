@@ -95,7 +95,9 @@ impl IdString {
         self.0
     }
 
-    /// Interns `s` in [`GLOBAL`] and returns its handle.
+    /// Interns `s` in [`GLOBAL`] and returns its handle (see
+    /// [`Interner::intern`]).
+    #[inline]
     pub fn new(s: &str) -> Self {
         GLOBAL.intern(s)
     }
@@ -109,9 +111,13 @@ impl IdString {
         std::str::from_utf8(bytes).map(Self::new)
     }
 
-    /// Returns the handle of `s` in [`GLOBAL`] if it can be produced
-    /// without interning `s` (see [`Interner::get`]: this is also the case
-    /// for strings never interned whole whose levels are all known).
+    /// Returns the handle `s` would have in [`GLOBAL`], if it can be
+    /// produced without interning anything (see [`Interner::get`]).
+    ///
+    /// **Not a membership test**: this is also `Some` for strings that were
+    /// never interned whole but whose levels are all known (after `A.B.C`
+    /// and `X.Y`, `IdString::get("A.Y")` is `Some`).
+    #[inline]
     pub fn get(s: &str) -> Option<Self> {
         GLOBAL.get(s)
     }

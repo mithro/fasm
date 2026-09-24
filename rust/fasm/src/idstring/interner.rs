@@ -18,7 +18,8 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::hash::BuildHasher;
+use std::hash::{BuildHasher, Hasher};
+
 use std::sync::OnceLock;
 
 use foldhash::fast::RandomState;
@@ -87,42 +88,66 @@ const fn min(a: u32, b: u32) -> u32 {
 /// Scans eight bytes at a time (a "has zero byte" test on the word XORed
 /// with dots); FASM components are typically 5 to 25 bytes long, where this
 /// beats both a byte loop and `memchr` call overhead.
+#[inline]
 fn find_dot(bytes: &[u8]) -> Option<usize> {
-    const DOTS: u64 = u64::from_ne_bytes([b'.'; 8]);
-    const LOW: u64 = u64::from_ne_bytes([0x01; 8]);
-    const HIGH: u64 = u64::from_ne_bytes([0x80; 8]);
+    /// Bit 7 of each byte of the result is set where `word` has a `.`,
+    /// exactly up to and including the first one (borrows only produce
+    /// false positives above it).
+    #[inline]
+    fn dots(word: [u8; 8]) -> u64 {
+        const DOTS: u64 = u64::from_ne_bytes([b'.'; 8]);
+        const LOW: u64 = u64::from_ne_bytes([0x01; 8]);
+        const HIGH: u64 = u64::from_ne_bytes([0x80; 8]);
+        let x = u64::from_le_bytes(word) ^ DOTS;
+        x.wrapping_sub(LOW) & !x & HIGH
+    }
     let (words, tail) = bytes.as_chunks::<8>();
     for (i, word) in words.iter().enumerate() {
-        let x = u64::from_le_bytes(*word) ^ DOTS;
-        // The lowest set bit marks the first zero byte of `x` (borrows
-        // only produce false positives above it).
-        let found = x.wrapping_sub(LOW) & !x & HIGH;
+        let found = dots(*word);
         if found != 0 {
             return Some(i * 8 + (found.trailing_zeros() / 8) as usize);
         }
     }
-    let at = tail.iter().position(|&b| b == b'.')?;
-    Some(words.len() * 8 + at)
+    if tail.is_empty() {
+        return None;
+    }
+    if let Some(last) = bytes.last_chunk::<8>() {
+        // Rescan the tail as part of the (overlapping) last word. Its
+        // first bytes were scanned above and hold no `.`, so they cannot
+        // produce a false positive and the lowest set bit is exact.
+        let found = dots(*last);
+        return (found != 0).then(|| bytes.len() - 8 + (found.trailing_zeros() / 8) as usize);
+    }
+    tail.iter().position(|&b| b == b'.')
 }
 
 /// Splits `s` into its levels: the first two `.` separated components and
 /// the remainder. Returns the pieces and their number (1 to [`LEVELS`]).
-fn split_levels(s: &str) -> ([&str; LEVELS], usize) {
-    let mut pieces = [""; LEVELS];
-    let mut rest = s;
-    let mut count = 0;
-    while count < LEVELS - 1 {
-        let Some(dot) = find_dot(rest.as_bytes()) else {
-            break;
-        };
-        // `dot` is the index of an ASCII byte, hence a char boundary.
-        let (head, tail) = rest.split_at(dot);
-        pieces[count] = head;
-        rest = &tail[1..];
-        count += 1;
-    }
-    pieces[count] = rest;
-    (pieces, count + 1)
+///
+/// Equivalent to `s.splitn(LEVELS, '.')` on the corresponding `str`.
+#[inline]
+fn split_levels(s: &[u8]) -> ([&[u8]; LEVELS], usize) {
+    const _: () = assert!(LEVELS == 3);
+    let Some(first) = find_dot(s) else {
+        return ([s, &[], &[]], 1);
+    };
+    let (head, rest) = (&s[..first], &s[first + 1..]);
+    let Some(second) = find_dot(rest) else {
+        return ([head, rest, &[]], 2);
+    };
+    ([head, &rest[..second], &rest[second + 1..]], 3)
+}
+
+/// Hash of a level piece (or of a whole overflowed string) under the
+/// interner's seed.
+///
+/// A single `write` of the bytes (unlike `hash_one(&str)`, which also
+/// writes a terminator byte and so costs a second multiplication).
+#[inline]
+fn hash(state: &RandomState, bytes: &[u8]) -> u64 {
+    let mut hasher = state.build_hasher();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 #[cold]
@@ -160,15 +185,56 @@ impl Interner {
         }
     }
 
+    #[inline]
     fn hasher(&self) -> &RandomState {
         self.hasher.get_or_init(RandomState::default)
+    }
+
+    /// The hierarchical handle of `s` if every level of it is already in
+    /// the level tables. Takes no lock and allocates nothing.
+    ///
+    /// `s` need not be valid UTF-8: a result means that every level equals
+    /// interned text, so `s` is valid UTF-8 (the levels joined by `.`).
+    ///
+    /// A string whose levels are all present is never in the overflow
+    /// table (a component missing from a full table can never be added),
+    /// so the result is the canonical handle.
+    #[inline]
+    fn find_levels(&self, state: &RandomState, s: &[u8]) -> Option<IdString> {
+        let (pieces, count) = split_levels(s);
+        let first = pieces[0];
+        let pos0 = self.levels[0].find(hash(state, first), first)?;
+        let mut fields = [0u32; LEVELS - 1];
+        for (level, field) in fields.iter_mut().enumerate().take(count - 1) {
+            let piece = pieces[level + 1];
+            *field = self.levels[level + 1].find(hash(state, piece), piece)? + 1;
+        }
+        Some(IdString::from_raw(encode_levels(pos0, fields)))
+    }
+
+    /// The overflow handle of `s` if `s` is in the overflow table. Takes no
+    /// lock and allocates nothing; like [`Interner::find_levels`], a result
+    /// implies that `s` is valid UTF-8.
+    ///
+    /// A string in the overflow table can never become hierarchical (one of
+    /// its components is missing from a full table forever), so the result
+    /// is the canonical handle.
+    #[inline]
+    fn find_overflow(&self, state: &RandomState, s: &[u8]) -> Option<IdString> {
+        // Nothing overflowed (the normal case): skip hashing `s`. A stale
+        // zero only makes this miss an entry being inserted concurrently.
+        if self.overflow.len() == 0 {
+            return None;
+        }
+        let pos = self.overflow.find(hash(state, s), s)?;
+        Some(IdString::from_raw(encode_overflow(pos)))
     }
 
     /// Interns `s` and returns its handle.
     ///
     /// Every string has exactly one handle per interner, so equal strings
     /// give equal handles. When all components are already known, this does
-    /// one hash lookup per level and no allocation.
+    /// one lock free hash lookup per level and no allocation.
     ///
     /// # Panics
     ///
@@ -176,15 +242,27 @@ impl Interner {
     /// than 4 billion distinct overflowed strings (hundreds of GiB of text)
     /// and is treated like running out of memory.
     pub fn intern(&self, s: &str) -> IdString {
-        let hasher = self.hasher();
+        let state = self.hasher();
+        match self.find_levels(state, s.as_bytes()) {
+            Some(id) => id,
+            None => self.intern_missing(state, s),
+        }
+    }
+
+    /// [`Interner::intern`] for a string with at least one level missing
+    /// from the level tables (as seen by a lock free probe).
+    #[cold]
+    #[inline(never)]
+    fn intern_missing(&self, state: &RandomState, s: &str) -> IdString {
         let mut pos0 = 0;
         let mut fields = [0u32; LEVELS - 1];
-        let (pieces, count) = split_levels(s);
-        for (level, (table, &piece)) in self.levels.iter().zip(&pieces[..count]).enumerate() {
-            let Some(pos) = table.intern(hasher.hash_one(piece), piece) else {
+        // The same pieces as `split_levels` (checked by a test), so the
+        // same hashes.
+        for (level, (table, piece)) in self.levels.iter().zip(s.splitn(LEVELS, '.')).enumerate() {
+            let Some(pos) = table.intern(hash(state, piece.as_bytes()), piece) else {
                 // `piece` is not in the table and the table is full, which
                 // can never change: `s` is represented in the overflow table.
-                return self.intern_overflow(s);
+                return self.intern_overflow(state, s);
             };
             if level == 0 {
                 pos0 = pos;
@@ -196,40 +274,35 @@ impl Interner {
     }
 
     #[cold]
-    fn intern_overflow(&self, s: &str) -> IdString {
-        let hasher = self.hasher();
-        match self.overflow.intern(hasher.hash_one(s), s) {
+    fn intern_overflow(&self, state: &RandomState, s: &str) -> IdString {
+        match self.overflow.intern(hash(state, s.as_bytes()), s) {
             Some(pos) => IdString::from_raw(encode_overflow(pos)),
             None => panic!("idstring overflow table exhausted ({OVERFLOW_LIMIT} entries)"),
         }
     }
 
-    /// Returns the handle of `s` if it can be produced without adding
-    /// anything to the tables, i.e. without interning `s`.
+    /// Returns the handle `s` would have, if that handle can be produced
+    /// without adding anything to the tables. Takes no lock, allocates
+    /// nothing and never interns.
     ///
-    /// This is the case for every string interned before, but also for a
-    /// string that was never interned whole when each of its levels is
-    /// already known (after interning `A.B.C` and `X.Y`, `get("A.Y")` is
-    /// `Some`). So `get` is a cheap lookup, not a set membership test.
+    /// **This is not a membership test.** It returns `Some` for every
+    /// string interned before, but also for strings that were never
+    /// interned whole when each of their levels is already known: after
+    /// interning `A.B.C` and `X.Y`, `get("A.Y")` and `get("X.B.C")`
+    /// are `Some`. Use it to avoid growing the tables (e.g. to look a name
+    /// up in a map keyed by `IdString`: a `None` means that no key can
+    /// equal `s`), not to ask whether `s` was seen.
+    ///
+    /// A `None` may also be returned for a string that another thread is
+    /// interning at the same moment (there is no happens-before relation
+    /// with that insertion); once the interning call has returned and that
+    /// is visible to this thread (thread join, a lock, a `Release` store
+    /// read with `Acquire`, ...), `get` finds it.
     pub fn get(&self, s: &str) -> Option<IdString> {
-        let hasher = self.hasher();
-        let mut pos0 = 0;
-        let mut fields = [0u32; LEVELS - 1];
-        let (pieces, count) = split_levels(s);
-        for (level, (table, &piece)) in self.levels.iter().zip(&pieces[..count]).enumerate() {
-            let Some(pos) = table.find(hasher.hash_one(piece), piece) else {
-                // Some component is unknown: `s` can only be known as an
-                // overflowed string.
-                let pos = self.overflow.find(hasher.hash_one(s), s)?;
-                return Some(IdString::from_raw(encode_overflow(pos)));
-            };
-            if level == 0 {
-                pos0 = pos;
-            } else {
-                fields[level - 1] = pos + 1;
-            }
-        }
-        Some(IdString::from_raw(encode_levels(pos0, fields)))
+        let state = self.hasher();
+        let bytes = s.as_bytes();
+        self.find_levels(state, bytes)
+            .or_else(|| self.find_overflow(state, bytes))
     }
 
     /// The text of level `level` of a hierarchical handle (the level must
@@ -394,10 +467,31 @@ mod tests {
             let expected = tricky[start..].iter().position(|&b| b == b'.');
             assert_eq!(find_dot(&tricky[start..]), expected);
         }
+        // Every length up to three words, with no dot, one dot or two dots
+        // at every position (covers the overlapping last word), over
+        // backgrounds of bytes next to '.' (0x2e).
+        for background in [b'x', 0x2f, 0x2d, 0x00, 0xae, 0xff] {
+            for len in 0..=24 {
+                for first in 0..=len {
+                    for second in first..=len {
+                        let mut bytes = vec![background; len];
+                        if first < len {
+                            bytes[first] = b'.';
+                        }
+                        if second < len {
+                            bytes[second] = b'.';
+                        }
+                        let expected = bytes.iter().position(|&b| b == b'.');
+                        assert_eq!(find_dot(&bytes), expected, "{bytes:?}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
     fn split_levels_matches_splitn() {
+        let long = format!("{}.{}.{}", "a".repeat(17), "b".repeat(9), "c.d".repeat(5));
         for s in [
             "",
             ".",
@@ -410,13 +504,12 @@ mod tests {
             "A..B",
             ".A.",
             "ü.ß.漢.字",
+            "CLBLL_L_X12Y124.SLICEL_X0.BLUT.INIT",
+            &long,
         ] {
-            let (pieces, count) = split_levels(s);
-            assert_eq!(
-                pieces[..count],
-                s.splitn(LEVELS, '.').collect::<Vec<_>>()[..],
-                "{s:?}"
-            );
+            let (pieces, count) = split_levels(s.as_bytes());
+            let expected: Vec<&[u8]> = s.splitn(LEVELS, '.').map(str::as_bytes).collect();
+            assert_eq!(pieces[..count], expected[..], "{s:?}");
         }
     }
 }
