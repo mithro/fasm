@@ -35,8 +35,11 @@
 //! * [`Frames`] and the `.frm` text format ([`Frames::write_frm`],
 //!   [`Frames::read_frm`]).
 //!
-//! Still to come (tasks T5.3, T5.6, T6.x): a binary cache of a loaded
-//! database and the bitstream writer and reader.
+//! * the Series7 bitstream writer and reader ([`bitstream`]: prjxray's
+//!   `xc7frames2bit` and the library behind `bitread`).
+//!
+//! Still to come (tasks T5.3, T6.x): a binary cache of a loaded database
+//! and UltraScale / UltraScale+ bitstreams.
 //!
 //! The file formats and the reference behaviour are described in
 //! `docs/rewrite/DESIGN-xilinx-db.md`.
@@ -74,6 +77,7 @@
 
 mod arch;
 mod assembler;
+pub mod bitstream;
 mod db;
 mod error;
 mod fasm2frames;
