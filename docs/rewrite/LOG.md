@@ -49,3 +49,13 @@ what happened, branch/commit references, open issues.
   Makefile, redundant `[lib] name` in rust/fasm/Cargo.toml) left for a later
   cleanup commit.
 * T1.1 (idstring design + implementation) started.
+* T0.4 implemented (branch `worktree-agent-a0d3c2061a4ef0f32`): oracle venv
+  with BOTH original parsers (ANTLR C++ extension built fine here, textX).
+  Review requested one change: the oracle must be installed from a pinned
+  pre-rewrite commit (ffafe82) via a detached worktree, not an editable
+  install of the live tree. Fix in progress.
+* Reviewer also found a pre-existing divergence between the original
+  parsers: annotation values containing an escaped quote (`\"`) parse with
+  ANTLR but fail with textX (`fasm.tx` ordered choice matches a lone `\`
+  first). The corpus (T1.5) must include this case and COMPAT.md must
+  record which behaviour the Rust parser follows (ANTLR).
