@@ -121,14 +121,21 @@ pub(super) struct LineOutcome {
     pub(super) last_newline: Option<usize>,
 }
 
-/// Parses the logical line of `buf` starting at `start`.
-pub(super) fn parse_logical_line(buf: &[u8], start: usize) -> Result<LineOutcome, RawError> {
+/// Parses the logical line of `buf` starting at `start`. `first_line` is
+/// `true` for the first line of a file (it only changes the position of
+/// some errors, see [`Scanner::unexpected_la`]).
+pub(super) fn parse_logical_line(
+    buf: &[u8],
+    start: usize,
+    first_line: bool,
+) -> Result<LineOutcome, RawError> {
     let mut s = Scanner {
         buf,
         pos: start,
         newlines: 0,
         last_newline: None,
         pending: None,
+        first_line,
     };
     let line = s.line()?;
     Ok(LineOutcome {
@@ -161,6 +168,16 @@ fn value_text(value: &FeatureValue) -> String {
         let top = value.shr(bits - 64).to_u64().unwrap_or(0);
         format!("{bits} bit value 0x{top:x}...")
     }
+}
+
+/// The lexer mode ANTLR is in when it lexes a token (see
+/// [`Scanner::unexpected_la`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Outside of `{ ... }`.
+    Default,
+    /// Inside of `{ ... }`.
+    Annotation,
 }
 
 /// What was parsed so far on a line; selects the "expected ..." text of
@@ -196,6 +213,8 @@ struct Scanner<'a> {
     /// the ANTLR parser checks these after parsing (so a syntax error
     /// later on the same line takes precedence).
     pending: Option<RawError>,
+    /// Whether this is the first line of the file.
+    first_line: bool,
 }
 
 impl<'a> Scanner<'a> {
@@ -273,6 +292,84 @@ impl<'a> Scanner<'a> {
         )
     }
 
+    /// Like [`Scanner::unexpected`], but emulating where ANTLR reports the
+    /// error: on an unexpected token T, ANTLR's error recovery (single
+    /// token deletion) lexes the token after T before reporting. If that
+    /// token cannot be lexed, the lexer error is reported first, at its
+    /// position. This matters when the token after T is lexed in
+    /// annotation mode, where not every character starts a token: when T
+    /// is inside `{ ... }` (`mode` is [`Mode::Annotation`]), or when T is
+    /// the `{` opening an annotation block.
+    ///
+    /// Only for the error points where ANTLR does look ahead: every token
+    /// match and the entry of `( ... )*` loops, but not their loop back
+    /// (the `,` loop of an annotation block after its second annotation,
+    /// the line loop after the first line).
+    fn unexpected_la(&self, expected: &str, mode: Mode) -> RawError {
+        let t = self.pos;
+        // End of T, if the token after it is lexed in annotation mode.
+        let end = match (mode, self.peek_at(t)) {
+            (Mode::Default, Some(b'{')) | (Mode::Annotation, Some(b'=' | b',')) => Some(t + 1),
+            (Mode::Annotation, Some(b)) if CLASS[usize::from(b)] & ANN_START != 0 => {
+                let mut p = t + 1;
+                while self.class_at(p) & IDENT_CONT != 0 {
+                    p += 1;
+                }
+                Some(p)
+            }
+            (Mode::Annotation, Some(b'"')) => self.lex_annotation_value(t),
+            // Default mode tokens other than `{`, `}` (the token after it
+            // is lexed in default mode), end of input, or T itself cannot
+            // be lexed (the error is at T).
+            _ => None,
+        };
+        let Some(mut p) = end else {
+            return self.unexpected(expected);
+        };
+        while matches!(self.peek_at(p), Some(b' ' | b'\t')) {
+            p += 1;
+        }
+        let lexable = match self.peek_at(p) {
+            None | Some(b'=' | b',' | b'}') => true,
+            Some(b'"') => self.lex_annotation_value(p).is_some(),
+            Some(b) => CLASS[usize::from(b)] & ANN_START != 0,
+        };
+        if lexable {
+            return self.unexpected(expected);
+        }
+        let message = if self.peek_at(p) == Some(b'"') {
+            format!(
+                "unterminated annotation value or invalid escape sequence (after unexpected \
+                 {}, expected {expected})",
+                describe(self.buf, t)
+            )
+        } else {
+            format!(
+                "unexpected {} inside an annotation (after unexpected {}, expected {expected})",
+                describe(self.buf, p),
+                describe(self.buf, t)
+            )
+        };
+        self.error(p, ParseErrorKind::Syntax, message)
+    }
+
+    /// Lexes an annotation value starting with the `"` at `quote` like the
+    /// ANTLR lexer; returns the offset after the closing `"`, or `None` if
+    /// the value is unterminated or holds an invalid escape sequence.
+    fn lex_annotation_value(&self, quote: usize) -> Option<usize> {
+        let mut p = quote + 1;
+        loop {
+            match self.peek_at(p)? {
+                b'"' => return Some(p + 1),
+                b'\\' => match self.peek_at(p + 1)? {
+                    b'\\' | b'"' => p += 2,
+                    _ => return None,
+                },
+                _ => p += 1,
+            }
+        }
+    }
+
     /// Validates `bytes` (found at offset `base`) as UTF-8.
     fn utf8(&self, bytes: &[u8], base: usize, what: &str) -> Result<Box<str>, RawError> {
         match std::str::from_utf8(bytes) {
@@ -313,7 +410,11 @@ impl<'a> Scanner<'a> {
         };
 
         if !self.at_line_end() {
-            return Err(self.unexpected(after.expected()));
+            return Err(if self.first_line {
+                self.unexpected_la(after.expected(), Mode::Default)
+            } else {
+                self.unexpected(after.expected())
+            });
         }
         if let Some(error) = self.pending.take() {
             return Err(error);
@@ -527,7 +628,7 @@ impl<'a> Scanner<'a> {
             } else {
                 "':' or ']'"
             };
-            return Err(self.unexpected(expected));
+            return Err(self.unexpected_la(expected, Mode::Default));
         }
         self.pos += 1;
 
@@ -560,7 +661,7 @@ impl<'a> Scanner<'a> {
     fn address_number(&mut self) -> Result<u32, RawError> {
         let start = self.pos;
         if self.class() & DIGIT == 0 {
-            return Err(self.unexpected("a decimal number"));
+            return Err(self.unexpected_la("a decimal number", Mode::Default));
         }
         let mut v: u64 = 0;
         loop {
@@ -633,7 +734,7 @@ impl<'a> Scanner<'a> {
                 }
             }
             Some(b'\'') => self.verilog_value(None),
-            _ => Err(self.unexpected("a value")),
+            _ => Err(self.unexpected_la("a value", Mode::Default)),
         }
     }
 
@@ -686,7 +787,7 @@ impl<'a> Scanner<'a> {
         loop {
             self.skip_ws();
             if self.class() & ANN_START == 0 {
-                return Err(self.unexpected("an annotation name"));
+                return Err(self.unexpected_la("an annotation name", Mode::Annotation));
             }
             let name_start = self.pos;
             self.pos += 1;
@@ -698,12 +799,12 @@ impl<'a> Scanner<'a> {
             )?;
             self.skip_ws();
             if self.peek() != Some(b'=') {
-                return Err(self.unexpected("'=' after the annotation name"));
+                return Err(self.unexpected_la("'=' after the annotation name", Mode::Annotation));
             }
             self.pos += 1;
             self.skip_ws();
             if self.peek() != Some(b'"') {
-                return Err(self.unexpected("'\"' (an annotation value)"));
+                return Err(self.unexpected_la("'\"' (an annotation value)", Mode::Annotation));
             }
             let value = self.annotation_value()?;
             annotations.push(Annotation { name, value });
@@ -713,6 +814,12 @@ impl<'a> Scanner<'a> {
                 Some(b'}') => {
                     self.pos += 1;
                     return Ok(annotations);
+                }
+                // ANTLR looks ahead at the entry of the `(',' annotation)*`
+                // loop (after the first annotation) but not at its loop
+                // back.
+                _ if annotations.len() == 1 => {
+                    return Err(self.unexpected_la("',' or '}'", Mode::Annotation))
                 }
                 _ => return Err(self.unexpected("',' or '}'")),
             }

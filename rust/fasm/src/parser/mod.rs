@@ -169,6 +169,9 @@ pub struct Lines<'a> {
     line_start: usize,
     /// Offset of the logical line returned last.
     item_start: usize,
+    /// Offset of the first line of the file, if `buf` starts with it
+    /// (`line_no` 1); see `parse_logical_line`.
+    first_line: Option<usize>,
     done: bool,
 }
 
@@ -188,6 +191,7 @@ impl<'a> Lines<'a> {
             line_no,
             line_start: start,
             item_start: start,
+            first_line: (line_no == 1).then_some(start),
             done: false,
         }
     }
@@ -230,7 +234,8 @@ impl Iterator for Lines<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         while !self.done {
             let start = self.pos;
-            let outcome = match parse_logical_line(self.buf, start) {
+            let first_line = self.first_line == Some(start);
+            let outcome = match parse_logical_line(self.buf, start, first_line) {
                 Ok(outcome) => outcome,
                 Err(raw) => {
                     self.done = true;

@@ -410,6 +410,49 @@ fn edge_cases() -> Vec<Case> {
         case("{ a = \"x\" } b", "ERR 1:12 Syntax", Same),
         case("a = 1 {", "ERR 1:7 Syntax", Same),
         case("# c { a = \"b\" }\n{", "ERR 2:1 Syntax", Same),
+        // --- ANTLR lexer lookahead (single token deletion) ---------------
+        // After an unexpected token T, ANTLR lexes the token after it; if
+        // that fails in annotation mode, the lexer error comes first.
+        case("{ a = \"b\" c\n", "ERR 1:11 Syntax", Same),
+        case("{ \"x\" 1 }", "ERR 1:6 Syntax", Same),
+        case("{ a = b 1 }", "ERR 1:8 Syntax", Same),
+        case("{ a = = 1", "ERR 1:8 Syntax", Same),
+        case("{ a = \"b\" \"c\" 1", "ERR 1:14 Syntax", Same),
+        case("{ a = \"b\" c #", "ERR 1:12 Syntax", Same),
+        case("{ a \"x\" 1", "ERR 1:8 Syntax", Same),
+        case("{ , 1", "ERR 1:4 Syntax", Same),
+        case("{ a , 1", "ERR 1:6 Syntax", Same),
+        case("{ a = \"b\" , = 1", "ERR 1:14 Syntax", Same),
+        case("{ a = \"b\" c\t\t1", "ERR 1:13 Syntax", Same),
+        case("{ a = \"b\" c\r\n", "ERR 1:11 Syntax", Same),
+        case("{ a = \"b\" c \"x\\q\"", "ERR 1:12 Syntax", Same),
+        case("{ a = \"b\" c \"d\n", "ERR 1:12 Syntax", Same),
+        case("{ \"a\nb\" 1 }", "ERR 2:3 Syntax", Same),
+        // No lookahead error: the next token lexes, or T is `}`.
+        case("{ a = \"b\" c = \"d\" }", "ERR 1:10 Syntax", Same),
+        case("{ a = \"b\" c \"ok\" }", "ERR 1:10 Syntax", Same),
+        case("{ a b = \"x\" }", "ERR 1:4 Syntax", Same),
+        case("{ a } 1", "ERR 1:4 Syntax", Same),
+        case("{ } 1", "ERR 1:2 Syntax", Same),
+        case("{ a = } 1", "ERR 1:6 Syntax", Same),
+        // The `,` loop looks ahead after the first annotation only.
+        case("{ a=\"1\" c 1 }", "ERR 1:10 Syntax", Same),
+        case("{ a=\"1\", b=\"2\" c 1 }", "ERR 1:15 Syntax", Same),
+        // An unexpected `{` in default mode: the next token is lexed in
+        // annotation mode.
+        case("a = {1", "ERR 1:5 Syntax", Same),
+        case("a = { 1", "ERR 1:6 Syntax", Same),
+        case("a = {\"x", "ERR 1:5 Syntax", Same),
+        case("a = { . ", "ERR 1:4 Syntax", Same),
+        case("a[{1]", "ERR 1:3 Syntax", Same),
+        case("a[3{1", "ERR 1:4 Syntax", Same),
+        case("a[3:{1", "ERR 1:5 Syntax", Same),
+        // The line loop looks ahead after the first line only.
+        case("{ a=\"b\" } {1", "ERR 1:11 Syntax", Same),
+        case("\u{feff}{ a=\"b\" } {1", "ERR 1:11 Syntax", Same),
+        case("x\n{ a=\"b\" } {1", "ERR 2:10 Syntax", Same),
+        case("x\r{ a=\"b\" } {1", "ERR 1:12 Syntax", Same),
+        case("\r{ a=\"b\" } {1", "ERR 1:11 Syntax", Same),
         // --- Feature syntax errors ----------------------------------------
         case("a.", "ERR 1:1 Syntax", Same),
         case("a..b", "ERR 1:1 Syntax", Same),
