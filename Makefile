@@ -17,83 +17,40 @@
 # The top directory where environment will be created.
 TOP_DIR := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-# A pip `requirements.txt` file.
-# https://pip.pypa.io/en/stable/reference/pip_install/#requirements-file-format
-REQUIREMENTS_FILE := requirements.txt
-
-# A conda `environment.yml` file.
-# https://docs.conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html
-ENVIRONMENT_FILE := environment.yml
-
-# Rule to checkout the git submodule if it wasn't cloned.
-$(TOP_DIR)/third_party/make-env/conda.mk: $(TOP_DIR)/.gitmodules
-	cd $(TOP_DIR); git submodule update --init third_party/make-env
-	touch $(TOP_DIR)/third_party/make-env/conda.mk
-
--include $(TOP_DIR)/third_party/make-env/conda.mk
-
-# Update the version file
+# Python package (fasm/, pyproject.toml, maturin build of rust/fasm-python;
+# see docs/rewrite/DESIGN-python.md). These targets run in whatever Python
+# venv is active (there is no bundled conda environment any more): create
+# one with e.g. `python3 -m venv .venv && . .venv/bin/activate` and
+# `pip install .[dev]` first.
 # ------------------------------------------------------------------------
-fasm/version.py: update_version.py | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) python ./update_version.py
 
-setup.py: fasm/version.py
-	touch setup.py --reference fasm/version.py
-
-# Build/install into the conda environment.
-# ------------------------------------------------------------------------
-build-clean:
-	rm -rf dist fasm.egg-info
-
-.PHONY: build-clean
-
-build: setup.py | $(CONDA_ENV_PYTHON)
-	make build-clean
-	$(IN_CONDA_ENV) python setup.py sdist bdist_wheel
+# Build sdist + wheel with maturin.
+build:
+	python3 -m maturin build --release
 
 .PHONY: build
 
-# Install into environment
-install: setup.py | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) python setup.py develop
+# Editable install of the Python package (builds the Rust extension in
+# place with maturin).
+install:
+	python3 -m maturin develop --release
 
 .PHONY: install
 
-
-# Build/install locally rather than inside the environment.
-# ------------------------------------------------------------------------
-local-build: setup.py
-	python setup.py build
-
-.PHONY: local-build
-
-local-build-shared: setup.py
-	python setup.py build --antlr-runtime=shared
-
-.PHONY: local-build-shared
-
-local-install: setup.py
-	python setup.py install
-
-.PHONY: local-install
-
-
-# Test, lint, auto-format.
-# ------------------------------------------------------------------------
-
-# Run the tests
-test: fasm/version.py | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) py.test -s tests
+# Run the Python tests (see tests/README.md for the two ways to run them;
+# this assumes an editable `maturin develop` install).
+test:
+	python3 -m pytest -s tests/test_simple.py tests/test_rust_parser.py
 
 .PHONY: test
 
 # Find files to apply tools to while ignoring files.
 define with_files
-  $(IN_CONDA_ENV) git ls-files | grep -ve '^third_party\|^\.|^env' | grep -e $(1) | xargs -r -P $$(nproc) $(2)
+  git ls-files | grep -ve '^\.|^env' | grep -e $(1) | xargs -r -P $$(nproc) $(2)
 endef
 
 # Lint the python files
-lint: | $(CONDA_ENV_PYTHON)
+lint:
 	$(call with_py_files, flake8)
 
 .PHONY: lint
@@ -104,30 +61,14 @@ define with_py_files
 endef
 
 PYTHON_FORMAT ?= yapf
-format-py: | $(CONDA_ENV_PYTHON)
+format-py:
 	$(call with_py_files, yapf -p -i)
 
 .PHONY: format-py
 
-# Format the C++ files
-define with_cpp_files
-  $(call with_files, '\.cpp$$\|\.h$$', $(1))
-endef
-
-format-cpp:
-	$(call with_cpp_files, clang-format -style=file -i)
-
-.PHONY: format-cpp
-
 # Format all the files!
-format: format-py format-cpp
+format: format-py
 	true
-
-# Check - ???
-check: setup.py | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) python setup.py check -m -s
-
-.PHONY: check
 
 # Check files have license headers.
 check-license:
@@ -239,29 +180,5 @@ capi-test:
 
 .PHONY: capi-test
 
-
-# Upload to PyPI servers
-# ------------------------------------------------------------------------
-
-# PYPI_TEST = --repository-url https://test.pypi.org/legacy/
-PYPI_TEST = --repository testpypi
-
-# Check before uploading
-upload-check: build | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) twine check dist/*
-
-.PHONY: upload-check
-
-# Upload to test.pypi.org
-upload-test: check | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) twine upload ${PYPI_TEST}  dist/*.tar.gz
-	$(IN_CONDA_ENV) twine upload ${PYPI_TEST}  dist/*.whl
-
-.PHONY: upload-test
-
-# Upload to the real pypi.org
-upload: check | $(CONDA_ENV_PYTHON)
-	$(IN_CONDA_ENV) twine upload ${PYPI_TEST}  dist/*.tar.gz
-	$(IN_CONDA_ENV) twine upload ${PYPI_TEST}  dist/*.whl
-
-.PHONY: upload
+# PyPI publishing is done by .github/workflows/python.yml's `publish` job
+# (trusted publishing on `v*` tags); there is no local upload target.
