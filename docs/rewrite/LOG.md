@@ -249,3 +249,10 @@ what happened, branch/commit references, open issues.
   --no-ff; 235 tests pass. Parser bench on the merged tree: mixed 224 cold /
   276 warm MB/s, pip heavy 164 cold / 174 warm MB/s.
 * T1.5 (corpus v1 + Rust vs oracle differential test tool) started.
+* T2.1 review (Opus, 1,368 hand written command lines incl. 408 pty width
+  cases + 6,000 fuzz runs, 40k panic fuzz runs): REQUEST CHANGES for two
+  undocumented differences: `COLUMNS` with > 4300 digits (Python int()
+  limit) and `-h` with stdout closed (Python prints help to stderr). All
+  other differences are documented. Measured: 11 MB file, plain output
+  0.15 s / 35 MB RSS vs 5.7 s / 1.08 GB for the original; canonical 1.6 s /
+  304 MB vs 14.3 s / 1.2 GB. Fixes in progress.
