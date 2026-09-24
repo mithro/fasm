@@ -142,6 +142,11 @@ BITREAD_FLAGS = [
     ['-y', '-F', '0x00400000:0x004000ff', '--aux'],
     ['-f', '0x00400000', '-C'],
     ['-p', '-F', '0x00000000:0x0000003f', '-o'],
+    ['-C', '-x', '-z', '-o'],
+    ['-y', '-F', '0:0xffffffff'],
+    ['-y', '-F', '010:0x20'],
+    ['-y', '-C', '-F', '0x00400100'],
+    ['-f', '0x0040010b', '-o'],
 ]
 
 # Exceptions whose message the Rust tool reproduces exactly.
