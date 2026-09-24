@@ -88,7 +88,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
       formatting, canonicalisation; `include/fasm/fasm.h` via cbindgen;
       C test program built with CMake (after T1.4).
-- [~] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
+- [r] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
       and iterators; C++ test program; install rules; pkg-config file
       (after T4.1).
 

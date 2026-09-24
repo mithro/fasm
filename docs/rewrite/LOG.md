@@ -370,3 +370,10 @@ what happened, branch/commit references, open issues.
   worktree removed. Note: PyPI trusted publishing must be configured on
   pypi.org before a `v*` tag can publish.
 * T4.2 (C++ header only wrapper) started.
+* T4.2 implemented on branch `worktree-agent-a3e944fe1ed19b3ec` (4 commits):
+  include/fasm/fasm.hpp (C++17 header only: Error, String, Value,
+  SetFeature, Line, File with iterators, exception trampoline for
+  callbacks, streaming parse_each), C++ test (203 checks) + header only
+  compile matrix (g++/clang++ x C++17/20 -Werror), `make capi-install
+  PREFIX=` with fasm.pc, pkg-config example. 12/12 ctest incl. valgrind.
+  In review.
