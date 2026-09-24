@@ -15,5 +15,10 @@ path = "src/main.rs"
 [dependencies]
 fasm = { path = "../fasm" }
 
+# Only for the terminal width (`ioctl(TIOCGWINSZ)`), which argparse uses to
+# wrap the help and usage messages.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [lints]
 workspace = true
