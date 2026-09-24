@@ -244,3 +244,8 @@ what happened, branch/commit references, open issues.
   Differential test tests/cli/test_cli_compat.py: 692 cases, 0 differences
   (3 documented normalisation rules for error message texts). 200k lines
   in 0.09 s vs 3.6 s for the original. In review.
+* T1.1b done: Opus review APPROVE (intern_bytes soundness argument checked,
+  stress crate + Miri re-run, per-commit bisectability). Merged with
+  --no-ff; 235 tests pass. Parser bench on the merged tree: mixed 224 cold /
+  276 warm MB/s, pip heavy 164 cold / 174 warm MB/s.
+* T1.5 (corpus v1 + Rust vs oracle differential test tool) started.

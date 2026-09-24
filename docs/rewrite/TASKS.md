@@ -34,7 +34,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 - [x] T1.1 `idstring` module (design doc `docs/rewrite/DESIGN-idstring.md`
       first, then implementation + unit tests + micro benchmarks).
-- [r] T1.1b idstring follow ups from review (optional items): strengthen
+- [x] T1.1b idstring follow ups from review (optional items): strengthen
       `concurrent_lookups_while_tables_grow` into a positive publication test;
       fast path for repeat interning of overflowed names (check overflow table
       before locking); `# Panics` docs on `Ord`/`Display`/`PartialEq<str>`
@@ -51,7 +51,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T1.4 `output` module: string formatting, canonicalisation,
       `merge_features`, `merge_and_sort` (MergeModel) with tests ported from
       Python behaviour (after T1.2).
-- [ ] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test
+- [~] T1.5 Corpus v1 in `tests/corpus/` (repo examples, f4pga-xc-fasm test
       data, VTR `utils/fasm/test` files, synthetic edge cases) plus
       `tools/difftest.py` comparing Rust parse/print/canonical output with
       the oracle for every corpus file (after T0.4, T1.3, T1.4).
