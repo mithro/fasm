@@ -46,6 +46,8 @@ pub(crate) struct PyModel {
     tuple_new: Py<PyAny>,
     /// `int.from_bytes`.
     int_from_bytes: Py<PyAny>,
+    /// The `gc` module.
+    gc: Py<PyModule>,
 }
 
 static PY_MODEL: PyOnceLock<PyModel> = PyOnceLock::new();
@@ -86,6 +88,7 @@ impl PyModel {
                 ],
                 tuple_new: builtins.getattr("tuple")?.getattr("__new__")?.unbind(),
                 int_from_bytes: py.get_type::<PyInt>().getattr("from_bytes")?.unbind(),
+                gc: py.import("gc")?.unbind(),
             })
         })
     }
@@ -161,12 +164,58 @@ impl PyModel {
     }
 }
 
+/// Number of lines from which [`lines_to_list`] pauses the cyclic garbage
+/// collector.
+const GC_PAUSE_LINES: usize = 256;
+
+/// Disables Python's cyclic garbage collector until dropped (if it was
+/// enabled).
+///
+/// Building a large parse result creates two or three tuples per line,
+/// all tracked by the collector, which then runs young generation (and
+/// increasingly expensive full) collections over them while the list
+/// grows although none of them can be garbage: pausing it makes the
+/// conversion about a third faster (`docs/rewrite/DESIGN-python.md`).
+/// Only builtin constructors run while it is paused (no user code), and
+/// the previous state is restored even on error.
+struct GcPause<'py> {
+    gc: Option<Bound<'py, PyModule>>,
+}
+
+impl<'py> GcPause<'py> {
+    fn new(py: Python<'py>, model: &PyModel) -> PyResult<Self> {
+        let gc = model.gc.bind(py);
+        if gc.call_method0("isenabled")?.is_truthy()? {
+            gc.call_method0("disable")?;
+            Ok(GcPause {
+                gc: Some(gc.clone()),
+            })
+        } else {
+            Ok(GcPause { gc: None })
+        }
+    }
+}
+
+impl Drop for GcPause<'_> {
+    fn drop(&mut self) {
+        if let Some(gc) = &self.gc {
+            // `gc.enable()` cannot fail.
+            let _ = gc.call_method0("enable");
+        }
+    }
+}
+
 /// Converts parsed lines into a Python list of `fasm.model.FasmLine`.
 pub(crate) fn lines_to_list<'py>(
     py: Python<'py>,
     lines: &[FasmLine],
 ) -> PyResult<Bound<'py, PyList>> {
     let model = PyModel::get(py)?;
+    let _gc_pause = if lines.len() >= GC_PAUSE_LINES {
+        Some(GcPause::new(py, model)?)
+    } else {
+        None
+    };
     let items = lines
         .iter()
         .map(|line| model.line(py, line))

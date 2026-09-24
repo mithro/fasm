@@ -22,6 +22,7 @@ Needs the extension module to be built, e.g. `maturin develop` or
 `pip install .` into the venv running the tests.
 """
 
+import gc
 import glob
 import json
 import os
@@ -579,3 +580,21 @@ def test_fasm_tuple_to_string_never_differs(model, canonical):
         assert result is None
     else:
         assert result in (None, expected)
+
+
+def test_gc_state_restored():
+    """ The cyclic GC is paused while a large result is built, and its
+    state restored afterwards, also on error. """
+    text = big_fasm(1000)
+    assert gc.isenabled()
+    assert len(rust.parse_fasm_string(text)) == 1000
+    assert gc.isenabled()
+    gc.disable()
+    try:
+        assert len(rust.parse_fasm_string(text)) == 1000
+        assert not gc.isenabled()
+    finally:
+        gc.enable()
+    with pytest.raises(rust.FasmParseError):
+        rust.parse_fasm_string(text + 'a b\n')
+    assert gc.isenabled()
