@@ -515,3 +515,11 @@ what happened, branch/commit references, open issues.
   is T6.2/T6.3.
 * T6.2 (UltraScale / UltraScale+ assembler validation and bitstream
   writer/reader vs prjuray-tools) started.
+* Core hardening implemented on branch `worktree-agent-a7c6a3455fe10e01d`
+  (4 commits): canonical output iterates set bits (`W[4294967295:1] = 1`
+  now 2 ms via the CLI), timing test budget 5 s unless FASM_TIMING_TESTS=1
+  (strict variant ignored by default), cargo-fuzz crate rust/fasm/fuzz
+  (parse / roundtrip / merge targets, 3 x 10 minute runs, ~3.25M execs, 0
+  crashes), `make fuzz`. Found pre-existing: tools/difftest.py has no class
+  for the T5.4 fasm2frames error corpus (3 unexplained); classifier fix
+  requested on the same branch before review.
