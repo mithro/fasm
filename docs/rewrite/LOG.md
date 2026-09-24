@@ -298,3 +298,10 @@ what happened, branch/commit references, open issues.
   checks) built with CMake against both the shared and static library and
   run under valgrind (0 errors), make targets capi-header /
   capi-header-check / capi-test, DESIGN-capi.md. In review.
+* T4.1 review (Opus): REQUEST CHANGES for three small items (Miri UB in a
+  Rust unit test, sort key callback called O(n log n) times and a
+  non-deterministic key panics, wrong "aborts" wording for foreign
+  unwinds). NULL fuzzing of all 44 functions, self aliasing push under Miri,
+  8 thread reads, byte identical output vs the CLI on all 70 corpus files.
+  Reviewer also found a core hazard: canonical output of `W[4294967295:1]`
+  loops ~4G times: recorded as T1.4b. Fixes in progress.

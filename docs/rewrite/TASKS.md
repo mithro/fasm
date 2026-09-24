@@ -55,6 +55,10 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       data, VTR `utils/fasm/test` files, synthetic edge cases) plus
       `tools/difftest.py` comparing Rust parse/print/canonical output with
       the oracle for every corpus file (after T0.4, T1.3, T1.4).
+- [ ] T1.4b Canonical output of a huge address range (`W[4294967295:1] = 1`)
+      iterates ~4G times in `output/canonical.rs:84` (also reachable from
+      the CLI with --canonical); iterate over set bits of the value instead
+      of the address range, and bound the work (after T1.4).
 - [ ] T1.6 Fuzzing (`cargo fuzz` or proptest) for parser/printer round trip;
       crashes fixed; regression files added to the corpus (after T1.3).
 
