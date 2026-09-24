@@ -695,15 +695,16 @@ computed only when writing/reading the actual `.bit`, not when building
 | What | prjxray (7 series) | prjuray-tools (UltraScale/+) |
 |---|---|---|
 | `FrameAddress` bit-field layout | `lib/xilinx/xc7series/frame_address.cc:20-49` | `lib/xilinx/xcuseries/frame_address.cc` (same ranges as Series7) and `lib/xilinx/xcupseries/frame_address.cc:11-41` |
-| tilegrid `bits` → segbit → bit position | `prjxray/tile_segbits.py:161-167`, `prjxray/fasm_assembler.py:128-138` | `prjuray-tools/prjuray/tile_segbits.py` (verified structurally identical to prjxray's — same function names/line shapes), `prjuray-tools/prjuray/fasm_assembler.py` not separately re-derived (uses same `prjuray.bitstream.WORD_SIZE_BITS`) |
+| tilegrid `bits` → segbit → bit position | `prjxray/tile_segbits.py:161-167`, `prjxray/fasm_assembler.py:128-138` | `prjuray-tools/prjuray/tile_segbits.py` (verified structurally identical to prjxray's — same function names/line shapes), `prjuray/utils/fasm_assembler.py` (in the `prjuray` repo, not `prjuray-tools` — not separately re-derived, uses the same `prjuray.bitstream.WORD_SIZE_BITS`) |
 | next-frame-address iteration (row/column/minor rollover, used by frame padding, §6) | `lib/xilinx/xc7series/{part,global_clock_region,configuration_row,configuration_bus,configuration_column}.cc` | `lib/xilinx/xcupseries/{part,configuration_row,configuration_bus,configuration_column}.cc` (same shape, no `global_clock_region` level — `Part::rows_` is a flat `std::map<unsigned int, Row>`, `lib/include/prjxray/xilinx/xcupseries/part.h:44-45`) |
 
 ## 5. FASM → frames algorithm
 
 This is `prjxray.fasm_assembler.FasmAssembler` (`prjxray/fasm_assembler.py`,
-byte-identical in `prjuray-tools/prjuray/fasm_assembler.py` modulo the
-import of a local `bitstream` module and the loss of the `word_addr >= 101`
-sanity print — see the diff notes inline below) driven by
+byte-identical in `prjuray/utils/fasm_assembler.py` — in the `prjuray`
+repo, not `prjuray-tools` — modulo the import of a local `bitstream`
+module and the loss of the `word_addr >= 101` sanity print — see the diff
+notes inline below) driven by
 `xc_fasm.fasm2frames.fasm2frames` (`xc_fasm/fasm2frames.py:119-282`) /
 `prjuray/utils/fasm2frames.py:91-139` (`run`). A Rust port must reproduce
 this exactly:
@@ -802,9 +803,10 @@ this exactly:
    from a 101-word frame, but is a real hazard if `fasm-xilinx` reuses this
    constant unmodified for UltraScale's 123-word frames — the check must be
    parameterized per architecture, and **is absent entirely** in the
-   prjuray fork's copy of `frame_set`/`frame_clear`,
-   `prjuray-tools/prjuray/fasm_assembler.py:84-120` has no such guard at
-   all). If the key was already set to a *different* value by an earlier
+   prjuray fork's copy of `frame_set`/`frame_clear`
+   (`prjuray/utils/fasm_assembler.py:84-120`, in the `prjuray` repo, not
+   `prjuray-tools` — has no such guard at all). If the key was already set
+   to a *different* value by an earlier
    line, raise `FasmInconsistentBits('FASM line "{line}" wanted to
    {set|clear} bit {key} but was {cleared|set} by FASM line
    "{frames_line[key]}"')` (`prjxray/fasm_assembler.py:90-97,111-119`) —
@@ -1175,8 +1177,11 @@ NOP ×400
 `lib/include/prjxray/xilinx/xc7series/configuration_options_0_value.h`
 bit-field setters, values as listed).
 
-**UltraScale**: identical shape with two extra leading `NOP`s (3 total
-before the first `Write(TIMER,...)`), `Write(COR0, [0x38003fe5])`,
+**UltraScale**: identical shape with one extra leading `NOP` (two `NOP`s
+total before the first `Write(TIMER,...)`, vs. Series7's single leading
+`NOP` — verified against `lib/xilinx/configuration.cc:480-481` (two
+`NopPacket` emplaces for `UltraScale`) vs. `:308` (one `NopPacket` emplace
+for `Series7`)), `Write(COR0, [0x38003fe5])`,
 `Write(COR1, [0x400000])` (fixed constants, not built via
 `ConfigurationOptions0Value`), `Write(CTL0/MASK)` values `0x1`/`0x101`
 instead of Series7's `0x401`/`0x501`, and an **extra `Write(FAR, [0x0])`
