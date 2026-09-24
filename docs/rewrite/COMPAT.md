@@ -338,7 +338,7 @@ the process the way an uncaught exception crossing the Rust `extern "C"`
 boundary otherwise would (see the exception trampoline rule in
 `DESIGN-capi.md`).
 
-## Python bindings (`fasm.parser.rust`, `rust/fasm-python/`, T3.1)
+## Python bindings (`fasm.parser.rust`, `rust/fasm-python/`, T3.1, T3.3)
 
 ### Rule
 
@@ -365,5 +365,6 @@ namedtuples, with the field types of the ANTLR parser (a `list` of lines,
 | `fasm --parser antlr` (`fasm/tool.py`) | the ANTLR parser | the Rust parser when the ANTLR one is not built (like the Rust CLI); `--parser rust` is accepted |
 | Rust parser extension not importable | `RuntimeWarning` "Unable to import fast Antlr4 parser implementation. ..." and the textX parser (original: no `setup.py` ANTLR build) | `RuntimeWarning` "Unable to import the fasm._fasm_rs Rust parser extension (ImportError: ...); falling back to ..." and the textX parser |
 | `fasm.__version__` | from `fasm/version.py` (`update_version.py`) | from the package metadata (`0.1.0.dev0` for now); `fasm/version.py` is no longer tracked or packaged (a locally generated one still takes precedence when importing from the source tree) |
-| New API | | `fasm.parser.rust.parse_fasm_bytes`, `fasm.parser.rust.FasmParseError`, `fasm._fasm_rs.fasm_tuple_to_string` (fast path, returns `None` when it cannot guarantee the Python result) |
+| New API | | `fasm.parser.rust.parse_fasm_bytes`, `fasm.parser.rust.FasmParseError`, `fasm._fasm_rs.fasm_tuple_to_string`/`fasm._fasm_rs.merge_and_sort` (fast paths, return `None` when they cannot guarantee the Python result — used automatically by `fasm.fasm_tuple_to_string`/`fasm.output.merge_and_sort`, T3.3), `fasm.output._merge_and_sort_py` (the pure Python implementation `merge_and_sort` falls back to) |
 | Cyclic garbage collector while building a result of 256 lines or more | runs | paused, then restored (`gc.callbacks` do not fire meanwhile) |
+| `fasm.output.merge_and_sort`'s `zero_function`/`sort_key` calls, when the fast path runs (T3.3) | called lazily, as the caller consumes the returned generator | called eagerly, at the `merge_and_sort(...)` call itself (same count, arguments and order, just sooner) — the fast path returns a materialised `list` wrapped in `iter()`, not a generator; see `DESIGN-python.md`'s "Eager vs. lazy evaluation" |
