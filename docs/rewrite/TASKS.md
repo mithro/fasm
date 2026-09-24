@@ -77,7 +77,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `parse_fasm_string`, `parse_fasm_filename` returning the existing
       namedtuples; maturin `pyproject.toml`; `fasm/parser/rust.py`;
       `fasm.parser.available` update; keep textX fallback (after T1.4).
-- [r] T3.2 Replace setup.py/ANTLR build with maturin based build; update
+- [x] T3.2 Replace setup.py/ANTLR build with maturin based build; update
       `tests/test_simple.py` and add parity tests between `rust` and `textx`
       parsers over the corpus; `tox.ini`; wheel build workflow (after T3.1).
 - [ ] T3.3 Fast paths: Rust backed `fasm_tuple_to_string` and
@@ -88,7 +88,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T4.1 `fasm-capi` crate: C ABI for parsing (callback + array APIs),
       formatting, canonicalisation; `include/fasm/fasm.h` via cbindgen;
       C test program built with CMake (after T1.4).
-- [ ] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
+- [~] T4.2 C++ header only wrapper `include/fasm/fasm.hpp` with RAII types
       and iterators; C++ test program; install rules; pkg-config file
       (after T4.1).
 

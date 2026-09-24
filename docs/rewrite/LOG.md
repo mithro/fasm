@@ -362,3 +362,11 @@ what happened, branch/commit references, open issues.
   wheels x86_64+aarch64, sdist, trusted publishing on v* tags); tox.ini for
   tox 4; .flake8; README rewritten. Found and fixed a NameError in the
   missing-extension fallback path. In review.
+* T3.2 done: review APPROVE after one doc fix (17152c8: grammar files now
+  referenced and literalincluded from docs/specification/syntax.rst).
+  Merged with --no-ff; on the merged tree: cargo tests pass, oracle tests
+  9 passed (the oracle uses the pristine ffafe82 checkout), `maturin
+  develop` gives ['rust', 'textx'], flake8 and check-license clean;
+  worktree removed. Note: PyPI trusted publishing must be configured on
+  pypi.org before a `v*` tag can publish.
+* T4.2 (C++ header only wrapper) started.
