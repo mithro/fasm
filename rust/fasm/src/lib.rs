@@ -40,8 +40,8 @@ pub use model::{
     Annotation, FasmLine, FeatureValue, ModelError, SetFasmFeature, ValueFormat, ValueParseError,
 };
 pub use output::{
-    canonical_features, fasm_value_to_str, set_feature_to_str, try_canonical_features,
-    write_fasm_value, write_set_feature, OutputError,
+    canonical_features, fasm_line_to_string, fasm_tuple_to_string, fasm_value_to_str,
+    set_feature_to_str, try_canonical_features, write_fasm_value, write_set_feature, OutputError,
 };
 
 /// The version of this crate, taken from `Cargo.toml` at compile time.
