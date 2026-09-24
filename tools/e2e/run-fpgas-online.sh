@@ -159,6 +159,21 @@ SCRIPT_ABS="$DESIGN_DIR/$SCRIPT_REL"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/openxc7-env.sh"
 
+# RISC-V GCC (tools/e2e/setup-litex.sh --with-riscv-gcc), only needed for
+# designs whose gateware script has no --no-compile-software escape hatch
+# (e.g. pcie-enumeration/acorn-pcie, which build a Builder directly with
+# compile_software always on); harmless to add to PATH unconditionally
+# when present.
+RISCV_GCC_DIR="$(find "$SCRIPT_DIR/build/riscv-gcc" -maxdepth 1 -type d -name 'xpack-riscv-none-elf-gcc-*' 2>/dev/null | head -1)"
+if [[ -n "$RISCV_GCC_DIR" && -d "$RISCV_GCC_DIR/bin" ]]; then
+  export PATH="$RISCV_GCC_DIR/bin:$PATH"
+fi
+# Some designs (pcie-enumeration/acorn-pcie, which build a Builder
+# directly rather than going through build_soc/LiteXArgumentParser) need
+# `meson`/`ninja` on PATH for LiteX's Builder._check_meson(); both are
+# installed into the venv itself by tools/e2e/setup-litex.sh.
+export PATH="$LITEX_VENV/bin:$PATH"
+
 # nextpnr-xilinx's chipdb (built by setup-openxc7.sh into the MAIN tree's
 # tools/e2e/build/openxc7/chipdb/, shared across worktrees) is named
 # "<part>.bin" (dash-speedgrade form, e.g. xc7a35tfgg484-2.bin, matching
