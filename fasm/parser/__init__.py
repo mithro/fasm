@@ -27,11 +27,14 @@ In order of preference: 'rust' (the fasm._fasm_rs extension module, the
 default) and 'textx' (pure Python, always available).
 """
 
+_rust_import_error = None
 try:
     importlib.import_module('fasm.parser.rust')
     available.append('rust')
-except ImportError as _rust_import_error:
-    pass
+except ImportError as e:
+    # `except ... as e` implicitly deletes `e` at the end of the except
+    # block, so it is copied to a variable that survives past it.
+    _rust_import_error = e
 
 if 'rust' in available:
     from fasm.parser.rust import \
