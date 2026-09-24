@@ -494,3 +494,11 @@ what happened, branch/commit references, open issues.
   LiteX SoC builds are not bit for bit deterministic across runs on this
   toolchain; the committed FASM is the frozen reference.
 * T1.4b + T1.3b + T1.6 (core crate hardening) started as one task.
+* T5.6/T5.7 review (Opus, ~8,000 runs: 280 random .frm on 20 parts, 4880
+  bitread flag runs, 750 synthetic configuration_ranges part runs, 1600
+  reader mutations, 795 gflags cases, third reference = openXC7 flow's own
+  top.bit): all byte identical. REQUEST CHANGES: bitread buffers its whole
+  output (1.3 GB peak on a dense xc7a200t `-x -o`) and prints stderr before
+  stdout in merged logs; three undocumented differences (mmap of non
+  regular files, unseekable output header length, directory as part
+  file). Fixes in progress.
