@@ -65,7 +65,7 @@ mod repr;
 mod resolved;
 mod storage;
 
-pub use interner::Interner;
+pub use interner::{Interner, InternerStats};
 pub use resolved::Resolved;
 
 /// The process wide interner used by all [`IdString`] methods.

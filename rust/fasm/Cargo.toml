@@ -20,5 +20,9 @@ hashbrown = { version = "0.17", default-features = false, features = ["inline-mo
 [dev-dependencies]
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 
+[[bench]]
+name = "idstring"
+harness = false
+
 [lints]
 workspace = true

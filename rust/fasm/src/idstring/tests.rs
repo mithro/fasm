@@ -138,6 +138,10 @@ fn full_level_tables_fall_back_to_overflow() {
         }
     }
     assert_eq!(interner.get("TILE_X99Y0.SITE0.BEL.INIT"), None);
+    let stats = interner.stats();
+    assert_eq!(stats.level_entries, [4, 3, 1]);
+    assert_eq!(stats.overflow_entries, 16 * 3);
+    assert!(stats.heap_bytes > 0);
     assert!(format!("{interner:?}").contains("overflow_entries"));
 }
 

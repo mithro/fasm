@@ -59,6 +59,20 @@ pub struct Interner {
     overflow: Table,
 }
 
+/// Size statistics of an [`Interner`], see [`Interner::stats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct InternerStats {
+    /// Number of distinct texts in each level table (first component,
+    /// second component, remainder).
+    pub level_entries: [usize; LEVELS],
+    /// Number of strings stored whole in the overflow table.
+    pub overflow_entries: usize,
+    /// Heap bytes allocated by the tables (text, entry slots and hash
+    /// indexes). Excludes the fixed size `Interner` value itself.
+    pub heap_bytes: usize,
+}
+
 /// `min` for `u32` in const context.
 const fn min(a: u32, b: u32) -> u32 {
     if a < b {
@@ -256,6 +270,25 @@ impl Interner {
     }
 }
 
+impl Interner {
+    /// Returns the number of entries and the heap usage of the tables.
+    ///
+    /// Takes every shard lock briefly (one at a time); meant for reporting,
+    /// not for hot paths.
+    pub fn stats(&self) -> InternerStats {
+        InternerStats {
+            level_entries: self.levels.each_ref().map(|table| table.len() as usize),
+            overflow_entries: self.overflow.len() as usize,
+            heap_bytes: self
+                .levels
+                .iter()
+                .chain([&self.overflow])
+                .map(Table::heap_bytes)
+                .sum(),
+        }
+    }
+}
+
 impl Default for Interner {
     fn default() -> Self {
         Self::new()
@@ -264,10 +297,10 @@ impl Default for Interner {
 
 impl fmt::Debug for Interner {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let entries = self.levels.each_ref().map(Table::len);
+        let stats = self.stats();
         f.debug_struct("Interner")
-            .field("level_entries", &entries)
-            .field("overflow_entries", &self.overflow.len())
+            .field("level_entries", &stats.level_entries)
+            .field("overflow_entries", &stats.overflow_entries)
             .finish_non_exhaustive()
     }
 }

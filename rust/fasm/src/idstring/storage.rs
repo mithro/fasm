@@ -49,6 +49,8 @@ const MAX_ARENA_STRING: usize = 4096;
 pub(crate) struct Arena {
     rest: &'static mut [u8],
     next_chunk: usize,
+    /// Total bytes allocated (chunks and dedicated strings).
+    allocated: usize,
 }
 
 impl Arena {
@@ -57,7 +59,13 @@ impl Arena {
         Arena {
             rest: &mut [],
             next_chunk: MIN_CHUNK,
+            allocated: 0,
         }
+    }
+
+    /// Total bytes this arena allocated.
+    pub(crate) fn allocated(&self) -> usize {
+        self.allocated
     }
 
     /// Copies `s` into leaked memory and returns the copy.
@@ -67,6 +75,7 @@ impl Arena {
             return "";
         }
         if n > MAX_ARENA_STRING {
+            self.allocated += n;
             return Box::leak(Box::<str>::from(s));
         }
         if self.rest.len() < n {
@@ -74,6 +83,7 @@ impl Arena {
             // MAX_ARENA_STRING bytes out of a chunk of up to MAX_CHUNK).
             let size = self.next_chunk.max(n);
             self.next_chunk = (self.next_chunk * 2).min(MAX_CHUNK);
+            self.allocated += size;
             self.rest = Box::leak(vec![0u8; size].into_boxed_slice());
         }
         let (piece, rest) = std::mem::take(&mut self.rest).split_at_mut(n);
@@ -83,7 +93,10 @@ impl Arena {
             Ok(text) => text,
             // Cannot happen (the bytes were copied from a `&str`); stay
             // correct without panicking or using `unsafe` anyway.
-            Err(_) => Box::leak(Box::<str>::from(s)),
+            Err(_) => {
+                self.allocated += n;
+                Box::leak(Box::<str>::from(s))
+            }
         }
     }
 }
@@ -149,6 +162,16 @@ impl Slots {
         let stored = slots.get(offset).map(|slot| slot.set(text));
         debug_assert_eq!(stored, Some(Ok(())), "slot {pos} set twice");
     }
+
+    /// Bytes allocated for the segments.
+    pub(crate) fn allocated(&self) -> usize {
+        self.segments
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| cell.get().is_some())
+            .map(|(segment, _)| segment_len(segment) * size_of::<OnceLock<&'static str>>())
+            .sum()
+    }
 }
 
 /// Number of lock shards per [`Table`].
@@ -197,9 +220,23 @@ impl Table {
         self.slots.get(pos)
     }
 
-    /// Number of entries in the table.
+    /// Number of entries in the table (including ones being inserted by
+    /// other threads right now).
     pub(crate) fn len(&self) -> u32 {
         self.next.load(Ordering::Relaxed)
+    }
+
+    /// Heap bytes used by the table: slot segments, hash indexes and text.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        let shards: usize = self
+            .shards
+            .iter()
+            .map(|shard| {
+                let shard = shard.read().unwrap_or_else(PoisonError::into_inner);
+                shard.map.allocation_size() + shard.arena.allocated()
+            })
+            .sum();
+        self.slots.allocated() + shards
     }
 
     fn shard_index(hash: u64) -> usize {
@@ -306,6 +343,8 @@ mod tests {
         for _ in 0..10_000 {
             assert_eq!(arena.alloc("CLBLL_L_X12Y124"), "CLBLL_L_X12Y124");
         }
+        assert!(arena.allocated() >= 150_000 + long.len() + medium.len());
+        assert!(arena.allocated() < 300_000);
     }
 
     #[test]
@@ -337,6 +376,7 @@ mod tests {
         assert_eq!(table.find(hasher.hash_one(""), ""), Some(2));
         assert_eq!(table.text(1), Some("b"));
         assert_eq!(table.text(3), None);
+        assert!(table.heap_bytes() > 0);
     }
 
     #[test]
