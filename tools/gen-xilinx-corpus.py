@@ -1220,6 +1220,9 @@ def main(argv=None):
         'errors': errors,
         'tile_types': gen.stats,
         'uncovered': [list(u) for u in gen.uncovered],
+        'unreachable': sorted(
+            set((g.tile_type, key, reason) for g in gen.groups
+                for key, reason in g.features.skipped)),
         'notes': gen.notes,
     }
     with open(os.path.join(args.out_dir, 'manifest.json'), 'w') as f:
