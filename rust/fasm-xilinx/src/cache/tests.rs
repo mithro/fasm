@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
+use super::sources::{is_racy, RACY_WINDOW};
 use super::*;
 
 fn testdata(name: &str) -> PathBuf {
@@ -427,14 +428,14 @@ fn touched_sources_are_rehashed_not_rebuilt() {
     let file = cache_file(dir, &root, MINI_PART).unwrap();
     let before = read_info(&file).unwrap();
 
-    // Same content, new modification time (like a fresh checkout).
+    // Same content, another modification time (like a fresh checkout).
     let path = root.join("xc7/tilegrid.json");
-    let later = SystemTime::now() + Duration::from_secs(3600);
+    let earlier = SystemTime::now() - Duration::from_secs(3600);
     std::fs::File::options()
         .write(true)
         .open(&path)
         .unwrap()
-        .set_modified(later)
+        .set_modified(earlier)
         .unwrap();
     let outcome = open_checked(&root, MINI_PART, dir);
     if cfg!(unix) {
@@ -770,6 +771,47 @@ fn options_from_environment() {
     assert!(CacheOptions::from_vars(vars(&[("FASM_XDB_CACHE_VERBOSE", "1")])).verbose);
     assert!(!CacheOptions::from_vars(vars(&[])).verbose);
     assert_eq!(CacheOptions::default(), CacheOptions::disabled());
+}
+
+#[test]
+fn recent_stat_fingerprints_are_not_trusted() {
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    let window = Duration::from_secs(5);
+    let stat = |mtime: i64, ctime: i64| StatFingerprint {
+        mtime: (mtime, 500),
+        ctime: (ctime, 0),
+        ..StatFingerprint::default()
+    };
+    assert!(!is_racy(&stat(900_000, 999_994), now, window));
+    assert!(is_racy(&stat(999_995, 900_000), now, window));
+    assert!(is_racy(&stat(900_000, 999_995), now, window));
+    assert!(is_racy(&stat(2_000_000, 900_000), now, window), "future");
+    assert!(!is_racy(&stat(999_999, 999_999), now, Duration::ZERO));
+    assert!(is_racy(&stat(1_000_000, 0), now, Duration::ZERO));
+
+    // Built right after the files were written: no stat fingerprint is
+    // recorded, every load hashes the files (and records the
+    // fingerprints once they are old enough).
+    let root = testdata("mini-db");
+    let mut sources = Plan::new(&root, MINI_PART)
+        .unwrap()
+        .fingerprint(&root, false)
+        .unwrap();
+    let written = sources.iter().filter(|s| s.stat.is_some()).count();
+    if cfg!(unix) {
+        assert!(written > 0);
+    }
+    sources::drop_racy(&mut sources, SystemTime::now());
+    assert_eq!(sources.iter().filter(|s| s.stat.is_some()).count(), written);
+    let mut far_future = sources.clone();
+    let future = SystemTime::now() - Duration::from_secs(1) + RACY_WINDOW;
+    for s in &mut far_future {
+        if let Some(stat) = &mut s.stat {
+            stat.ctime = (i64::MAX / 2, 0);
+        }
+    }
+    sources::drop_racy(&mut far_future, future);
+    assert!(far_future.iter().all(|s| s.stat.is_none()));
 }
 
 #[test]

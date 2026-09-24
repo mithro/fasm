@@ -316,22 +316,34 @@ const TYPE_GROUPS: usize = 4;
 /// Serialises the tables of `db` (everything but the root, layout and
 /// architecture, which are in the header, and the derived indexes, which
 /// are rebuilt).
+///
+/// The sections are encoded on scoped threads.
 pub(crate) fn encode_payload(db: &Database) -> Vec<u8> {
-    let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
-    for group in type_groups(&db.tile_types) {
-        sections.push((
-            SECTION_TYPES,
-            encode_section(|w, [strings, _]| encode_types(w, strings, group)),
+    let sections: Vec<(u8, Vec<u8>)> = std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for group in type_groups(&db.tile_types) {
+            handles.push((
+                SECTION_TYPES,
+                scope.spawn(move || {
+                    encode_section(|w, [strings, _]| encode_types(w, strings, group))
+                }),
+            ));
+        }
+        handles.push((
+            SECTION_GRID,
+            scope.spawn(|| encode_section(|w, tables| encode_grid(w, tables, db.grid.as_ref()))),
         ));
-    }
-    sections.push((
-        SECTION_GRID,
-        encode_section(|w, tables| encode_grid(w, tables, db.grid.as_ref())),
-    ));
-    sections.push((
-        SECTION_PART,
-        encode_section(|w, [strings, _]| encode_part(w, strings, db.part.as_ref())),
-    ));
+        handles.push((
+            SECTION_PART,
+            scope.spawn(|| {
+                encode_section(|w, [strings, _]| encode_part(w, strings, db.part.as_ref()))
+            }),
+        ));
+        handles
+            .into_iter()
+            .map(|(kind, h)| (kind, h.join().expect("section encoder panicked")))
+            .collect()
+    });
     let mut out = Writer::default();
     out.len(sections.len());
     for (kind, bytes) in &sections {

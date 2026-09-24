@@ -32,6 +32,7 @@
 use std::fs::Metadata;
 use std::io;
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use super::format::{self, Corrupt, Hash, Reader, Writer};
 use crate::db::{detect_layout, prjxray_fabric, tile_type_file_names, tile_type_names, Layout};
@@ -64,6 +65,42 @@ pub struct StatFingerprint {
     /// Status change time (seconds, nanoseconds): changes on any write,
     /// rename or `touch`, even one that restores the modification time.
     pub ctime: (i64, u32),
+}
+
+/// How recent a modification or status change time can be for the stat
+/// fingerprint to be trusted (the "racy git" problem): with a coarse
+/// timestamp granularity (1 s on ext3 and HFS+, 2 s on FAT, clock skew on
+/// network file systems), a file changed again right after it was
+/// fingerprinted can keep the same size and times. Such a file is
+/// recorded without a stat fingerprint, so its content is hashed on every
+/// load until a load finds it old enough and records its fingerprint.
+/// Zero in the unit tests (the window is tested by itself), which rewrite
+/// files and reload them immediately.
+#[cfg(not(test))]
+pub(crate) const RACY_WINDOW: Duration = Duration::from_secs(5);
+#[cfg(test)]
+pub(crate) const RACY_WINDOW: Duration = Duration::ZERO;
+
+/// Whether a stat fingerprint taken at `now` may miss a later change:
+/// its modification or status change time is within `window` of `now`
+/// (or later).
+pub(crate) fn is_racy(stat: &StatFingerprint, now: SystemTime, window: Duration) -> bool {
+    let nanos = |(s, ns): (i64, u32)| i128::from(s) * 1_000_000_000 + i128::from(ns);
+    let limit = match now.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(d) => d.as_nanos() as i128 - window.as_nanos() as i128,
+        Err(_) => return true,
+    };
+    nanos(stat.mtime) >= limit || nanos(stat.ctime) >= limit
+}
+
+/// Drops the stat fingerprints that are too recent to be trusted at
+/// `now` (see [`RACY_WINDOW`]).
+pub(crate) fn drop_racy(sources: &mut [SourceFile], now: SystemTime) {
+    for source in sources {
+        if source.stat.is_some_and(|s| is_racy(&s, now, RACY_WINDOW)) {
+            source.stat = None;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -238,6 +275,7 @@ pub(crate) enum Freshness {
 /// file is hashed; otherwise only those whose stat fingerprint changed.
 /// `Err` is the reason the cache is stale.
 pub(crate) fn check(root: &Path, sources: &[SourceFile], full: bool) -> Result<Freshness, String> {
+    let now = SystemTime::now();
     let mut updated: Option<Vec<SourceFile>> = None;
     for (i, source) in sources.iter().enumerate() {
         let path = root.join(&source.path);
@@ -261,7 +299,10 @@ pub(crate) fn check(root: &Path, sources: &[SourceFile], full: bool) -> Result<F
                 if data.len() as u64 != source.size || Some(format::hash(&data)) != source.hash {
                     return Err(format!("{} changed", source.path));
                 }
-                if stat != source.stat {
+                // Same content: record the new stat fingerprint, unless it
+                // is too recent to be trusted.
+                let stat = stat.filter(|s| !is_racy(s, now, RACY_WINDOW));
+                if stat.is_some() && stat != source.stat {
                     let list = updated.get_or_insert_with(|| sources.to_vec());
                     list[i].stat = stat;
                 }

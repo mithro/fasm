@@ -657,22 +657,50 @@ fn build_from_text(
     key: &CacheKey,
     db_root: &Path,
 ) -> Result<(Database, Result<(), String>), DbError> {
-    // The sources are fingerprinted (and hashed) *before* the load and
-    // stat'ed again after it: a file changed in between makes the
-    // fingerprints differ and the cache file is not written, so a cache
-    // can never claim contents it was not built from.
+    // The sources are stat'ed *before* the text files are loaded, hashed
+    // (on another thread) while they are loaded, and stat'ed again after
+    // that: a file changed at any point in between makes the fingerprints
+    // differ and the cache file is not written, so a cache file can never
+    // claim contents it was not built from.
     let before = Plan::new(db_root, &key.part).and_then(|plan| {
-        let sources = plan
-            .fingerprint(db_root, true)
+        let stats = plan
+            .fingerprint(db_root, false)
             .map_err(|e| DbError::from_io(db_root, e))?;
-        Ok((plan, sources))
+        Ok((plan, stats))
     });
-    let db = Database::open(db_root, Some(&key.part))?;
-    let (plan, sources) = match before {
+    let (db, hashes) = std::thread::scope(|scope| {
+        let hashes = before.as_ref().ok().map(|(_, stats)| {
+            scope.spawn(move || -> io::Result<Vec<Option<Hash>>> {
+                stats
+                    .iter()
+                    .map(|s| match s.kind {
+                        SourceKind::Content => {
+                            std::fs::read(db_root.join(&s.path)).map(|d| Some(format::hash(&d)))
+                        }
+                        SourceKind::Absent | SourceKind::Present => Ok(None),
+                    })
+                    .collect()
+            })
+        });
+        let db = Database::open(db_root, Some(&key.part));
+        let hashes = hashes.map(|h| {
+            h.join()
+                .unwrap_or_else(|_| Err(io::Error::other("hashing thread panicked")))
+        });
+        (db, hashes)
+    });
+    let db = db?;
+    let (plan, mut sources) = match before {
         Ok(x) => x,
         Err(e) => return Ok((db, Err(format!("cannot fingerprint the sources: {e}")))),
     };
     let result = (|| {
+        let hashes = hashes
+            .ok_or_else(|| "the sources were not hashed".to_owned())?
+            .map_err(|e| format!("cannot hash the sources: {e}"))?;
+        for (source, hash) in sources.iter_mut().zip(hashes) {
+            source.hash = hash;
+        }
         let after = Plan::new(db_root, &key.part).map_err(|e| e.to_string())?;
         let after_sources = after
             .fingerprint(db_root, false)
@@ -692,6 +720,7 @@ fn build_from_text(
         {
             return Err("the database changed while it was loaded".to_owned());
         }
+        sources::drop_racy(&mut sources, SystemTime::now());
         let info = CacheInfo {
             format_version: FORMAT_VERSION,
             loader_fingerprint: LOADER_FINGERPRINT.to_owned(),
