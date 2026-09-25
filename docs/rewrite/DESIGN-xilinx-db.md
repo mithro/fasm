@@ -2664,6 +2664,16 @@ binary `uray-bitread` (same flags plus `-E`, `Flavor::Prjuray`);
    UltraScale+) all pass `verifyECC`; bit -> frames -> `xcframes2bit`
    gives the same frames back, not the same bytes (Vivado's packet
    sequences differ from the tools').
+6. An `xcu(p)series` `part.yaml` whose values do not fit the frame
+   address fields (a row key >= 64, a column >= 1024, an UltraScale+
+   `frame_count` > 256) is accepted by prjuray-tools: with
+   `frame_count: 300` `xcframes2bit` writes a bitstream and exits 0; with
+   row key 64 or column 1024 `addMissingFrames` loops forever (the masked
+   address is found valid in row 0 again; timed out at 600 s in the
+   review). `Part::new` rejects such parts (`Part file X not found or
+   invalid`, exit code 1); the hang is deliberately not reproduced
+   (`COMPAT.md`). Series7 is unaffected (prjxray also rejects
+   `frame_count: 200`).
 
 **Tests.** Unit tests: the UltraScale(+) ECC (literal port, the
 `calculate_us_ecc` comment example, real Vivado frames, `is_ecc_bit`),
