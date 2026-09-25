@@ -101,8 +101,9 @@ pub use db::{
 };
 pub use error::DbError;
 pub use fasm2frames::{
-    dump_frames_sparse, dump_frames_sparse_halfwords, fasm2frames, find_pudc_b, read_roi_design,
-    uray_fasm2frames, write_bits, write_frm_halfwords, Fasm2FramesOptions, RoiDesign,
+    dump_frames_sparse, dump_frames_sparse_halfwords, fasm2frames, fasm2frames_from, find_pudc_b,
+    propagate_stepdown, read_roi_design, uray_fasm2frames, uray_fasm2frames_from, write_bits,
+    write_frm_halfwords, Fasm2FramesOptions, FasmInput, RoiDesign,
 };
 pub use frames::{FrameDifference, Frames, FrmError, FrmErrorKind};
 pub use part::{read_package_pins, BanksTilesRegistry, ConfigBus, ConfigRow, PackagePin, Part};

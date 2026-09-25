@@ -49,6 +49,28 @@ pub enum fasm_status {
     /// Formatting or merging a model failed (for example conflicting bits
     /// in `fasm_file_merge_and_sort`).
     FASM_ERR_OUTPUT = 6,
+    /// A Xilinx database cannot be opened: a missing or malformed file, an
+    /// unknown part, not a prjxray-db / prjuray-db family directory, a
+    /// part file that cannot be used, a part without a frame tree
+    /// (`fasm_xilinx_*`).
+    FASM_ERR_DB = 7,
+    /// FASM features that are not in the database
+    /// (`prjxray.fasm_assembler.FasmLookupError`; the message has one line
+    /// per missing feature bit).
+    FASM_ERR_LOOKUP = 8,
+    /// Two FASM lines want a different value for one bit
+    /// (`prjxray.fasm_assembler.FasmInconsistentBits`).
+    FASM_ERR_INCONSISTENT_BITS = 9,
+    /// Any other error of the Xilinx assembler: an unknown tile or tile type
+    /// (`KeyError`), a malformed ROI `design.json`, ... (`fasm_error_kind`
+    /// names the exception of the reference tools).
+    FASM_ERR_ASSEMBLER = 10,
+    /// A bitstream cannot be written or read: a part of another
+    /// architecture than the format's, frames of another size, data
+    /// without a sync word, an IDCODE that is not the part's.
+    FASM_ERR_BITSTREAM = 11,
+    /// A number of a `.frm` file does not parse.
+    FASM_ERR_FRM = 12,
 }
 
 /// Details of a failed call: status, message and (for parse errors) the
@@ -68,6 +90,9 @@ pub(crate) struct CapiError {
     message: CString,
     line: usize,
     column: usize,
+    /// The name of the exception the reference Python tools raise
+    /// (`fasm_error_kind`), for the errors of the Xilinx functions.
+    kind: Option<CString>,
 }
 
 impl CapiError {
@@ -81,7 +106,22 @@ impl CapiError {
             message: CString::new(message).unwrap_or_default(),
             line: 0,
             column: 0,
+            kind: None,
         }
+    }
+
+    /// Sets the name of the reference tools' exception
+    /// (`fasm_error_kind`).
+    pub(crate) fn with_kind(mut self, kind: &str) -> Self {
+        self.kind = CString::new(kind.replace('\0', "")).ok();
+        self
+    }
+
+    /// Sets the position (1 based line, 0 based column).
+    pub(crate) fn with_position(mut self, line: usize, column: usize) -> Self {
+        self.line = line;
+        self.column = column;
+        self
     }
 
     /// A [`fasm_status::FASM_ERR_INVALID_ARG`] error.
@@ -209,6 +249,33 @@ pub unsafe extern "C" fn fasm_error_column(error: *const fasm_error) -> usize {
     })
 }
 
+/// Returns the kind of `error`: for the errors of the `fasm_xilinx_*`
+/// functions, the name of the exception the reference Python tools
+/// (prjxray, f4pga-xc-fasm) raise in the same situation, which the
+/// command line tools print before the message
+/// (`prjxray.fasm_assembler.FasmLookupError`, `KeyError`,
+/// `FileNotFoundError`, `Exception` for a parse error, ...); for other
+/// errors, `fasm_status_string` of its status. NUL terminated, owned by
+/// `error` (valid until `fasm_error_free`); an empty string for a `NULL`
+/// `error`.
+///
+/// # Safety
+///
+/// `error` must be `NULL` or a live `fasm_error` from this library.
+#[no_mangle]
+pub unsafe extern "C" fn fasm_error_kind(error: *const fasm_error) -> *const c_char {
+    guard(c"".as_ptr(), || {
+        // SAFETY: forwarded from the caller.
+        match unsafe { inner(error) } {
+            None => c"".as_ptr(),
+            Some(e) => match &e.kind {
+                Some(kind) => kind.as_ptr(),
+                None => fasm_status_string(e.status as c_int),
+            },
+        }
+    })
+}
+
 /// Frees `error`. `NULL` is accepted (no-op).
 ///
 /// # Safety
@@ -243,6 +310,12 @@ pub extern "C" fn fasm_status_string(status: c_int) -> *const c_char {
         4 => c"invalid UTF-8",
         5 => c"internal error (panic)",
         6 => c"output error",
+        7 => c"database error",
+        8 => c"feature not in the database",
+        9 => c"inconsistent bits",
+        10 => c"assembler error",
+        11 => c"bitstream error",
+        12 => c"frm file error",
         _ => c"unknown status",
     };
     s.as_ptr()

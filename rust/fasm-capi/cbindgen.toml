@@ -93,3 +93,6 @@ parse_deps = false
 [export]
 # Only the C API; the prefix is already part of every Rust name.
 item_types = ["enums", "structs", "unions", "typedefs", "opaque", "functions", "constants"]
+# Used through `int32_t` fields and arguments (so that an out of range value
+# from C is an error, not undefined behaviour), not by name.
+include = ["fasm_xilinx_bitstream_format"]

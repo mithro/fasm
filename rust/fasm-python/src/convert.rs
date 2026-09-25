@@ -113,7 +113,7 @@ impl PyModel {
     }
 
     /// Converts a [`SetFasmFeature`] into a `fasm.model.SetFasmFeature`.
-    fn set_feature<'py>(
+    pub(crate) fn set_feature<'py>(
         &self,
         py: Python<'py>,
         set_feature: &SetFasmFeature,

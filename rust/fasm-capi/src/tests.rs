@@ -147,7 +147,13 @@ fn status_strings() {
         (4, "invalid UTF-8"),
         (5, "internal error (panic)"),
         (6, "output error"),
-        (7, "unknown status"),
+        (7, "database error"),
+        (8, "feature not in the database"),
+        (9, "inconsistent bits"),
+        (10, "assembler error"),
+        (11, "bitstream error"),
+        (12, "frm file error"),
+        (13, "unknown status"),
         (-1, "unknown status"),
     ] {
         // SAFETY: static NUL terminated string.
@@ -859,4 +865,102 @@ fn struct_layout() {
     );
     assert_eq!(size_of::<fasm_status>(), 4);
     assert_eq!(size_of::<fasm_value_format>(), 4);
+}
+
+/// The `fasm_xilinx_*` functions against the `fasm-xilinx` crate itself
+/// (file based: not under Miri). The C and C++ programs of `tests/c` and
+/// `tests/cpp` also compare them with the command line tools.
+#[cfg(not(miri))]
+mod xilinx {
+    use super::*;
+
+    fn cstr(p: std::path::PathBuf) -> CString {
+        CString::new(p.to_str().unwrap()).unwrap()
+    }
+
+    fn open(root: &str, part: &CStr) -> *mut fasm_xilinx_database {
+        let root = cstr(repo_path(root));
+        let mut db = ptr::null_mut();
+        // SAFETY: valid pointers.
+        let status = unsafe {
+            fasm_xilinx_database_open(root.as_ptr(), part.as_ptr(), &mut db, ptr::null_mut())
+        };
+        assert_eq!(status, fasm_status::FASM_OK);
+        db
+    }
+
+    #[test]
+    fn fasm2frames_matches_the_crate() {
+        let db = open("rust/fasm-xilinx/testdata/mini-db", c"xc7");
+        let fasm = repo_path("tests/corpus/f4pga-xc-fasm/lut_int.fasm");
+        let rust_db = fasm_xilinx::Database::open(
+            &repo_path("rust/fasm-xilinx/testdata/mini-db"),
+            Some("xc7"),
+        )
+        .unwrap();
+        let expected = fasm_xilinx::fasm2frames(&rust_db, &fasm, &Default::default(), &mut |_| {})
+            .unwrap()
+            .to_frm_string();
+        let path = cstr(fasm);
+        let mut frames = ptr::null_mut();
+        let mut text = ptr::null_mut();
+        // SAFETY: valid pointers; every object is freed once.
+        unsafe {
+            let status = fasm_xilinx_fasm2frames_file(
+                db,
+                path.as_ptr(),
+                ptr::null(),
+                &mut frames,
+                ptr::null_mut(),
+            );
+            assert_eq!(status, fasm_status::FASM_OK);
+            let status = fasm_xilinx_frames_to_frm(frames, &mut text, ptr::null_mut());
+            assert_eq!(status, fasm_status::FASM_OK);
+            assert_eq!(take_string(text), expected);
+            fasm_xilinx_frames_free(frames);
+            fasm_xilinx_database_free(db);
+        }
+    }
+
+    #[test]
+    fn errors_have_the_reference_kind() {
+        let db = open("rust/fasm-xilinx/testdata/mini-db", c"xc7");
+        let mut frames = ptr::null_mut();
+        let mut err = ptr::null_mut();
+        let text = b"CLBLM_L_X10Y102.SLICEM_X0.NOPE\n";
+        // SAFETY: valid pointers; every object is freed once.
+        unsafe {
+            let status = fasm_xilinx_fasm2frames_string(
+                db,
+                text.as_ptr().cast::<c_char>(),
+                text.len(),
+                ptr::null(),
+                &mut frames,
+                &mut err,
+            );
+            assert_eq!(status, fasm_status::FASM_ERR_LOOKUP);
+            assert!(frames.is_null());
+            assert_eq!(
+                CStr::from_ptr(fasm_error_kind(err)),
+                c"prjxray.fasm_assembler.FasmLookupError"
+            );
+            fasm_error_free(err);
+            // The kind of a core error is its status string.
+            let mut file = ptr::null_mut();
+            let mut err = ptr::null_mut();
+            fasm_parse_string(c"a b".as_ptr(), 3, &mut file, &mut err);
+            assert!(file.is_null());
+            assert_eq!(CStr::from_ptr(fasm_error_kind(err)), c"parse error");
+            fasm_error_free(err);
+            fasm_xilinx_database_free(db);
+        }
+    }
+
+    #[test]
+    fn public_struct_layout() {
+        use std::mem::{offset_of, size_of};
+        assert_eq!(size_of::<fasm_xilinx_bit>(), 16);
+        assert_eq!(offset_of!(fasm_xilinx_feature_info, offset), 16);
+        assert_eq!(size_of::<fasm_xilinx_architecture>(), 4);
+    }
 }

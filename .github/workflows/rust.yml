@@ -38,6 +38,10 @@ jobs:
         run: cargo fmt --all --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # The parser-only extension module (without the `xilinx` feature,
+      # docs/rewrite/DESIGN-python.md) must keep building.
+      - name: cargo clippy -p fasm-python --no-default-features
+        run: cargo clippy -p fasm-python --no-default-features --all-targets -- -D warnings
 
   test:
     name: test (${{ matrix.os }})
@@ -62,6 +66,27 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps --workspace
+
+  # The C API and C++ wrapper (rust/fasm-capi, include/fasm/): the header
+  # is what cbindgen generates, and the C/C++ test programs (including the
+  # fasm_xilinx_* ones, compared with the fasm-cli tools on the test
+  # databases of rust/fasm-xilinx/testdata; no database is downloaded)
+  # pass, under valgrind too.
+  capi:
+    name: C API (header, C/C++ tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cmake, valgrind, clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake valgrind clang
+      - name: Install cbindgen
+        run: cargo install cbindgen --locked
+      - name: make capi-header-check capi-test
+        run: make capi-header-check capi-test
 
   msrv:
     name: msrv (1.88.0)

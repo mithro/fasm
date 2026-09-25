@@ -38,6 +38,10 @@
 //!   original ANTLR based parser's exception), with `line` and `column`
 //!   attributes.
 //!
+//! * with the `xilinx` cargo feature (on by default), the `xilinx`
+//!   submodule (`fasm._fasm_rs.xilinx`, see `src/xilinx/mod.rs`): the
+//!   bindings of the `fasm-xilinx` crate behind the `fasm.xilinx` package.
+//!
 //! Parsing and formatting run with the GIL released
 //! ([`Python::detach`]). See `docs/rewrite/DESIGN-python.md`.
 //!
@@ -55,6 +59,8 @@ use pyo3::types::PyList;
 mod convert;
 mod merge;
 mod output;
+#[cfg(feature = "xilinx")]
+mod xilinx;
 
 create_exception!(
     fasm.parser.rust,
@@ -199,5 +205,11 @@ fn _fasm_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(merge_and_sort, m)?)?;
     m.add("FasmParseError", m.py().get_type::<FasmParseError>())?;
     m.add("__version__", fasm::VERSION)?;
+    #[cfg(feature = "xilinx")]
+    {
+        let xilinx = PyModule::new(m.py(), "xilinx")?;
+        xilinx::register(&xilinx)?;
+        m.add_submodule(&xilinx)?;
+    }
     Ok(())
 }

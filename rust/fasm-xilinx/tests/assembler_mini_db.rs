@@ -25,7 +25,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use fasm_xilinx::{
-    fasm2frames, AssemblerError, Database, Fasm2FramesOptions, FasmAssembler, Frames,
+    fasm2frames, fasm2frames_from, propagate_stepdown, AssemblerError, Database,
+    Fasm2FramesOptions, FasmAssembler, FasmInput, Frames,
 };
 
 use common::{repo_root, testdata};
@@ -161,6 +162,45 @@ fn frm_matches_oracle() {
             assert!(back.diff(&frames).is_empty());
         }
     }
+}
+
+/// `fasm2frames_from` with the FASM text in memory, and an assembler
+/// sharing its database (`new_shared`) plus `propagate_stepdown`, give
+/// the same frames as `fasm2frames` on the file.
+#[test]
+fn bytes_input_and_shared_assembler() {
+    let db = std::sync::Arc::new(open());
+    for fixture in FIXTURES {
+        let path = corpus(fixture);
+        let text = std::fs::read(&path).unwrap();
+        for sparse in [false, true] {
+            let options = Fasm2FramesOptions {
+                sparse,
+                ..Default::default()
+            };
+            let (expected, _) = run_file(&db, &path, &options);
+            let expected = expected.unwrap();
+            let from_bytes =
+                fasm2frames_from(&db, FasmInput::Bytes(&text), &options, &mut |_| {}).unwrap();
+            assert!(from_bytes == expected, "{fixture}");
+
+            let mut assembler = FasmAssembler::new_shared(std::sync::Arc::clone(&db)).unwrap();
+            assembler.parse_fasm_bytes(&text, Vec::new()).unwrap();
+            propagate_stepdown(&db, &mut assembler).unwrap();
+            assert!(
+                assembler.get_frames(sparse).unwrap() == expected,
+                "{fixture}"
+            );
+        }
+    }
+    let err = fasm2frames_from(
+        &db,
+        FasmInput::Bytes(b"NOPE_X0Y0.A\n"),
+        &Default::default(),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert_eq!(err.traceback_line(), "KeyError: 'NOPE_X0Y0'");
 }
 
 // The cases of f4pga-xc-fasm's tests/test_fasm2frames.py.
@@ -438,14 +478,13 @@ fn stepdown() {
 /// can abort.
 #[test]
 fn feature_callback() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     let db = open();
-    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
     let mut assembler = FasmAssembler::new(&db).unwrap();
-    let log = Rc::clone(&seen);
+    let log = Arc::clone(&seen);
     assembler.set_feature_callback(Box::new(move |f| {
-        log.borrow_mut().push(f.feature.to_string());
+        log.lock().unwrap().push(f.feature.to_string());
         if f.feature.to_string().starts_with("STOP") {
             return Err(AssemblerError::KeyError("stop".to_owned()));
         }
@@ -459,7 +498,7 @@ fn feature_callback() {
         .unwrap_err();
     assert_eq!(e.traceback_line(), "KeyError: 'stop'");
     assert_eq!(
-        *seen.borrow(),
+        *seen.lock().unwrap(),
         ["A_X0Y0.B", "CLBLM_L_X10Y102.SLICEM_X0.A5FF.ZINI", "STOP.X"]
     );
 }

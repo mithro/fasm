@@ -15,8 +15,16 @@ path = "src/lib.rs"
 # `cargo test` build the (pure Rust) unit tests.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The `fasm._fasm_rs.xilinx` submodule behind the `fasm.xilinx` package
+# (bindings for the fasm-xilinx crate, docs/rewrite/DESIGN-python.md). On
+# by default; `--no-default-features` builds the parser-only module.
+default = ["xilinx"]
+xilinx = ["dep:fasm-xilinx"]
+
 [dependencies]
 fasm = { path = "../fasm" }
+fasm-xilinx = { path = "../fasm-xilinx", optional = true }
 # `abi3-py39`: one wheel (`cp39-abi3`) for every CPython >= 3.9, see
 # docs/rewrite/DESIGN-python.md. The deprecated `extension-module` feature
 # is not used: maturin (>= 1.9.4) sets `PYO3_BUILD_EXTENSION_MODULE` when it

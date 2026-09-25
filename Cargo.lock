@@ -79,6 +79,7 @@ name = "fasm-capi"
 version = "0.1.0"
 dependencies = [
  "fasm",
+ "fasm-xilinx",
 ]
 
 [[package]]
@@ -95,6 +96,7 @@ name = "fasm-python"
 version = "0.1.0"
 dependencies = [
  "fasm",
+ "fasm-xilinx",
  "pyo3",
 ]
 
