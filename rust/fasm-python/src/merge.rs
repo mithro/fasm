@@ -157,7 +157,8 @@ fn output_sorted_lines_py<'py>(
         Some(sort_key) => sort_group_ids_by_key(sort_key, order)?,
         None => {
             let mut ids = order;
-            ids.sort();
+            // The order of `ids.sort()`, each id resolved once.
+            fasm::idstring::sort_by_string(&mut ids, |&id| id);
             ids
         }
     };
@@ -165,7 +166,8 @@ fn output_sorted_lines_py<'py>(
     let mut output_groups: Vec<Vec<FasmLine>> = Vec::new();
     for id in sorted_ids {
         let mut member_groups = feature_groups.remove(&id).unwrap_or_default();
-        member_groups.sort_by_key(|group| feature_group_key(group));
+        // Stable, like `sort_by_key`, with each name resolved once.
+        fasm::idstring::sort_by_string(&mut member_groups, |group| feature_group_key(group));
 
         let mut flattened: Vec<FasmLine> = Vec::new();
         for group in member_groups {

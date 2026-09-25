@@ -71,6 +71,52 @@ pub use resolved::Resolved;
 /// The process wide interner used by all [`IdString`] methods.
 pub static GLOBAL: Interner = Interner::new();
 
+/// Sorts `items` by the string of `key(item)` (a [`GLOBAL`] handle), like
+/// `items.sort_by_key(key)` (stable, and `IdString`'s `Ord` is string
+/// order) but about twice as fast for many items: every key is resolved
+/// once, into one buffer, and the sort compares those bytes instead of
+/// reading the interner tables on every comparison.
+///
+/// ```
+/// # use fasm::idstring::{sort_by_string, IdString};
+/// let mut pairs = vec![("B.X", 1), ("A.Y", 2), ("A.X", 3), ("A.Y", 4)];
+/// sort_by_string(&mut pairs, |&(name, _)| IdString::new(name));
+/// assert_eq!(pairs, [("A.X", 3), ("A.Y", 2), ("A.Y", 4), ("B.X", 1)]);
+/// ```
+///
+/// # Panics
+///
+/// Like `Ord`, panics for a handle not created by [`GLOBAL`].
+pub fn sort_by_string<T>(items: &mut Vec<T>, key: impl Fn(&T) -> IdString) {
+    let mut text = String::new();
+    // (start, end, index) of every key's text; 32 bit offsets keep the
+    // entries small (see the fallback below).
+    let mut keyed: Vec<(u32, u32, u32)> = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        let start = text.len();
+        key(item).with_str(|s| text.push_str(s));
+        match (
+            u32::try_from(start),
+            u32::try_from(text.len()),
+            u32::try_from(index),
+        ) {
+            (Ok(start), Ok(end), Ok(index)) => keyed.push((start, end, index)),
+            // More than 4 GiB of text: sort with `Ord` (same order).
+            _ => return items.sort_by_key(|item| key(item)),
+        }
+    }
+    let bytes = text.as_bytes();
+    let range = |&(start, end, _): &(u32, u32, u32)| &bytes[start as usize..end as usize];
+    // The index breaks ties: stable.
+    keyed.sort_unstable_by(|a, b| range(a).cmp(range(b)).then(a.2.cmp(&b.2)));
+    let mut slots: Vec<Option<T>> = items.drain(..).map(Some).collect();
+    items.extend(
+        keyed
+            .iter()
+            .filter_map(|&(_, _, index)| slots.get_mut(index as usize).and_then(Option::take)),
+    );
+}
+
 /// An interned string, stored as a single 8 byte integer.
 ///
 /// Created with [`IdString::new`] (or `From<&str>` / `FromStr`) in the
@@ -133,6 +179,14 @@ impl IdString {
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, Utf8Error> {
         GLOBAL.intern_bytes(bytes)
+    }
+
+    /// [`IdString::from_bytes`] for a name whose first two `.` are at
+    /// `dots[0]` and `dots[1]` (`usize::MAX` where there is none); see
+    /// [`Interner::intern_split`].
+    #[inline]
+    pub(crate) fn from_split(bytes: &[u8], dots: [usize; 2]) -> Result<Self, Utf8Error> {
+        GLOBAL.intern_split(bytes, dots)
     }
 
     /// Returns the handle `s` would have in [`GLOBAL`], if it can be

@@ -143,6 +143,23 @@ fn split_levels(s: &[u8]) -> ([&[u8]; LEVELS], usize) {
     ([head, &rest[..second], &rest[second + 1..]], 3)
 }
 
+/// The level pieces of `s` given the positions of its first two `.`
+/// (`usize::MAX` where there is none), like [`split_levels`].
+#[inline]
+fn split_at_dots(s: &[u8], dots: [usize; 2]) -> ([&[u8]; LEVELS], usize) {
+    let Some((head, rest)) = s.split_at_checked(dots[0]) else {
+        return ([s, &[], &[]], 1);
+    };
+    let rest = rest.get(1..).unwrap_or_default();
+    match dots[1]
+        .checked_sub(dots[0] + 1)
+        .and_then(|at| rest.split_at_checked(at))
+    {
+        Some((middle, last)) => ([head, middle, last.get(1..).unwrap_or_default()], 3),
+        None => ([head, rest, &[]], 2),
+    }
+}
+
 /// Hash of a level piece (or of a whole overflowed string) under the
 /// interner's seed.
 ///
@@ -206,7 +223,28 @@ impl Interner {
     /// so the result is the canonical handle.
     #[inline]
     fn find_levels(&self, state: &RandomState, s: &[u8]) -> Option<IdString> {
+        // The body of `find_pieces`, repeated: calling it from here made
+        // the hit path of `intern` measurably slower (T8.2).
         let (pieces, count) = split_levels(s);
+        let first = pieces[0];
+        let pos0 = self.levels[0].find(hash(state, first), first)?;
+        let mut fields = [0u32; LEVELS - 1];
+        for (level, field) in fields.iter_mut().enumerate().take(count - 1) {
+            let piece = pieces[level + 1];
+            *field = self.levels[level + 1].find(hash(state, piece), piece)? + 1;
+        }
+        Some(IdString::from_raw(encode_levels(pos0, fields)))
+    }
+
+    /// [`Interner::find_levels`] for a string already split into its
+    /// `count` level pieces.
+    #[inline]
+    fn find_pieces(
+        &self,
+        state: &RandomState,
+        pieces: [&[u8]; LEVELS],
+        count: usize,
+    ) -> Option<IdString> {
         let first = pieces[0];
         let pos0 = self.levels[0].find(hash(state, first), first)?;
         let mut fields = [0u32; LEVELS - 1];
@@ -272,6 +310,33 @@ impl Interner {
     pub fn intern_bytes(&self, bytes: &[u8]) -> Result<IdString, Utf8Error> {
         let state = self.hasher();
         if let Some(id) = self.find_levels(state, bytes) {
+            return Ok(id);
+        }
+        let s = std::str::from_utf8(bytes)?;
+        Ok(self.intern_missing(state, s))
+    }
+
+    /// [`Interner::intern_bytes`] for a name whose first two `.` are known
+    /// to be at `dots[0]` and `dots[1]` (`usize::MAX` where there is no
+    /// such `.`), as found by a scanner that has just read the name: skips
+    /// the search for them.
+    ///
+    /// The result is the same as `intern_bytes(bytes)` (a debug assertion
+    /// checks the positions).
+    ///
+    /// # Errors
+    ///
+    /// Returns the UTF-8 error if `bytes` is not valid UTF-8.
+    #[inline]
+    pub(crate) fn intern_split(
+        &self,
+        bytes: &[u8],
+        dots: [usize; 2],
+    ) -> Result<IdString, Utf8Error> {
+        let (pieces, count) = split_at_dots(bytes, dots);
+        debug_assert_eq!((pieces, count), split_levels(bytes));
+        let state = self.hasher();
+        if let Some(id) = self.find_pieces(state, pieces, count) {
             return Ok(id);
         }
         let s = std::str::from_utf8(bytes)?;

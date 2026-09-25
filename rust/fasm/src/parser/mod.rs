@@ -65,6 +65,7 @@ mod line;
 mod number;
 
 use std::path::Path;
+use std::sync::OnceLock;
 
 pub use error::{ParseError, ParseErrorKind};
 
@@ -80,7 +81,7 @@ const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
 ///
 /// Returns the first [`ParseError`] of the input.
 pub fn parse_fasm_string(s: &str) -> Result<Vec<FasmLine>, ParseError> {
-    Lines::with_text(s.as_bytes(), Some(s), 1).collect()
+    Lines::with_text(s.as_bytes(), OnceLock::from(Some(s)), 1).collect()
 }
 
 /// Parses FASM text given as bytes. Stops at the first error.
@@ -161,9 +162,12 @@ pub fn parse_line(bytes: &[u8], line_no: usize) -> Result<Option<FasmLine>, Pars
 #[derive(Clone, Debug)]
 pub struct Lines<'a> {
     buf: &'a [u8],
-    /// `buf` as a `str`, if it is valid UTF-8 (validated once up front,
-    /// instead of every feature name, comment and annotation).
-    text: Option<&'a str>,
+    /// `buf` as a `str`, if it is valid UTF-8: validated once, when the
+    /// first comment or annotation needs text (instead of validating
+    /// every comment and annotation, or the input of files that have
+    /// none: feature names are ASCII by grammar and are interned from
+    /// bytes).
+    text: OnceLock<Option<&'a str>>,
     /// Offset of the next logical line.
     pos: usize,
     /// Line number (ANTLR style: counting `\n` only) of `line_start`.
@@ -185,11 +189,11 @@ impl<'a> Lines<'a> {
     /// byte order mark at the start of line 1 is skipped (the ANTLR input
     /// stream does that too); columns then count from after it.
     fn new(buf: &'a [u8], line_no: usize) -> Self {
-        Self::with_text(buf, std::str::from_utf8(buf).ok(), line_no)
+        Self::with_text(buf, OnceLock::new(), line_no)
     }
 
     /// [`Lines::new`] with `buf` already known as a `str` (or not UTF-8).
-    fn with_text(buf: &'a [u8], text: Option<&'a str>, line_no: usize) -> Self {
+    fn with_text(buf: &'a [u8], text: OnceLock<Option<&'a str>>, line_no: usize) -> Self {
         let start = if line_no == 1 && buf.starts_with(UTF8_BOM) {
             UTF8_BOM.len()
         } else {
@@ -264,7 +268,7 @@ impl Iterator for Lines<'_> {
             let start = self.pos;
             let line_no = self.line_no;
             let first_line = self.first_line == Some(start);
-            let outcome = match parse_logical_line(self.buf, self.text, start, first_line) {
+            let outcome = match parse_logical_line(self.buf, &self.text, start, first_line) {
                 Ok(outcome) => outcome,
                 Err(raw) => {
                     self.done = true;

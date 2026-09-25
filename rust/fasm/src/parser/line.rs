@@ -39,6 +39,8 @@
 //! Annotation values may contain line terminators (both original parsers
 //! accept that), so a logical line can span several physical lines.
 
+use std::sync::OnceLock;
+
 use super::error::ParseErrorKind;
 use super::number;
 use crate::idstring::IdString;
@@ -99,6 +101,98 @@ const fn build_class_table() -> [u8; 256] {
     t
 }
 
+/// Bytes of a word, as bit 7 of each byte.
+const HIGH: u64 = u64::from_ne_bytes([0x80; 8]);
+/// Low 7 bits of each byte of a word.
+const LOW7: u64 = u64::from_ne_bytes([0x7f; 8]);
+
+/// A word with every byte equal to `b`.
+const fn splat(b: u8) -> u64 {
+    u64::from_ne_bytes([b; 8])
+}
+
+/// Bit 7 of each byte of the result is set where the byte of `y` (whose
+/// bytes are all below 0x80) is at least `c` (`c` at most 0x80).
+#[inline(always)]
+fn at_least(y: u64, c: u8) -> u64 {
+    // No byte sum exceeds 0xff: nothing carries into the next byte.
+    y.wrapping_add(splat(0x80 - c)) & HIGH
+}
+
+/// Classifies the eight bytes of `word`: returns the masks (bit 7 of each
+/// byte) of the bytes that continue an identifier (`[0-9a-zA-Z_]`) and of
+/// the `.` bytes. Exact for every byte value (bytes from 0x80 on are in
+/// neither class).
+#[inline(always)]
+fn classify(word: [u8; 8]) -> (u64, u64) {
+    let x = u64::from_le_bytes(word);
+    let ascii = !x & HIGH;
+    let y = x & LOW7;
+    // Letters of both cases: `| 0x20` maps 'A'..='Z' onto 'a'..='z' (and
+    // nothing else onto them).
+    let folded = y | splat(0x20);
+    let alpha = at_least(folded, b'a') & !at_least(folded, b'z' + 1);
+    let digit = at_least(y, b'0') & !at_least(y, b'9' + 1);
+    // Equal bytes give 0 (no bit 7 after adding 0x7f); others do not.
+    let equal = |c: u8| !(y ^ splat(c)).wrapping_add(LOW7) & HIGH;
+    let ident = (alpha | digit | equal(b'_')) & ascii;
+    let dot = equal(b'.') & ascii;
+    (ident, dot)
+}
+
+/// Scans the feature name `IDENT ('.' IDENT)*` starting at the identifier
+/// start `buf[start]`. Returns the offset after the name and the offsets
+/// of its first two `.` relative to `start` (`usize::MAX` where there is
+/// none).
+///
+/// Eight bytes at a time (see [`classify`]); the last few bytes of the
+/// buffer are scanned one by one.
+#[inline]
+fn scan_feature(buf: &[u8], start: usize) -> (usize, [usize; 2]) {
+    let mut dots = [usize::MAX; 2];
+    let mut record = |dot: usize| {
+        if dots[0] == usize::MAX {
+            dots[0] = dot - start;
+        } else if dots[1] == usize::MAX {
+            dots[1] = dot - start;
+        }
+    };
+    // A `.` continues the name only when an identifier start follows.
+    let continues = |dot: usize| {
+        buf.get(dot + 1)
+            .is_some_and(|&b| CLASS[usize::from(b)] & IDENT_START != 0)
+    };
+    let mut pos = start + 1;
+    while let Some(word) = buf.get(pos..).and_then(<[u8]>::first_chunk::<8>) {
+        let (ident, dot) = classify(*word);
+        let stop = !(ident | dot) & HIGH;
+        // The dots before the first byte that is neither.
+        let mut before = dot & stop.wrapping_sub(1) & !stop;
+        while before != 0 {
+            let at = pos + (before.trailing_zeros() / 8) as usize;
+            if !continues(at) {
+                return (at, dots);
+            }
+            record(at);
+            before &= before - 1;
+        }
+        if stop != 0 {
+            return (pos + (stop.trailing_zeros() / 8) as usize, dots);
+        }
+        pos += 8;
+    }
+    loop {
+        match buf.get(pos) {
+            Some(&b) if CLASS[usize::from(b)] & IDENT_CONT != 0 => pos += 1,
+            Some(b'.') if continues(pos) => {
+                record(pos);
+                pos += 1;
+            }
+            _ => return (pos, dots),
+        }
+    }
+}
+
 /// A parse error located by byte offset in the scanned buffer; converted
 /// to a line/column [`super::ParseError`] by the caller.
 #[derive(Debug)]
@@ -122,13 +216,13 @@ pub(super) struct LineOutcome {
 }
 
 /// Parses the logical line of `buf` starting at `start`. `text` is `buf`
-/// as a `str` if the whole buffer is valid UTF-8 (then text is sliced
-/// out of it without validating it again). `first_line` is `true` for the
-/// first line of a file (it only changes the position of some errors, see
-/// [`Scanner::unexpected_la`]).
+/// as a `str` if the whole buffer is valid UTF-8, computed on first use
+/// (then text is sliced out of it without validating it again).
+/// `first_line` is `true` for the first line of a file (it only changes
+/// the position of some errors, see [`Scanner::unexpected_la`]).
 pub(super) fn parse_logical_line<'a>(
     buf: &'a [u8],
-    text: Option<&'a str>,
+    text: &OnceLock<Option<&'a str>>,
     start: usize,
     first_line: bool,
 ) -> Result<LineOutcome, RawError> {
@@ -207,10 +301,10 @@ impl After {
     }
 }
 
-struct Scanner<'a> {
+struct Scanner<'a, 'b> {
     buf: &'a [u8],
-    /// `buf` as a `str`, if it is valid UTF-8.
-    text: Option<&'a str>,
+    /// `buf` as a `str`, if it is valid UTF-8 (validated on first use).
+    text: &'b OnceLock<Option<&'a str>>,
     pos: usize,
     newlines: usize,
     last_newline: Option<usize>,
@@ -223,7 +317,7 @@ struct Scanner<'a> {
     first_line: bool,
 }
 
-impl<'a> Scanner<'a> {
+impl<'a> Scanner<'a, '_> {
     /// Records a range error, reported at the end of the line unless a
     /// syntax error comes first (see [`Scanner::pending`]).
     fn defer(&mut self, error: RawError) {
@@ -387,7 +481,8 @@ impl<'a> Scanner<'a> {
     /// otherwise.
     #[inline]
     fn str(&self, base: usize, end: usize, what: &str) -> Result<&'a str, RawError> {
-        if let Some(s) = self.text.and_then(|t| t.get(base..end)) {
+        let text = self.text.get_or_init(|| std::str::from_utf8(self.buf).ok());
+        if let Some(s) = text.and_then(|t| t.get(base..end)) {
             return Ok(s);
         }
         match std::str::from_utf8(self.slice(base, end)) {
@@ -452,19 +547,17 @@ impl<'a> Scanner<'a> {
     /// identifier start.
     fn set_feature(&mut self) -> Result<(SetFasmFeature, After), RawError> {
         let feature_start = self.pos;
-        loop {
-            // At an identifier start.
-            self.pos += 1;
-            self.skip_class(IDENT_CONT);
-            if self.peek() == Some(b'.') && self.class_at(self.pos + 1) & IDENT_START != 0 {
-                self.pos += 1;
-            } else {
-                break;
-            }
-        }
-        // ASCII by construction, so never an error.
-        let name = self.str(feature_start, self.pos, "feature name")?;
-        let feature = IdString::new(name);
+        let (end, dots) = scan_feature(self.buf, feature_start);
+        self.pos = end;
+        // ASCII by construction (so valid UTF-8, and never an error), and
+        // split at the dots the scan found.
+        let feature = IdString::from_split(self.slice(feature_start, end), dots).map_err(|e| {
+            self.error(
+                feature_start + e.valid_up_to(),
+                ParseErrorKind::InvalidUtf8,
+                "feature name is not valid UTF-8",
+            )
+        })?;
         let mut after = After::Feature;
         self.skip_ws();
 
@@ -905,6 +998,98 @@ pub(super) fn describe(buf: &[u8], pos: usize) -> String {
             match valid.chars().next() {
                 Some(c) => format!("'{c}'"),
                 None => format!("byte 0x{b:02x}"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scan of the original byte loop.
+    fn scan_bytes(buf: &[u8], start: usize) -> (usize, [usize; 2]) {
+        let class_at = |p: usize| buf.get(p).map_or(0, |&b| CLASS[usize::from(b)]);
+        let mut dots = Vec::new();
+        let mut pos = start;
+        loop {
+            pos += 1;
+            while class_at(pos) & IDENT_CONT != 0 {
+                pos += 1;
+            }
+            if buf.get(pos) == Some(&b'.') && class_at(pos + 1) & IDENT_START != 0 {
+                dots.push(pos - start);
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        let dot = |i: usize| dots.get(i).copied().unwrap_or(usize::MAX);
+        (pos, [dot(0), dot(1)])
+    }
+
+    #[test]
+    fn classify_matches_the_class_table() {
+        for b in 0..=255u8 {
+            for at in 0..8 {
+                let mut word = [b'a'; 8];
+                word[at] = b;
+                let (ident, dot) = classify(word);
+                let bit = 1u64 << (8 * at + 7);
+                let class = CLASS[usize::from(b)];
+                assert_eq!(ident & bit != 0, class & IDENT_CONT != 0, "{b:#x} at {at}");
+                assert_eq!(dot & bit != 0, b == b'.', "{b:#x} at {at}");
+                // The other (identifier) bytes are unaffected.
+                assert_eq!(ident | bit, HIGH, "{b:#x} at {at}");
+            }
+        }
+    }
+
+    #[test]
+    fn scan_feature_matches_the_byte_loop() {
+        let alphabet: &[u8] = b"aZ09_..-[ =\xc3\xa9\x80\xff\n";
+        // Every name over a small alphabet up to 4 bytes, placed at every
+        // offset of a short buffer, and followed by every byte.
+        let mut names: Vec<Vec<u8>> = vec![Vec::new()];
+        for _ in 0..4 {
+            let longer: Vec<Vec<u8>> = names
+                .iter()
+                .flat_map(|n| alphabet.iter().map(move |&b| [n.as_slice(), &[b]].concat()))
+                .collect();
+            names.extend(longer);
+        }
+        names.sort();
+        names.dedup();
+        for name in &names {
+            for prefix in [0usize, 3, 7, 8] {
+                for suffix in [0usize, 1, 5, 9, 17] {
+                    let mut buf = vec![b'x'; prefix];
+                    buf.push(b'A');
+                    buf.extend_from_slice(name);
+                    buf.extend(std::iter::repeat_n(b'q', suffix));
+                    assert_eq!(
+                        scan_feature(&buf, prefix),
+                        scan_bytes(&buf, prefix),
+                        "{buf:?}"
+                    );
+                    buf.truncate(prefix + 1 + name.len());
+                    assert_eq!(
+                        scan_feature(&buf, prefix),
+                        scan_bytes(&buf, prefix),
+                        "{buf:?}"
+                    );
+                }
+            }
+        }
+        // Long names: dots in every word position.
+        let long = b"CLBLL_L_X12Y124.SLICEL_X0.BLUT.INIT[63:0] = 64'h0\nINT_L_X1Y2.A.B.C.D";
+        for start in 0..long.len() {
+            if CLASS[usize::from(long[start])] & IDENT_START != 0 {
+                assert_eq!(
+                    scan_feature(long, start),
+                    scan_bytes(long, start),
+                    "{start}"
+                );
             }
         }
     }

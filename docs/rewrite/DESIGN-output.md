@@ -242,3 +242,44 @@ builds the same `examples/many.fasm` model by hand (the `parser` module,
 T1.3, is a separate branch under review and was not available to this
 task) and compares `fasm_tuple_to_string`'s output against these files
 byte for byte, in both canonical and non-canonical mode.
+
+## T8.2: sorting and the CLI's `--canonical` output
+
+**Sorting resolves each name once.** `IdString`'s `Ord` reads the
+interner tables on every comparison (see DESIGN-idstring.md,
+*Ordering*). `MergeModel::output_sorted_lines` (and its copy in the
+Python binding, `rust/fasm-python/src/merge.rs`) therefore sort group ids
+and groups with `fasm::idstring::sort_by_string`, which resolves every
+name once into one buffer and sorts by those bytes: the same order, and
+stable like the `sort_by_key` it replaces for the groups (ties keep
+insertion order, as Python's `sorted` does), at about 0.56 times the
+cost per element. Tests compare the order with sorting the strings on
+random names and on every feature name in `examples/` and
+`tests/corpus/`.
+
+**`fasm --canonical` keeps 8 bytes per line** (`rust/fasm-cli/src/tool/
+canonical.rs`). The tool used to format every canonical line into one
+string, sort the line ranges by text and copy everything into a second
+string before printing it: 2.4 GiB for the 27.2 million lines of a 1
+million line file with 256 bit `INIT`s. It now records, per canonical
+line, an *entity* (feature name alone, or feature name followed by `[`)
+and an address; sorts the distinct entities by text; orders the lines
+by entity with a counting sort; sorts each entity's addresses by the
+text order of `digits]` (base 11 digits padded with 10, since `]` sorts
+after every digit); and formats the lines only while writing them, in
+64 KiB blocks. The module documentation proves this is the order of
+`sorted(set(lines))` whenever no feature name contains `[` (the parser
+never produces one; it is checked, and the tool then sorts formatted
+lines instead). Nothing is written before the whole file has been
+parsed and every `try_canonical_features` error has been raised, so
+error precedence and the "only `Error: ...` on an invalid file"
+behaviour are unchanged; once the parse succeeded only writing to stdout
+can fail, which is handled as before. The non canonical output is still
+rendered into one buffer while parsing (about the size of the input)
+and written after the parse: streaming it would require either a second
+parse or printing before a later syntax error is seen, which the
+original tool never does.
+
+`fasm_tuple_to_string(.., canonical=true)` (the library function behind
+the Python fast path) still formats and sorts `String`s; it has the same
+memory profile the CLI had, but its input is a model already in memory.
