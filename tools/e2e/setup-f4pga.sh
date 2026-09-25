@@ -52,11 +52,17 @@
 #                       xc7a100t_test (Arty A7-100T, Nexys4 DDR; 4.8 GiB),
 #                       xc7a200t_test (Nexys Video; 10.5 GiB).
 #   --remove-devices D  delete these installed devices (to make room).
-#   --big-files-dir DIR move the files of the installed devices larger
-#                       than 1 GiB (the rr_graph_*.rr_graph.real.bin routing
-#                       graphs) to DIR and leave a symlink (e.g. a tmpfs
-#                       like /dev/shm when the disk is short; they are
-#                       lost at reboot, rerun the script then).
+#   --big-files-dir DIR install the devices given with --devices into
+#                       DIR/<device> (arch/<device> is a symlink to it),
+#                       e.g. a tmpfs like /dev/shm when the disk is short
+#                       (almost all of a device is its VPR routing graph
+#                       rr_graph_*.rr_graph.real.bin). Only the directory
+#                       can be a symlink: VPR maps the graph with the
+#                       size of lstat() of its path, so a symlinked file
+#                       fails with "size_ 73 is not a multiple of
+#                       capnp::word". A tmpfs is lost at reboot: the
+#                       script reinstalls a device whose directory is
+#                       gone when it is run again.
 #   --force             reinstall the conda environment and the devices.
 #
 # Deviations from the documented procedure (docs/getting.rst), all
@@ -196,9 +202,9 @@ IFS=, read -r -a remove <<<"$REMOVE"
 for dev in "${remove[@]}"; do
   [[ -n "$dev" ]] || continue
   log "removing $dev"
-  for f in $(find "$share/arch/$dev" -type l 2>/dev/null); do
-    rm -f "$(readlink "$f")"
-  done
+  if [[ -L "$share/arch/$dev" ]]; then
+    rm -rf "$(readlink "$share/arch/$dev")"
+  fi
   rm -rf "$share/arch/$dev" "$ROOT/.arch-$dev-done"
 done
 
@@ -206,6 +212,9 @@ install_pkg() {
   local pkg="$1"
   local done="$ROOT/.arch-$pkg-done"
   if [[ $FORCE == 1 ]]; then rm -f "$done"; fi
+  if [[ $pkg != install-* && ! -e "$share/arch/$pkg" ]]; then
+    rm -f "$done"  # e.g. its --big-files-dir tmpfs was lost
+  fi
   [[ -f "$done" ]] && return 0
   if [[ -z "${ARCH_SHA256[$pkg]:-}" ]]; then
     log "unknown architecture definition package $pkg"
@@ -214,8 +223,17 @@ install_pkg() {
   local file="symbiflow-arch-defs-$pkg-$ARCH_HASH.tar.xz"
   download "$ARCH_BASE/$file" "$file" "${ARCH_SHA256[$pkg]}"
   log "extracting $file"
-  if [[ $pkg != install-* ]]; then rm -rf "$share/arch/$pkg"; fi
-  tar -xJf "$DL/$file" -C "$ROOT/$FAM"
+  if [[ $pkg != install-* ]]; then
+    if [[ -L "$share/arch/$pkg" ]]; then
+      rm -rf "$(readlink "$share/arch/$pkg")"
+    fi
+    rm -rf "$share/arch/$pkg"
+    if [[ -n "$BIG_DIR" ]]; then
+      mkdir -p "$BIG_DIR/$pkg" "$share/arch"
+      ln -s "$(cd "$BIG_DIR/$pkg" && pwd)" "$share/arch/$pkg"
+    fi
+  fi
+  tar -xJf "$DL/$file" -C "$ROOT/$FAM" --keep-directory-symlink
   rm -f "$DL/$file"
   touch "$done"
 }
@@ -225,24 +243,6 @@ IFS=, read -r -a devices <<<"$DEVICES"
 for dev in "${devices[@]}"; do
   [[ -n "$dev" ]] || continue
   install_pkg "$dev"
-done
-
-if [[ -n "$BIG_DIR" ]]; then
-  mkdir -p "$BIG_DIR"
-  for dev in "${devices[@]}"; do
-    find "$share/arch/$dev" -type f -size +1G | while read -r f; do
-      dst="$BIG_DIR/$dev.$(basename "$f")"
-      log "moving $f to $dst"
-      mv "$f" "$dst"
-      ln -s "$dst" "$f"
-    done
-  done
-fi
-# Symlinks whose target vanished (tmpfs after a reboot): reinstall.
-for dev in "${devices[@]}"; do
-  if find "$share/arch/$dev" -xtype l 2>/dev/null | grep -q .; then
-    log "$dev has dangling symlinks (big files dir lost?): rerun with --force"
-  fi
 done
 
 # --- 5. status.json ---------------------------------------------------------
