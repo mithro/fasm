@@ -103,9 +103,10 @@ def bit_fields(data):
     raise ValueError('no configuration data')
 
 
-def same_bit(a, b):
+def same_bit(a, b, any_time=False):
     """None if the .bit files `a` and `b` are identical but for the
-    path in the design field ("<path>;Generator=..."), else why not."""
+    path in the design field ("<path>;Generator=...") and, with
+    `any_time`, the date and time fields, else why not."""
     if a == b:
         return None
     try:
@@ -123,6 +124,8 @@ def same_bit(a, b):
         if key == 'a' and va and vb:
             va = va.split(b';', 1)[-1]
             vb = vb.split(b';', 1)[-1]
+        if any_time and key in ('c', 'd'):
+            continue
         if va != vb:
             return 'header field %s differs: %r vs %r' % (key, fa.get(key),
                                                           fb.get(key))
@@ -219,9 +222,10 @@ class Design:
         code, err, secs, o_frm, o_bit = xcfasm(self.flow('xcfasm'),
                                                self.flow_env())
         self.times['xcfasm flow'] = secs
-        if code != 0 or o_frm != frm:
+        if code != 0 or o_frm != frm or same_bit(bit, o_bit, True):
             self.problems.append('the flow\'s xcfasm rerun does not '
-                                 'reproduce top.frm (exit code %d)' % code)
+                                 'reproduce top.frm and top.bit (exit code '
+                                 '%d)' % code)
 
         # fasm2frames, both databases.
         for name, db in (('flow db', self.flow_db), ('pinned db',
