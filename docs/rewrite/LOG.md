@@ -988,3 +988,11 @@ what happened, branch/commit references, open issues.
   purpose. No Rust bug. Setup script, check driver, 147 e2e tests,
   layout JSONs and 5 FASM designs committed. Independent review (Opus)
   started.
+* T7.5 review (Opus): all runs reproduced (147 tests, layouts verified
+  with an independent walk, per-frame-CRC verdicts confirmed, FASM
+  plausibility vs DCP cells). REQUEST CHANGES: two doc headings deleted
+  by the edit (COMPAT C API, DESIGN §9), the per-frame-CRC mechanism
+  misdescribed (the FAR before each frame is the previous address;
+  prjxray keeps counting under CTL1 bit 21), RapidWrightDCP has no
+  licence file so its derived FASM/frames must not be committed. Fixes
+  requested.
