@@ -159,10 +159,17 @@ we have (Series7, UltraScale, UltraScale+).
      of every row one frame address early (the frame at walk position i
      holds what the prjxray reader, and so the Rust port, has at i + 1;
      the last frame of a row holds the first pad frame, zero). The prjxray
-     reader's register machine is right here: the `FAR` value written
-     before each frame is the frame's address (checked against the
-     `FAR`/`LOUT` writes of `configuration_test.debug.bit`, which the
-     readers agree on).
+     reader is right here. In these bitstreams the `FAR` written before
+     each 1-frame `FDRI` holds the address of the **previous** frame (a
+     progress marker: `FAR=0, FDRI, FAR=0, FDRI, FAR=1, FDRI, ...` in
+     `configuration_test.perframecrc.bit`; in `configuration_test.debug.bit`
+     the `LOUT` write *after* each frame carries that frame's address).
+     With `CTL1` bit 21 set the prjxray reader does not restart the write
+     on these `FAR` writes and keeps counting from the first `FAR`;
+     RapidWright applies each `FAR` to the frame that follows it, hence
+     one address early. Evidence: the same design without per frame CRC
+     (`configuration_test.bit`) reads identically with both tools and
+     equals prjxray's reading of the per frame CRC variant.
   2. The other side of the same bitstreams: the prjxray reader (and the
      Rust reader, a literal port) loses the **last frame of the part**:
      after it, `GetNextFrameAddress` has no next address, so the trailing
