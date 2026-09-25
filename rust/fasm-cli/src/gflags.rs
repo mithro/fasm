@@ -729,17 +729,17 @@ pub fn parse(
             if package != last_package {
                 out.extend(view.usage_matching(std::slice::from_ref(&package)));
                 if !last_package.is_empty() {
-                    stderr.extend_from_slice(b"WARNING: Multiple packages contain a file=");
+                    // `LOG(WARNING)` is a bare `std::cerr` in the bundled
+                    // gflags (`util.h`): no prefix, no newline.
+                    stderr.extend_from_slice(b"Multiple packages contain a file=");
                     stderr.extend_from_slice(&short_name);
-                    stderr.push(b'\n');
                 }
                 last_package = package;
             }
         }
         if last_package.is_empty() {
-            stderr.extend_from_slice(b"WARNING: Unable to find a package for file=");
+            stderr.extend_from_slice(b"Unable to find a package for file=");
             stderr.extend_from_slice(&short_name);
-            stderr.push(b'\n');
         }
         return Outcome::Exit {
             code: 1,
@@ -1152,5 +1152,35 @@ mod tests {
         ));
         assert!(text.contains("      type: bool default: false currently: true\n"));
         assert!(text.contains("\n\n\n\n  Flags from tools/tool.cc:\n"));
+    }
+
+    /// `--helppackage` for a program whose name matches none of the flag
+    /// files: gflags' `LOG(WARNING)` is a bare `std::cerr` (no prefix, no
+    /// newline).
+    #[test]
+    fn helppackage_without_a_package() {
+        let mut p = program();
+        p.argv0 = b"/bin/renamed".to_vec();
+        let Outcome::Exit {
+            code,
+            stdout,
+            stderr,
+        } = parse(&p, &[b"--helppackage".to_vec()], &|_| None)
+        else {
+            panic!()
+        };
+        assert_eq!((code, stdout), (1, Vec::new()));
+        assert_eq!(stderr, b"Unable to find a package for file=renamed");
+        // prjuray-tools' gflags: --helpfull.
+        p.gflags = Gflags::Prjuray;
+        let Outcome::Exit { code, .. } = parse(&p, &[b"--helpfull".to_vec()], &|_| None) else {
+            panic!()
+        };
+        assert_eq!(code, 1);
+        p.gflags = Gflags::Prjxray;
+        let Outcome::Exit { stderr, .. } = parse(&p, &[b"--helpfull".to_vec()], &|_| None) else {
+            panic!()
+        };
+        assert_eq!(stderr, b"ERROR: unknown command line flag 'helpfull'\n");
     }
 }
