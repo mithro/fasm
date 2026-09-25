@@ -120,7 +120,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 if [[ ${#SELECT[@]} -eq 0 ]]; then
-  sed -n '19,52p' "$0"
+  awk 'NR >= 19 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"
   exit 2
 fi
 
@@ -156,7 +156,12 @@ pythondata_software_compiler_rt"
 
 litex_setup() {
   local dir="$EXAMPLES/xc7/litex_demo"
-  if [[ -f "$dir/.litex-installed" ]]; then return 0; fi
+  # The marker lives in the conda environment (the packages are installed
+  # there) and names the checkout whose src/ they were installed from.
+  local marker="$F4PGA_ENV/.f4pga-examples-litex-installed"
+  if [[ -f "$marker" && "$(cat "$marker")" == "$dir" && -d "$dir/src/litex/.git" ]]; then
+    return 0
+  fi
   log "installing the LiteX packages of xc7/litex_demo/requirements.txt"
   local egg line url sha d
   mkdir -p "$dir/src"
@@ -176,7 +181,7 @@ litex_setup() {
     fi
     python3 -m pip install -q --no-deps --no-build-isolation -e "$d"
   done
-  touch "$dir/.litex-installed"
+  echo "$dir" > "$marker"
 }
 
 # The flow's xcfasm command line, from build.log (f4pga build prints it)

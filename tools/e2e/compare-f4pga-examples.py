@@ -47,7 +47,9 @@ For every `<out>/<design>/<board>/` with a built `top.fasm`:
 The dense and sparse variants of fasm2frames/xcfasm against the flow's
 tools and against the oracle's are tools/difftest-xilinx.py's job
 (`--corpus-root <out>`, see tools/e2e/README.md). Writes a JSON report
-(`--json`) and prints a table; exit status 1 if anything differs.
+(`--json`) and prints a table; exit status 1 if anything differs or a
+design failed to build (a device that is not installed is not a
+failure).
 """
 import argparse
 import hashlib
@@ -364,6 +366,10 @@ def main():
                 if info.get('status') != 'built':
                     results.append({'design': design, 'board': board,
                                     'status': info.get('status')})
+                    if info.get('status') != 'device not installed':
+                        failed = True
+                        print('FAIL %-22s %-12s %s' %
+                              (design, board, info.get('status')))
                     continue
                 with tempfile.TemporaryDirectory() as tmp:
                     x = Design(d, info, args, tmp)
