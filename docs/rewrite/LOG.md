@@ -970,3 +970,6 @@ what happened, branch/commit references, open issues.
   load-related transient failures were seen today (one e2e test, one
   valgrind ctest); both pass when rerun alone; keep verification runs
   sequential in future.
+* Third container restart interrupted T7.5 (8 commits kept) and T5.3b
+  (1 commit + uncommitted work kept); both resumed from their
+  transcripts.
