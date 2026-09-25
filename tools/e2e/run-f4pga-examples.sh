@@ -31,6 +31,8 @@
 #                   to the header's date and .frm path)
 #   build.log       the build output
 #   info.json       part, device, family, build time, sizes, sha256s
+#   difftest.json   part and family, for tools/difftest-xilinx.py
+#                   --corpus-root
 #
 # into $OUT/<design>/<board>/ (default tools/e2e/build/out/f4pga-examples).
 #
@@ -42,7 +44,7 @@
 # xc7/litex_demo/requirements.txt, which the documented flow installs
 # into the conda environment (`pip install -r requirements.txt` in
 # xc7/litex_demo, cloning them into xc7/litex_demo/src); this script
-# does that on first use.
+# installs the ones these designs use on first use (litex_setup below).
 #
 # Usage:
 #   tools/e2e/run-f4pga-examples.sh --list
@@ -140,11 +142,40 @@ if [[ "$(git -C "$EXAMPLES" rev-parse HEAD)" != "$F4PGA_EXAMPLES_COMMIT" ]]; the
 fi
 timeout 900 git -C "$EXAMPLES" submodule update --init -q
 
+# The LiteX packages of xc7/litex_demo/requirements.txt that the Arty
+# picorv32/vexriscv designs use, installed like its `pip install -e
+# git+<url>@<commit>#egg=<egg>` lines (into xc7/litex_demo/src/<egg>, in
+# the conda environment) but as shallow clones and without the
+# pythondata-cpu packages of the other CPUs (blackparrot, rocket,
+# microwatt, ...: GiBs of git history that do not fit this machine's
+# disk budget; nothing these designs run imports them) or nmigen.
+LITEX_EGGS="migen litex litedram liteeth liteiclink litejesd204b litepcie
+litesata litescope litesdcard litevideo litehyperbus litespi litex_boards
+pythondata_cpu_picorv32 pythondata_cpu_vexriscv pythondata_misc_tapcfg
+pythondata_software_compiler_rt"
+
 litex_setup() {
   local dir="$EXAMPLES/xc7/litex_demo"
   if [[ -f "$dir/.litex-installed" ]]; then return 0; fi
   log "installing the LiteX packages of xc7/litex_demo/requirements.txt"
-  (cd "$dir" && timeout 3600 python3 -m pip install -q -r requirements.txt)
+  local egg line url sha d
+  mkdir -p "$dir/src"
+  for egg in $LITEX_EGGS; do
+    line=$(grep "#egg=$egg\$" "$dir/requirements.txt")
+    url=${line#-e git+}
+    url=${url%%@*}
+    sha=${line##*@}
+    sha=${sha%%#*}
+    d="$dir/src/$(echo "$egg" | tr 'A-Z' 'a-z')"
+    if [[ ! -d "$d/.git" ]]; then
+      rm -rf "$d"
+      git init -q "$d"
+      git -C "$d" remote add origin "$url"
+      timeout 900 git -C "$d" fetch -q --depth 1 origin "$sha"
+      git -C "$d" checkout -q FETCH_HEAD
+    fi
+    python3 -m pip install -q --no-deps --no-build-isolation -e "$d"
+  done
   touch "$dir/.litex-installed"
 }
 
@@ -236,6 +267,9 @@ for f in ('top.fasm', 'top.bit', 'top.frm', 'top.rerun.bit'):
             info[f]['lines'] = data.count(b'\n')
 json.dump(info, open(os.path.join(out, 'info.json'), 'w'), indent=2,
           sort_keys=True)
+# For tools/difftest-xilinx.py --corpus-root.
+json.dump({'part': part, 'family': family},
+          open(os.path.join(out, 'difftest.json'), 'w'), sort_keys=True)
 print('%s/%s: %s in %.0fs' % (design, board, status, info['build_seconds']))
 EOF
   [[ $status == built ]]
