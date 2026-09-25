@@ -798,3 +798,10 @@ what happened, branch/commit references, open issues.
 * T8.2 (hot path optimisation: interner hit path, byte-wise name
   validation, IdString sort, streaming canonical output) started (Opus);
   T7.6 under review.
+* T7.6 review (Opus): every equivalence claim confirmed (20/20 hashes,
+  oracle wrappers on 10 designs, 5 rebuilds identical, 104 tests,
+  xilinx-difftest grows to 76 files / 307 runs / 210 xcfasm identical).
+  REQUEST CHANGES: run_regression does not export CHIPDB nor write
+  nextpnr.log for the cases check.sh scripts (verdict reasons wrong in
+  two READMEs); primitive-tests bscane2 and the non Artix directories are
+  not listed as attempted/skipped. Fixes requested.
