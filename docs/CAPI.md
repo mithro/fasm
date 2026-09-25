@@ -65,7 +65,8 @@ fasm_file *file = NULL;
 fasm_error *err = NULL;
 fasm_status st = fasm_parse_string(text, text_len, &file, &err);
 if (st != FASM_OK) {
-    fprintf(stderr, "%s at %u:%u: %s\n", fasm_status_string(st),
+    /* fasm_error_line/column return size_t: print with %zu. */
+    fprintf(stderr, "%s at %zu:%zu: %s\n", fasm_status_string(st),
             fasm_error_line(err), fasm_error_column(err),
             fasm_error_message(err));
     fasm_error_free(err);
@@ -155,6 +156,7 @@ version at runtime.
 ```c
 #include <fasm/fasm.h>
 #include <stdio.h>
+#include <string.h>
 
 int main(void) {
     const char *text = "TILE.FEATURE\nTILE.OTHER[3:0] = 4'b0101\n";
@@ -167,8 +169,9 @@ int main(void) {
         return 1;
     }
 
-    /* Print the whole file back out, canonicalised via merge_and_sort. */
-    fasm_file *merged = fasm_file_merge_and_sort_ex(file, NULL, NULL, NULL, &err);
+    /* Group/sort the model (not canonical form: pass canonical=true to
+     * fasm_file_to_string below for that instead). */
+    fasm_file *merged = fasm_file_merge_and_sort(file, &err);
     if (!merged) {
         fprintf(stderr, "merge error: %s\n", fasm_error_message(err));
         fasm_error_free(err);
@@ -176,7 +179,7 @@ int main(void) {
         return 1;
     }
 
-    fasm_string *out = fasm_file_to_string(merged, &err);
+    fasm_string *out = fasm_file_to_string(merged, /* canonical = */ false, &err);
     if (out) {
         printf("%s", fasm_string_data(out));
         fasm_string_free(out);
@@ -196,7 +199,7 @@ int main(void) {
 
 int main() {
     try {
-        auto file = fasm::File::parse_string(
+        auto file = fasm::File::parse(
             "TILE.FEATURE\nTILE.OTHER[3:0] = 4'b0101\n");
         fasm::File merged = file.merge_and_sort();
         std::cout << merged.to_string();

@@ -20,7 +20,7 @@ through the oracle (`tests/oracle/dump.py --parser antlr|textx`).
 * [The f4pga flow's outputs](#the-f4pga-flows-outputs-f4pga-examples-t73)
 * [The openXC7 snap's tools](#the-openxc7-snaps-tools-nextpnr-xilinx-examples-t76)
 * [C API (`libfasm_capi`)](#c-api-libfasm_capi-rustfasm-capi-t41)
-* [C++ wrapper](#c-wrapper-includefasmfasmhpp-t42)
+  * [C++ wrapper](#c-wrapper-includefasmfasmhpp-t42)
 * [Python bindings](#python-bindings-fasmparserrust-rustfasm-python-t31-t33)
   * [`fasm.xilinx`](#fasmxilinx-t510)
 
