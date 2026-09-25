@@ -23,6 +23,12 @@
 #
 # Requires tools/e2e/setup-openxc7.sh to have been run first.
 #
+# OPENXC7_E2E_BUILD (optional) names the build directory to use instead of
+# this script's own tools/e2e/build, e.g. the main checkout's from a second
+# working tree that has no toolchain of its own:
+#
+#   OPENXC7_E2E_BUILD=/home/user/fasm/tools/e2e/build source tools/e2e/openxc7-env.sh
+#
 # Exports:
 #   PATH               adds, in order:
 #                        1. tools/e2e/build/oss-cad-suite/oss-cad-suite/bin
@@ -64,7 +70,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 _OPENXC7_ENV_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_OPENXC7_ENV_DIR="$_OPENXC7_ENV_SCRIPT_DIR/build/openxc7"
+_OPENXC7_ENV_BUILD="${OPENXC7_E2E_BUILD:-$_OPENXC7_ENV_SCRIPT_DIR/build}"
+_OPENXC7_ENV_DIR="$_OPENXC7_ENV_BUILD/openxc7"
 
 if [[ ! -d "$_OPENXC7_ENV_DIR/bin" ]]; then
   echo "openxc7-env.sh: $_OPENXC7_ENV_DIR/bin not found;" >&2
@@ -72,7 +79,7 @@ if [[ ! -d "$_OPENXC7_ENV_DIR/bin" ]]; then
   return 1 2>/dev/null || exit 1
 fi
 
-_OPENXC7_ENV_OSS_BIN="$_OPENXC7_ENV_SCRIPT_DIR/build/oss-cad-suite/oss-cad-suite/bin"
+_OPENXC7_ENV_OSS_BIN="$_OPENXC7_ENV_BUILD/oss-cad-suite/oss-cad-suite/bin"
 if [[ -d "$_OPENXC7_ENV_OSS_BIN" ]]; then
   export PATH="$_OPENXC7_ENV_OSS_BIN:$_OPENXC7_ENV_DIR/bin:$PATH"
 else
@@ -83,4 +90,4 @@ export PRJXRAY_DB_DIR="$OPENXC7_ROOT/opt/nextpnr-xilinx/external/prjxray-db"
 export CHIPDB_DIR="$_OPENXC7_ENV_DIR/chipdb"
 export OPENXC7_PYTHON3="$OPENXC7_ROOT/usr/bin/python3.8"
 
-unset _OPENXC7_ENV_SCRIPT_DIR _OPENXC7_ENV_DIR _OPENXC7_ENV_OSS_BIN
+unset _OPENXC7_ENV_SCRIPT_DIR _OPENXC7_ENV_BUILD _OPENXC7_ENV_DIR _OPENXC7_ENV_OSS_BIN
