@@ -4,7 +4,7 @@ This repository documents the FASM file format and provides a drop-in
 compatible **Rust** implementation of the original Python/ANTLR/C++ `fasm`
 tools, plus Xilinx 7-series, UltraScale and UltraScale+ frame and
 bitstream tooling (a Rust equivalent of Project X-Ray's `fasm2frames.py` /
-`xc7frames2bit` and prjuray's `frames2bit`/`bitread`), with **Python
+`xc7frames2bit` and prjuray-tools' `xcframes2bit`/`bitread`), with **Python
 bindings** and a **C/C++ API** built on the same Rust library. Every
 binary and API is verified byte-for-byte against the originals over real
 designs; see [Verification](#verification) below.
@@ -25,6 +25,11 @@ implemented in Rust (the `fasm._fasm_rs` extension module, built from
 installed too and used as a fallback if the compiled extension cannot be
 imported (a wheel is not available for your platform, or the extension
 failed to load).
+
+(`pip install fasm` today installs the pre-rewrite package published on
+PyPI, not this repository's build; publishing the Rust rewrite's wheels
+is T8.4, not yet done. Until then, build and install from source as
+below, or with `pip install .` / `pip wheel .` from a checkout.)
 
 Which parsers are available in your installation can be found with:
 
@@ -137,20 +142,21 @@ fasm-cli --bin <name> --`).
 | `FASM_XDB_CACHE` | `fasm2frames`, `xcfasm`, `uray-fasm2frames`, `fasm-db-cache`, `fasm.xilinx` | Binary database cache directory (default `$XDG_CACHE_HOME/fasm/db`, else `~/.cache/fasm/db`); `0` or empty disables it. See "Xilinx database cache" below. |
 | `FASM_XDB_CACHE_VERBOSE` | same as above | `1` reports cache hits/rebuilds and the reason on stderr. |
 | `FASM_DB_CACHE` | `tools/fetch-db.sh`, the test suite | Where the *text* prjxray-db/prjuray-db checkouts used by tests are cached (not the binary cache above). |
-| `SOURCE_DATE_EPOCH` | `xc7frames2bit`, `xcframes2bit`, `xcfasm` | Reproducible-build extension (as used by e.g. Nix/Bazel): when set to an integer, used as the bitstream header timestamp instead of the current time. |
+| `XRAY_DATABASE_DIR`, `XRAY_DATABASE`, `XRAY_PART` | `fasm2frames`, `xcfasm` | Defaults for `--db-root`/`--part` (`rust/fasm-cli/src/fasm2frames.rs`), mirroring prjxray-db's own `fasm2frames.py`/`xcfasm.py` environment fallback. |
 | `URAY_DATABASE_DIR`, `URAY_DATABASE`, `URAY_PART` | `uray-fasm2frames` | Defaults for `--db-root`/`--part`, mirroring prjuray's own `fasm2frames.py` environment fallback. |
+| `SOURCE_DATE_EPOCH` | `xc7frames2bit`, `xcframes2bit`, `xcfasm`, and `fasm.xilinx.write_bitstream`/`fasm2bit` and the C `fasm_xilinx_bitstream_write*` functions | Reproducible-build extension (as used by e.g. Nix/Bazel): when set to an integer, used as the bitstream header timestamp instead of the current time. |
 
 ### Xilinx database cache
 
-`fasm2frames` and `xcfasm` keep a binary cache of each prjxray-db /
-prjuray-db part they open, so that only the first run of a part pays for
-parsing the text database (about 4-6x faster opens: e.g. 23 ms instead of
-about 100 ms for xc7a35t). A cache file is only used when none of the files
-it was built from changed (size, stat fingerprint, BLAKE3 content hash),
-otherwise it is silently rebuilt; the output is identical either way.
-It is configured by the environment only (`FASM_XDB_CACHE`,
-`FASM_XDB_CACHE_VERBOSE`; see "Environment variables" above) so the
-command lines stay those of the reference tools.
+`fasm2frames`, `xcfasm` and `uray-fasm2frames` keep a binary cache of
+each prjxray-db / prjuray-db part they open, so that only the first run
+of a part pays for parsing the text database (about 4-6x faster opens:
+e.g. 23 ms instead of about 100 ms for xc7a35t). A cache file is only
+used when none of the files it was built from changed (size, stat
+fingerprint, BLAKE3 content hash), otherwise it is silently rebuilt; the
+output is identical either way. It is configured by the environment only
+(`FASM_XDB_CACHE`, `FASM_XDB_CACHE_VERBOSE`; see "Environment variables"
+above) so the command lines stay those of the reference tools.
 
 See [`docs/rewrite/BENCHMARKS.md`](docs/rewrite/BENCHMARKS.md) for the
 full benchmark suite and numbers: parser throughput vs. the Python/ANTLR
@@ -264,15 +270,18 @@ per-tool list of tested scope and every documented divergence, and
 performance numbers. Headline results from `docs/rewrite/LOG.md` (see that
 file for the run that produced each number):
 
-* **Parser/model/output/CLI**: identical to the textX and ANTLR oracle
-  parsers over the whole FASM corpus (`tools/difftest.py`); the CLI is
-  differential-tested byte-for-byte for stdout/stderr/exit code
-  (`tests/cli`).
+* **Parser/model/output/CLI**: 0 unexplained differences from the textX
+  and ANTLR oracle parsers over the whole FASM corpus
+  (`tools/difftest.py`); every intentional divergence is documented in
+  COMPAT.md ("Parser"). The CLI is differential-tested byte-for-byte for
+  stdout/stderr/exit code (`tests/cli`).
 * **Every 7-series part**: all 125 prjxray-db parts, every-feature
-  synthetic corpus (`tools/gen-corpus.py`), `fasm2frames`/`xc7frames2bit`
-  output identical to the Python/C++ reference tools (the remaining
-  differences are explained, one documented error case per part, not
-  unexplained divergence) — see COMPAT.md and LOG.md's T5.9/T6.3 entries.
+  synthetic corpus (`tools/gen-xilinx-corpus.py`; `tools/gen-corpus.py`
+  is the plain-FASM parser corpus, a different generator),
+  `fasm2frames`/`xc7frames2bit` output identical to the Python/C++
+  reference tools (the remaining differences are explained, one
+  documented error case per part, not unexplained divergence) — see
+  COMPAT.md and LOG.md's T5.9/T6.3 entries.
 * **prjuray-db (UltraScale+)**: both shipped zynqusp parts, every-feature
   corpus, identical `uray-fasm2frames`/`xcframes2bit`/`uray-bitread`
   output (T6.3).
@@ -286,8 +295,10 @@ file for the run that produced each number):
   installed openXC7 toolchain (T7.6).
 * **VTR `genfasm`**: 447 designs produce FASM (428 generic VTR benchmarks +
   19 Xilinx designs through the f4pga flow), identical to the Python
-  oracle parser and, for the Xilinx subset, to the flow's own tools
-  (T7.4; in review at the time of writing — see TASKS.md).
+  oracle parser and, for the Xilinx subset, to the flow's own tools.
+  T7.4 is implemented but **still in review** and not yet merged into
+  this tree at the time of writing (see TASKS.md) — `tools/e2e/` does
+  not yet have the VTR setup/run scripts described below.
 
 ## Running the test suites
 
@@ -300,10 +311,11 @@ file for the run that produced each number):
   pre-rewrite history; then `tools/difftest.py` and
   `tools/difftest-xilinx.py` compare Rust output against it over
   `tests/corpus/` (see `tests/oracle/README.md`, `tests/corpus/README.md`).
-* `tools/e2e/` sets up real toolchains (openXC7, f4pga/VPR, VTR) and runs
-  `pytest tests/e2e` to reproduce the Verification numbers above; see
-  `tools/e2e/README.md` for prerequisites (these download multi-GB
-  toolchains and are not run by default CI).
+* `tools/e2e/` sets up real toolchains (openXC7, f4pga/VPR; VTR once T7.4
+  merges, see "Verification" above) and runs `pytest tests/e2e` to
+  reproduce the Verification numbers above; see `tools/e2e/README.md`
+  for prerequisites (these download multi-GB toolchains and are not run
+  by default CI).
 * `make lint` / `make format-py` (flake8/yapf) and `make rust-lint`
   (`cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo fmt --all --check`) for style.
