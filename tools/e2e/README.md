@@ -1,4 +1,4 @@
-# End-to-end toolchains (T7.1, T7.2, T7.3)
+# End-to-end toolchains (T7.1, T7.2, T7.3, T7.6)
 
 Makes an open source Xilinx 7 series synthesis + place-and-route flow
 available on this machine, so later tasks (T7.2, T7.3) can turn the
@@ -716,3 +716,155 @@ succeeding; run through `/bin/bash -c` like the flow), the corpus metadata, that
 toolchain, the flow's tools run and `counter_test/arty_35` is rebuilt end
 to end and compared (`F4PGA_EXAMPLES_DIR` or `F4PGA_EXAMPLES_BUILD=1`).
 Each part skips cleanly without its prerequisites.
+
+## nextpnr-xilinx examples corpus (T7.6)
+
+Builds the example designs of nextpnr-xilinx itself
+(`xilinx/examples`) and of the openXC7 organisation's demo repositories
+([demo-projects](https://github.com/openXC7/demo-projects),
+[primitive-tests](https://github.com/openXC7/primitive-tests)) with the
+openXC7 snap toolchain above, following each example's own script or
+Makefile (yosys `synth_xilinx` -> `nextpnr-xilinx --fasm` -> the snap's
+`fasm2frames` -> the snap's `xc7frames2bit`, all with the snap's
+prjxray-db), keeps the FASM and the snap tools' frames and bitstream, and
+compares the Rust tools with them. Results matrix and timings:
+`docs/rewrite/DESIGN-xilinx-db.md` §8.13.
+
+### Sources (pinned in `run-nextpnr-examples.sh`)
+
+* **nextpnr-xilinx**: the openXC7 fork's tag `0.8.2`
+  (`dea2f28c67fd1193ec72d0ba586800285e4c3648`), the source the installed
+  snap `0.8.2` was built from (openXC7-snap's `snapcraft.yaml`:
+  `source-branch: 0.8.2`). Its `xilinx/examples` are identical to
+  upstream gatecat/nextpnr-xilinx's (`xilinx-upstream`,
+  `8f178fc6a6d4dfbc57bef66c3ccff34d558047d5`). The fork's `main`
+  (`bc9b2346`) adds only `counter25` (Virtex-7 VC707, through RapidWright;
+  not built).
+* **openXC7/demo-projects** `c5246c583a7db3a73543af72e00193f2fa990d34`:
+  the last commit before the demos followed the toolchain to the
+  himbaechel based openXC7/nextpnr (`373b7643`), i.e. the last one
+  written for this snap's generation. Its `regression/` cases (moved
+  there from nextpnr-xilinx) are run like `regression/run.sh`.
+* **openXC7/primitive-tests** `d29ee7c58bdad361c690298d0c1b22004f9f4c02`.
+  Its `bscane2` is a LiteX build directory (`build/build_top.sh`, the
+  generated `top.v`, `top.ys`, `top.xdc`): built with the commands of
+  `build_top.sh`, `top.ys`'s absolute `read_verilog` path of the machine
+  LiteX ran on replaced with `top.v`.
+* openXC7's other repositories were checked: `iologic-tests` and
+  `dsp-tests` target only Kintex-7 parts, `xc7k325t-blinky-nextpnr` and
+  `xc7k325t-picosoc-nextpnr` are Kintex-7 too; `toolchain-nix` and
+  `getting-started` (only a README) hold no designs, and
+  `toolchain-installer`'s only design is a one-LED blinky written inline
+  by its `tests/smoke-toolchain.sh` for the himbaechel toolchain (the same
+  shape as the blinky examples above; not built).
+
+### Running
+
+```
+tools/e2e/run-nextpnr-examples.sh --list        # every entry: part, chipdb, kind, availability
+tools/e2e/run-nextpnr-examples.sh --fetch       # clone the pinned sources into tools/e2e/build/nextpnr-examples-src
+tools/e2e/run-nextpnr-examples.sh [--build-chipdb] ID [ID ...]   # or --all
+python3 tools/e2e/compare-nextpnr-examples.py [--json FILE] [ID ...]
+python3 tools/e2e/install-nextpnr-examples-corpus.py [--compare-json FILE] [ID ...]
+```
+
+`ID` is `SOURCE/EXAMPLE/BOARD` (`nextpnr-xilinx/blinky/arty-a35`,
+`openxc7-demo-projects/regression-clock-srcc-bufg/xc7a200tfbg484`, ...).
+Each design is built in a copy (its directory copied, the rest of the
+source tree linked, so `../openXC7.mk`, `../vexriscv/VexRiscv.v` and
+`../attosoc/attosoc.v` resolve) under `$NEXTPNR_EXAMPLES_OUT/ID/`
+(default `tools/e2e/build/out/nextpnr-examples`), which keeps `top.fasm`,
+`top.frm` (the snap's `fasm2frames`, dense), `top.bit`, the logs,
+`commands.txt` and `info.json` (status, times, sha256). Every tool run is
+capped at `NEXTPNR_EXAMPLES_TIMEOUT` seconds (1200) and
+`NEXTPNR_EXAMPLES_VMEM_KB` of virtual memory (10 GiB). The Makefile flows
+run their own targets one by one (`make <project>.json`, `.fasm`,
+`.frames`, `.bit`) with `CHIPDB` pointing at a directory of links named
+as the Makefile expects (`<part without speed grade>.bin`) and
+`PRJXRAY_DB_DIR`/`DB_DIR` at the snap's database; the nextpnr-xilinx
+examples' `.sh` scripts are run with their commands (the chipdb path and
+prjxray's `utils/fasm2frames.py`/`xc7frames2bit`/database mapped to the
+snap's).
+
+From a second working tree without its own toolchain, point
+`OPENXC7_E2E_BUILD` (read by `openxc7-env.sh` too) at the main checkout's
+`tools/e2e/build`, and `NEXTPNR_XILINX_DIR`, `OPENXC7_DEMOS_DIR`,
+`OPENXC7_PRIMITIVE_TESTS_DIR` at existing checkouts at the pinned commits.
+
+### Chip databases
+
+A chipdb is per package: the speed grade only selects the prjxray-db part
+directory, and those of one package are identical (`diff -r
+xc7a100tfgg484-1 xc7a100tfgg484-2`, `xc7a200tfbg484-2 -3`), so a design
+for `xc7a100tfgg484-1` uses setup-openxc7.sh's `xc7a100tfgg484-2.bin` and
+the regression cases for `xc7a200tfbg484-2` use `xc7a200tfbg484-3.bin`.
+Two packages had none; `--build-chipdb` builds them (bbaexport.py +
+bbasm, like setup-openxc7.sh, into `$NEXTPNR_EXAMPLES_CHIPDB_DIR`,
+default `tools/e2e/build/nextpnr-examples-chipdb`), as the demo
+Makefiles' own chipdb rule would: `xc7a35tcpg236-1` (Basys 3) in 85 s,
+89 MiB, and `xc7a100tfgg676-1` (QMTech Artix-7 board) in 152 s, 152 MiB.
+
+### Workaround: `$buf` cells
+
+This machine's Yosys (OSS CAD Suite `2026-09-21`) leaves `$buf` cells in
+the `-abc9` netlists of almost every design, which nextpnr-xilinx `0.8.2`
+cannot place (`no Bels remaining of type '$buf'`; the problem T7.2 met,
+see "A Yosys/abc9 `$buf` cell workaround" above). So that each example's
+own synthesis command stays unchanged, the script fixes the written
+netlist instead: when it has `$buf` cells it runs `yosys -p 'read_json
+X.json; techmap -map +/techmap.v t:$buf; write_json X.json'` before
+place and route, and records it (`commands.txt`, the note in
+`info.json` and the corpus README).
+
+### What was not built
+
+* nextpnr-xilinx `artyz7-20/blinky` (Zynq-7000 `xc7z020`), the
+  `attosoc`/`blinky` examples for `xczu2cg` and `zcu104/blinky`
+  (UltraScale+: nextpnr-xilinx writes no FASM there, they go through
+  RapidWright's json2dcp and Vivado), and the regression cases
+  `fdse-fdpe-undefined-init` and `lut_shared_pin` (`xc7z010`): other
+  families, listed as `skip` by `--list`.
+* demo-projects designs for Kintex-7, Spartan-7 and Zynq parts (every
+  other directory; the brief covers Artix-7 parts only), and
+  primitive-tests' `mmcm-blinky` (Spartan-7 `xc7s50csga324-1`),
+  `mmcm-blinky-kintex`, `gtx_channel`, `gtx_common/internal-refclk`
+  (Kintex-7 `xc7k70t`), `dsp-tests/*` and `iologic-tests/*` (Kintex-7
+  `xc7k160t`/`xc7k325t`): all listed as `skip` by `--list`.
+* Designs that nextpnr-xilinx `0.8.2` cannot place and route (the
+  regression cases guard fixes made after it; the error is in each
+  `info.json`): `litex-sata/alientek-davincipro` (`IBUFDS_GTE2 ... must
+  be connected to a GTPE2_COMMON`), `gtp_common-external-refclk`
+  (`Invalid global constant node 'INT_L_X0Y173/VCC_WIRE'`), and the
+  regression cases `bufio-in-use`, `bufr-pad-site`, `bufr-sink-region`
+  (no BUFIO/BUFR bels; the last two are placement-level cases,
+  `no_route`, that would not give a FASM anyway: the script never installs
+  such a case), `lutram-clkinv`, `lutram-ram64x1s` (no
+  `RAM64X1S`), `iddr-four-iff-flops`, `srl-init` (`Invalid global
+  constant node 'INT_L_X0Y113/GND_WIRE'`), `dsp-const-only-pins`
+  (unroutable `CARRYCASCIN`), `dup-package-pin` (expected to fail) and
+  `srl-wemux` (router still running after the 1200 s cap).
+
+### Tests
+
+`tests/e2e/test_nextpnr_examples.py`: without any toolchain, the corpus
+metadata (README sha256 of the FASM and frames, difftest.json, the entry
+in the script's table) and that `make xilinx-difftest` covers every
+entry; with the Rust tools, `fasm` parses every FASM and `fasm2frames`
+reproduces the flow's frames with the snap's database and, with the
+pinned database, either the same frames or the error the README records;
+with the toolchain and a nextpnr-xilinx checkout,
+`nextpnr-xilinx/blinky/arty-a35` is rebuilt end to end (the flow is
+deterministic: the FASM must be the committed one) and
+`compare-nextpnr-examples.py` must pass on it. 109 tests: all pass in 16 s
+with the toolchain, the Rust tools and both databases (`ORACLE_DIR`,
+`FASM_DB_CACHE` and `OPENXC7_E2E_BUILD` pointing at the main checkout
+from a second working tree, `NEXTPNR_XILINX_DIR` at a checkout); with
+the Rust tools but no database or toolchain 65 pass and 44 skip; with
+nothing built 44 pass and 65 skip.
+
+The regression cases also run their own `check.sh` like
+`regression/run.sh` does (nextpnr's output in the case's `nextpnr.log`,
+`CHIPDB` set); its verdict against nextpnr-xilinx 0.8.2 is in
+`info.json` and the corpus README (`const-holdout` passes;
+`bufh-clock-constraint` and `xorigport-unknown-name` fail as expected of
+a nextpnr-xilinx without their fixes).
