@@ -136,6 +136,7 @@ class MergeModel(object):
         InAnnotationGroup = 3
 
     def __init__(self):
+        """ Create an empty MergeModel with no lines added yet. """
         self.state = MergeModel.State.NoGroup
         self.groups = []
         self.current_group = None
@@ -157,6 +158,15 @@ class MergeModel(object):
         self.current_group = [line]
 
     def add_to_comment_group(self, line):
+        """ Add a line to the current comment group.
+
+        Requires that the model is currently in a comment group (call
+        start_comment_group first). A further comment extends the group; an
+        annotation extends it and switches to an annotation group; anything
+        else (a feature, or a blank line) closes the group and returns the
+        model to MergeModel.State.NoGroup.
+
+        """
         assert self.state == MergeModel.State.InCommentGroup
 
         if is_only_comment(line):
@@ -172,6 +182,12 @@ class MergeModel(object):
             self.state = MergeModel.State.NoGroup
 
     def start_annotation_group(self, line):
+        """ Start a new group of annotations.
+
+        Requires that input line is an annotation and not already in an
+        annotation group.
+
+        """
         assert self.state != MergeModel.State.InAnnotationGroup
         assert is_only_annotation(line)
 
@@ -182,6 +198,15 @@ class MergeModel(object):
         self.current_group = [line]
 
     def add_to_annotation_group(self, line):
+        """ Add a line to the current annotation group.
+
+        Requires that the model is currently in an annotation group (call
+        start_annotation_group first). A further annotation extends the
+        group; a comment closes it and starts a new comment group; anything
+        else closes the group, returns the model to
+        MergeModel.State.NoGroup, and is itself added via add_to_model.
+
+        """
         assert self.state == MergeModel.State.InAnnotationGroup
 
         if is_only_comment(line):
@@ -233,6 +258,14 @@ class MergeModel(object):
                 assert not is_blank_line(line)
 
         def find_eligable_feature(group):
+            """ Return group's lone SetFasmFeature, or None if ineligable.
+
+            A group is eligable for address merging only if it has exactly
+            one line, and that line has no comment or annotations attached
+            (a comment on the group's line makes the whole group
+            ineligable, per the class docstring).
+
+            """
             if len(group) > 1:
                 return None
 
@@ -327,6 +360,7 @@ class MergeModel(object):
         output_groups = []
 
         def feature_group_key(group):
+            """ Return the feature name of group's first SetFasmFeature. """
             for line in group:
                 if line.set_feature:
                     assert line.set_feature.feature is not None
