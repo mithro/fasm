@@ -555,3 +555,109 @@ reproduces the latter when there is time/RAM budget for it. Python
 `fasm.xilinx` binding numbers were reused from DESIGN-python.md rather
 than rebuilt with maturin into a fresh venv (see above); nothing in
 `fasm-python`'s Rust source changed since those numbers were taken.
+
+## After T8.2
+
+T8.2 worked through the list above in order. Every number below is
+before (`claude/epic-goldberg-uc7xqf` at `734c8d9`) -> after (the T8.2
+branch), both binaries run alternately in the same session, best of 5
+for the `cargo bench` harnesses (median of 3 for `run-benchmarks.py`),
+load average 1.7-2.0 unless noted (a reviewer agent shared the machine).
+
+### Parser throughput (`cargo bench -p fasm --bench parser`, `FASM_PARSER_BENCH_MB=30`, MB/s)
+
+| Corpus class | Cold before | Cold after | Warm before | Warm after |
+|---|---:|---:|---:|---:|
+| `mixed` | 244-249 | 250-258 | 351-383 | 384-409 |
+| `pips` | 194-198 | 203-212 | 204-211 | 212-227 |
+| `lut` | 405-414 | 426-444 | 414-435 | 437-459 |
+| `annotated` | 274-281 | 254-275 | 345-363 | 344-363 |
+| `stress` | 125-132 | 120-129 | 206-222 | 225-233 |
+
+(Ranges over three sessions of 4-5 alternating rounds each.) The gain comes
+from the feature name scan (eight bytes at a time, recording the dots),
+interning the name pre-split with `IdString::from_split` (no second
+search for the dots, UTF-8 checked only on a miss) and validating the
+buffer as UTF-8 only when a comment or annotation first needs it (commit
+`752eafd`). **Above the 200 MB/s target now**: `mixed`, `pips`, `lut`
+and `annotated` cold and warm, and `stress` warm. **Still below**: `stress`
+cold (120-129 MB/s): nearly every line interns a new tile name, and the
+interner's insertion path (writer lock, `OnceLock::set` of the slot, the
+entry number CAS, index growth; about 170-180 ns per new name) dominates;
+none of the changes tried for it (see DESIGN-idstring.md, "T8.2: hit
+path alternatives measured and rejected") moved it beyond noise.
+`annotated` did not change (its cost is in annotation/comment scanning
+and allocation).
+
+### idstring (`cargo bench -p fasm --bench idstring`, ns/op)
+
+| Operation | Before | After |
+|---|---:|---:|
+| intern (miss) | 175 | 178 |
+| intern (hit) | 51.7 | 51.1 |
+| intern (hit, 8 threads) | 26.1 | 26.5 |
+| `intern_bytes` (hit) | 52.2 | 51.4 |
+| `from_utf8` + intern (hit) | 58.1 | 57.8 |
+| lookup (hit) | 51.3 | 51.1 |
+| sort `IdString` (`Ord`) | 173.0 /element | 172.3 /element |
+| `sort_by_string` (new) | - | 94.0 /element |
+| sort `String` | 66.2 /element | 61.2 /element |
+| `HashMap<String,u32>` get | 38.3 | 37.2 |
+
+**Item 1 (interner hit path) is not closed.** Six changes were
+implemented and measured (a whole name index in front of the level
+tables, 32 byte buckets with the text inline, load factor 1/2, a custom
+hash, forced inlining, reusing the lock free probe's results on the miss
+path); none gave more than noise on the hit path and most cost memory or
+miss path time, so none was kept. The breakdown behind that (split
+5.7-12 ns, hashing 2-4 ns per piece, the level 0 probe 24 ns of which
+14 ns is the bucket load on the 67,500 entry table) and every
+measurement are in DESIGN-idstring.md. The level 0 lookup is memory
+bound, like the `HashMap` baseline's; the remaining 13 ns gap is the
+slot and text reads of a hit plus the per level overhead. The parser
+side (item 2) was where time could be saved: it no longer asks the
+interner to find the dots or to validate the name.
+
+**Item 3 (sorting)**: `fasm::idstring::sort_by_string` (new, public)
+resolves each key once into one buffer and sorts by those bytes, stable:
+94-97 ns per element against 172-176 for `Ord` (1.8x; 65 for plain
+`String`s). `merge_and_sort` and the Python binding's `merge_and_sort`
+use it. The order is unchanged (property test and every corpus feature
+name). Sorting by `Resolved` keys was tried first and is slower than
+`Ord` (272 ns).
+
+### `fasm --canonical` (item 6)
+
+`tools/bench/run-benchmarks.py --skip xilinx7 --skip ultrascale --skip
+python --repeats 3` (the whole parser suite, oracle from the main
+checkout), and the same binaries timed directly on the generated 1M line
+file (output compared byte for byte: identical, 1,038,094,498 bytes):
+
+| Input | Before | After |
+|---|---:|---:|
+| synthetic 1M lines, `--canonical` (run-benchmarks, median) | 9.7 s, 2.4 GiB (T8.1 table) | **2.12 s, 490 MiB** |
+| synthetic 1M lines, `--canonical`, direct, piped into an MD5 | 12.1-12.3 s, 2466 MiB | 4.5 s, 490 MiB |
+| `linux_litex_demo` `--canonical` (run-benchmarks, median) | 248.3 ms (T8.1) | 215.1 ms, 56.5 MiB |
+| `picosoc_demo` `--canonical` | 63.4 ms (T8.1) | 50.8 ms |
+| synthetic 1M lines, parse/print | 492 ms (T8.1); 0.65-0.76 s direct | 567 ms; 0.67-0.75 s direct (unchanged) |
+| `linux_litex_demo` parse/print | 92.6 ms (T8.1) | 82.7 ms |
+
+The tool now keeps 8 bytes per canonical line and formats the lines
+while writing them (DESIGN-output.md, "T8.2"); the parse (and every
+error) still completes before anything is printed. Parse/print on the
+CLI is dominated by formatting the output, so the parser gains barely
+show there. The rest of the run-benchmarks parser table (oracle ANTLR
+and textX) is unchanged from T8.1 within noise (ANTLR 55 ms / 902 ms /
+3.44 s / 16.5 s, textX 179 ms / 16.8 s / 69.9 s / 272.6 s, the last
+one no longer timing out at this session's bound but using 6.6 GiB).
+
+### Not done
+
+* Database open / cache decode (item 5): unchanged; the items that
+  would reach the few ms target are T5.3b (lazy per tile type decoding,
+  interner bulk insert) and were out of scope.
+* `fasm_tuple_to_string(.., canonical=true)` (library, Python fast path)
+  still sorts formatted `String`s; only the CLI got the compact sort.
+* No `perf` in this container, and the classifier refused a callgrind
+  profile of the pips parse in this session, so the per line breakdown
+  above comes from timing experiments, not a profile.
