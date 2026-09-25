@@ -78,7 +78,7 @@ impl PyDatabase {
     /// ``prjuray-db/zynqusp``) for ``part`` (e.g. ``xc7a35tcsg324-1``;
     /// ``None`` loads only the tile types, which cannot assemble).
     ///
-    /// ``cache``: ``True`` (the default; ``None`` is the same) loads the
+    /// ``cache``: ``None`` (the default) or ``True`` loads the
     /// part through the binary database cache like the command line tools
     /// (directory ``$FASM_XDB_CACHE``, else ``$XDG_CACHE_HOME/fasm/db``,
     /// else ``~/.cache/fasm/db``; ``FASM_XDB_CACHE=0`` disables it),

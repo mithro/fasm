@@ -38,6 +38,14 @@ _Lines = Union[str, bytes, Iterable[Union[FasmLine, str]]]
 
 ARCHITECTURES: Tuple[str, str, str]
 
+__all__ = [
+    'ARCHITECTURES', 'BitstreamError', 'Database', 'DbError', 'Error',
+    'FasmAssembler', 'FasmInconsistentBits', 'FasmKeyError',
+    'FasmLookupError', 'FasmParseError', 'FeatureBits', 'Frames', 'FrmError',
+    'Roi', 'RoiDesign', 'Tile', 'dump_frames_sparse', 'fasm2bit',
+    'fasm2frames', 'read_bitstream', 'read_roi_design', 'write_bitstream'
+]
+
 
 class Tile(NamedTuple):
     name: str

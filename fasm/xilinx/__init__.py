@@ -45,6 +45,7 @@ docs/rewrite/DESIGN-python.md.
 """
 
 import collections.abc
+import os
 import sys
 
 from fasm.xilinx._types import (
@@ -142,7 +143,8 @@ def fasm2frames(
             the FASM does not use its IOB.
         fasm_text: The FASM text (``str`` or ``bytes``) instead of
             ``filename_in``.
-        cache: The binary database cache (see ``Database.open``).
+        cache: The binary database cache (see ``Database.open``; ``True``
+            and ``None`` both mean the command line tools' settings).
 
     On an UltraScale+ (prjuray-db) database, prjuray's fasm2frames flow is
     used (no IO bank handling), like the ``fasm2frames`` tool. Warnings
@@ -221,7 +223,8 @@ def fasm2bit(
         debug=debug,
         emit_pudc_b_pullup=emit_pudc_b_pullup,
         fasm_text=fasm_text)
-    design_name = frm_out if isinstance(frm_out, (str, bytes)) else fn_in
+    design_name = frm_out if isinstance(frm_out,
+                                        (str, bytes, os.PathLike)) else fn_in
     if format is None:
         format = db.architecture
     bitstream = write_bitstream(

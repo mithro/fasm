@@ -162,8 +162,9 @@ fn header_time(
 /// * ``part``: a ``Database`` (its ``part.yaml`` / ``part.json``; the
 ///   header part name defaults to its part) or the path of a
 ///   ``part.yaml`` (read like ``--part_file``).
-/// * ``output``: ``None`` returns the ``bytes``; a path (written with the
-///   GIL released) or a binary file object receives them.
+/// * ``output``: ``None`` returns the ``bytes``; a path (``str``,
+///   ``bytes`` or ``os.PathLike``, written with the GIL released) or a
+///   binary file object receives them.
 /// * ``format``: ``None`` (the part's architecture), ``'Series7'``,
 ///   ``'UltraScale'``, ``'UltraScalePlus'`` (prjuray-tools'
 ///   implementation, ``--architecture``) or ``'prjxray:UltraScale'`` /
@@ -210,7 +211,8 @@ pub(crate) fn write_bitstream<'py>(
     };
     let output = output.filter(|o| !o.is_none());
     let path = match output {
-        Some(o) if is_path(o)? => Some(fs_path(o)?),
+        // A path (`bytes` too, as for `Frames.write_frm`), else a file.
+        Some(o) if is_path(o)? || o.cast::<PyBytes>().is_ok() => Some(fs_path(o)?),
         _ => None,
     };
     let result = py.detach(|| {

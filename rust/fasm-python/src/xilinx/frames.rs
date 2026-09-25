@@ -31,6 +31,14 @@ fn frm_error(py: Python<'_>, error: &FrmError) -> PyErr {
     xerr(py, |t| &t.frm_error, (error.to_string(), error.line))
 }
 
+/// `ValueError` for frames of no words.
+fn check_words_per_frame(words_per_frame: usize) -> PyResult<()> {
+    if words_per_frame == 0 {
+        return Err(PyValueError::new_err("words_per_frame must not be 0"));
+    }
+    Ok(())
+}
+
 /// Emits `warnings` with `warnings.warn` (a `UserWarning`).
 pub(crate) fn warn_all(py: Python<'_>, warnings: &[String]) -> PyResult<()> {
     if warnings.is_empty() {
@@ -121,6 +129,7 @@ impl PyFrames {
         let wpf = words_per_frame
             .or_else(|| rows.first().map(|(_, w)| w.len()))
             .unwrap_or(fasm_xilinx::Architecture::Series7.words_per_frame());
+        check_words_per_frame(wpf)?;
         let mut frames = Frames::new(wpf);
         for (address, words) in &rows {
             if words.len() != wpf {
@@ -139,6 +148,7 @@ impl PyFrames {
         data: &[u8],
         words_per_frame: usize,
     ) -> PyResult<Bound<'py, PyFrames>> {
+        check_words_per_frame(words_per_frame)?;
         let (result, warnings) = py.detach(|| {
             let mut warnings = Vec::new();
             let result = Frames::read_frm(data, words_per_frame, &mut |w| {
@@ -161,9 +171,12 @@ impl PyFrames {
     fn py_new(frames: Option<&Bound<'_, PyAny>>, words_per_frame: Option<usize>) -> PyResult<Self> {
         let frames = match frames {
             Some(mapping) => Self::build(mapping, words_per_frame)?,
-            None => Frames::new(
-                words_per_frame.unwrap_or(fasm_xilinx::Architecture::Series7.words_per_frame()),
-            ),
+            None => {
+                let wpf =
+                    words_per_frame.unwrap_or(fasm_xilinx::Architecture::Series7.words_per_frame());
+                check_words_per_frame(wpf)?;
+                Frames::new(wpf)
+            }
         };
         Ok(PyFrames::new_from(frames))
     }
@@ -184,8 +197,13 @@ impl PyFrames {
             .is_ok_and(|a| self.frames.contains(a))
     }
 
-    fn __getitem__(&self, address: u32) -> PyResult<Vec<u32>> {
-        Ok(self.words(address)?.to_vec())
+    fn __getitem__(&self, address: &Bound<'_, PyAny>) -> PyResult<Vec<u32>> {
+        // Any key that is not a frame address (a negative or too large
+        // integer, another type) is simply missing, as in a `dict`.
+        match address.extract::<u32>() {
+            Ok(a) => Ok(self.words(a)?.to_vec()),
+            Err(_) => Err(PyKeyError::new_err(address.clone().unbind())),
+        }
     }
 
     fn __iter__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyIterator>> {
