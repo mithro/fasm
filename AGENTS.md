@@ -11,5 +11,6 @@ All planning and progress state lives in `docs/rewrite/`:
 To resume the work: read those four files in that order, pick the next task
 whose dependencies are complete, and follow WORKFLOW.md.
 
-Working branch: `claude/epic-goldberg-uc7xqf` (repository `mithro/fasm`).
+Working branch: `claude/epic-goldberg-uc7xqf` (repository `mithro/fasm`);
+the upstream synced base lives on `claude/master`, never push `master`.
 Never push anywhere else and never send changes upstream.

@@ -821,5 +821,6 @@ what happened, branch/commit references, open issues.
   conda env and the upstream VTR checkout) started (Opus); T8.2 running.
 * GitHub access granted: claude/epic-goldberg-uc7xqf pushed (483 commits);
   pushes now succeed after every merge. Local master holds the T0.1
-  fast-forward to upstream ffafe82 (50 commits) and is left for the user
-  to push.
+  fast-forward to upstream ffafe82 (50 commits); on the user's
+  instruction it is pushed as `origin/claude/master` (not `master`), which
+  local `master` now tracks.
