@@ -57,12 +57,19 @@ for line in lines:
     if line.set_feature is not None:
         print(line.set_feature.feature, line.set_feature.value)
 
-# Print a single line, or a whole file, back to FASM text.
-text = fasm.fasm_line_to_string(lines[0])
-text = '\n'.join(fasm.fasm_tuple_to_string(l) for l in lines) + '\n'
+# Print a whole file back to FASM text (or fasm.fasm_tuple_to_string(lines,
+# canonical=True) for canonical form, like `fasm --canonical`).
+text = fasm.fasm_tuple_to_string(lines)
 
-# Merge and canonicalise a set of lines (used by `fasm --canonical`/`--merge`).
-merged = fasm.merge_and_sort(fasm.merge_features(lines))
+# fasm_line_to_string prints one FasmLine (a generator; non-canonical mode
+# always yields exactly one string).
+line_text = next(fasm.fasm_line_to_string(lines[0]))
+
+# Merge and sort a model: fasm.output, not fasm (the `fasm` command line
+# tool itself has no merge option; this is a library-only operation).
+import fasm.output
+merged = fasm.output.merge_and_sort(lines)
+text = fasm.fasm_tuple_to_string(merged)
 ```
 
 `fasm.model` defines the namedtuples every parser returns, so results
@@ -75,18 +82,21 @@ identically):
 * `Annotation(name, value)`
 * `ValueFormat`: `PLAIN`, `VERILOG`, `BINARY`, `HEX`, `DECIMAL`
 
-`fasm.output` has the string-formatting building blocks
+`fasm` itself has the string-formatting building blocks
 (`fasm_value_to_str`, `set_feature_width`, `set_feature_to_str`,
-`fasm_line_to_string`, `fasm_tuple_to_string`, `merge_features`,
-`merge_and_sort`) and `fasm.tool` is the implementation behind the `fasm`
-console script (`fasm --help` for its options; see COMPAT.md for its
-exact compatibility scope).
+`canonical_features`, `fasm_line_to_string`, `fasm_tuple_to_string`);
+`fasm.output` (a separate module, not re-exported by `fasm`) has
+`merge_features`, `merge_and_sort` and `MergeModel`; `fasm.tool` is the
+implementation behind the `fasm` console script (`fasm --help` for its
+options; see COMPAT.md for its exact compatibility scope).
 
 ### Choosing a parser explicitly
 
-`fasm.parser.rust`, `fasm.parser.textx` and (when built) `fasm.parser.antlr`
-each expose the same `parse_fasm_filename`/`parse_fasm_string` pair, so you
-can bypass `fasm.parser.implementation`'s default:
+`fasm.parser.rust` and `fasm.parser.textx` (there is no `fasm.parser.antlr`
+module: the pre-rewrite ANTLR/setup.py build is gone, and `--parser antlr`
+is just an alias for `'rust'`, see below) each expose the same
+`parse_fasm_filename`/`parse_fasm_string` pair, so you can bypass
+`fasm.parser.implementation`'s default:
 
 ```python
 from fasm.parser import rust as fasm_rust
@@ -104,10 +114,11 @@ otherwise silently fall back to the pure Python implementation, with
 identical results either way (`docs/rewrite/DESIGN-python.md` documents
 the measurements):
 
-* `fasm.output.fasm_tuple_to_string` / `fasm.fasm_tuple_to_string`:
-  formats one `FasmLine`, or an iterable of them (joined with `\n`).
-* `fasm.output.merge_and_sort`: merges and canonically sorts an iterable
-  of `FasmLine`s, matching `MergeModel`'s semantics.
+* `fasm.fasm_tuple_to_string`: formats a whole model (an iterable of
+  `FasmLine`s) back to FASM text.
+* `fasm.output.merge_and_sort`: merges and sorts a model, matching
+  `MergeModel`'s semantics (not necessarily canonical form: pass the
+  result through `fasm_tuple_to_string(..., canonical=True)` for that).
 
 Neither function needs the Rust extension to be present; both are pure
 Python fallbacks otherwise, so code that imports them keeps working on
