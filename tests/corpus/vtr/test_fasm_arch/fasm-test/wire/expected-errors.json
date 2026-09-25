@@ -1,0 +1,6 @@
+{
+  "genfasm-rr-metadata.fasm": {
+    "line": 334,
+    "source": "VTR genfasm with test_fasm.cpp's rr edge metadata (<src>_<sink>_<switch> features start with a digit, not a FASM identifier), T7.4"
+  }
+}
