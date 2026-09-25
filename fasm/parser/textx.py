@@ -17,6 +17,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""The pure Python, textX based FASM parser (`fasm.parser.textx`).
+
+Always installed and importable (no compiled extension needed), used as
+the fallback when the Rust extension module (`fasm.parser.rust`) cannot
+be imported. Implements the same `parse_fasm_string`/`parse_fasm_filename`
+API as the other parser modules, built on the textX grammar in
+`fasm/parser/fasm.tx`.
+"""
+
 from __future__ import print_function
 import textx
 import os.path
@@ -66,6 +75,7 @@ def verilog_value_to_int(verilog_value):
 
 
 def set_feature_model_to_tuple(set_feature_model):
+    """ Convert a textX SetFeature grammar object into a SetFasmFeature. """
     start = None
     end = None
     value = 1
@@ -101,6 +111,7 @@ def set_feature_model_to_tuple(set_feature_model):
 
 
 def get_fasm_metamodel():
+    """ Build the textX metamodel from `fasm/parser/fasm.tx` (the grammar). """
     return textx.metamodel_from_file(
         file_name=os.path.join(os.path.dirname(__file__), 'fasm.tx'),
         skipws=False)

@@ -17,6 +17,24 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""The ``fasm`` package: parsing, formatting and merging FASM files.
+
+This is the public API of the FPGA Assembly (FASM) Parser and Generation
+library. It re-exports the model types from :mod:`fasm.model`
+(:class:`~fasm.model.FasmLine`, :class:`~fasm.model.SetFasmFeature`,
+:class:`~fasm.model.Annotation`, :class:`~fasm.model.ValueFormat`), the
+parsing entry points from :mod:`fasm.parser`
+(:func:`~fasm.parser.parse_fasm_filename`,
+:func:`~fasm.parser.parse_fasm_string`), and the output/formatting
+helpers below (:func:`fasm_line_to_string`, :func:`fasm_tuple_to_string`,
+:func:`merge_features`, :func:`merge_and_sort`, ...). The default parser
+implementation is a Rust extension module (``fasm._fasm_rs``, built from
+``rust/fasm-python``); a pure Python ``textX`` based parser is always
+installed as a fallback (see :mod:`fasm.parser`). See ``docs/PYTHON.md``
+for a full API tour and ``docs/rewrite/COMPAT.md`` for any documented
+behavioural difference from the original implementation.
+"""
+
 from __future__ import print_function
 
 import os.path
@@ -78,6 +96,10 @@ def fasm_value_to_str(value, width, value_format):
 
 
 def set_feature_width(set_feature):
+    """ Return the bit width of a SetFasmFeature.
+
+    `end - start + 1`, or 1 for a scalar (start/end-less) feature.
+    """
     if set_feature.end is None:
         return 1
     else:
@@ -190,6 +212,14 @@ def canonical_features(set_feature):
 
 
 def fasm_line_to_string(fasm_line, canonical=False):
+    """ Convert a single FasmLine tuple back to FASM text.
+
+    Yields zero or more lines of text (a FasmLine with only a comment or
+    only annotations still yields output; a completely empty line yields
+    nothing). With ``canonical=True``, yields one line per canonical
+    single-bit feature (see :func:`canonical_features`) and omits
+    comments/annotations, matching ``fasm --canonical``.
+    """
     if canonical:
         if fasm_line.set_feature:
             for feature in canonical_features(fasm_line.set_feature):

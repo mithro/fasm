@@ -17,6 +17,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+"""The FASM in-memory model: the namedtuples every parser returns.
+
+``fasm.parser.rust``, ``fasm.parser.textx`` and (when built)
+``fasm.parser.antlr`` all return instances of the types defined here
+(``FasmLine``, ``SetFasmFeature``, ``Annotation``, ``ValueFormat``), so
+results from any parser implementation are interchangeable
+(``isinstance``, ``==``, pickling, ``_replace`` all work identically).
+"""
+
 from collections import namedtuple
 import enum
 
