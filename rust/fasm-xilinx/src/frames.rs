@@ -297,6 +297,24 @@ impl Frames {
         words_per_frame: usize,
         warn: &mut dyn FnMut(&str),
     ) -> Result<Frames, FrmError> {
+        Self::read_frm_checked(data, words_per_frame, warn, None)
+    }
+
+    /// [`Frames::read_frm`] with prjuray-tools' check of the frame
+    /// addresses (`readFrames(frm_file, part)`): right after its address
+    /// is parsed, a line whose address `is_valid` rejects ends the read
+    /// with [`FrmErrorKind::InvalidFrame`] ("Frames file contains an
+    /// invalid frame"), before its word count is checked.
+    ///
+    /// # Errors
+    ///
+    /// See [`Frames::read_frm`]; [`FrmErrorKind::InvalidFrame`].
+    pub fn read_frm_checked(
+        data: &[u8],
+        words_per_frame: usize,
+        warn: &mut dyn FnMut(&str),
+        is_valid: Option<&dyn Fn(u32) -> bool>,
+    ) -> Result<Frames, FrmError> {
         let mut frames = Frames::new(words_per_frame);
         let mut words = Vec::with_capacity(words_per_frame);
         let mut lines = data.split(|&b| b == b'\n').enumerate().peekable();
@@ -318,6 +336,13 @@ impl Frames {
                 text: String::from_utf8_lossy(address_text).into_owned(),
                 kind,
             })? as u32;
+            if is_valid.is_some_and(|valid| !valid(address)) {
+                return Err(FrmError {
+                    line: line_no,
+                    text: String::from_utf8_lossy(address_text).into_owned(),
+                    kind: FrmErrorKind::InvalidFrame(address),
+                });
+            }
             let count = words_text.split(|&b| b == b',').count();
             if count != words_per_frame {
                 warn(&format!(
@@ -394,6 +419,9 @@ pub enum FrmErrorKind {
     InvalidArgument,
     /// Does not fit in 64 bits (`std::out_of_range`).
     OutOfRange,
+    /// The frame address (truncated to 32 bits) is not a frame of the
+    /// part ([`Frames::read_frm_checked`]).
+    InvalidFrame(u32),
 }
 
 /// A number of a `.frm` file that prjxray's reader cannot parse.
@@ -412,6 +440,7 @@ impl fmt::Display for FrmError {
         let what = match self.kind {
             FrmErrorKind::InvalidArgument => "not a hexadecimal number",
             FrmErrorKind::OutOfRange => "hexadecimal number out of range",
+            FrmErrorKind::InvalidFrame(_) => "not a frame of the part",
         };
         write!(f, "line {}: {what}: {:?}", self.line, self.text)
     }
@@ -620,5 +649,29 @@ mod tests {
             ]
         );
         assert!(a.diff(&a).is_empty());
+    }
+
+    #[test]
+    fn read_frm_checked_rejects_invalid_frames() {
+        let valid = |a: u32| a < 0x10;
+        let mut warnings = Vec::new();
+        let text = "0x1 1,2\n0x2 1\n0x100000005 1,2\n0x20 1,2\n0x3 zz\n";
+        let result = Frames::read_frm_checked(
+            text.as_bytes(),
+            2,
+            &mut |w| warnings.push(w.to_owned()),
+            Some(&valid),
+        );
+        let error = result.unwrap_err();
+        // The address is truncated to 32 bits before the check (line 3 is
+        // frame 5), the check comes before the word count and the words.
+        assert_eq!(error.line, 4);
+        assert_eq!(error.kind, FrmErrorKind::InvalidFrame(0x20));
+        assert_eq!(warnings, ["Frame 2: found 1 words instead of 2"]);
+        let ok = Frames::read_frm_checked(b"0x1 1,2\n", 2, &mut |_| {}, Some(&valid)).unwrap();
+        assert_eq!(ok.get(1), Some(&[1, 2][..]));
+        let truncated =
+            Frames::read_frm_checked(b"0x100000005 1,2\n", 2, &mut |_| {}, Some(&valid));
+        assert_eq!(truncated.unwrap().get(5), Some(&[1, 2][..]));
     }
 }

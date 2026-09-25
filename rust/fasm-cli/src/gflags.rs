@@ -27,7 +27,8 @@
 //! * errors (unknown flags, missing or illegal values) are collected per
 //!   flag name and printed together on stderr, sorted by name, exit code
 //!   1, after the help flags have been handled;
-//! * `--help`/`--helpful`, `--helpshort`, `--helpon=M`, `--helpmatch=S`,
+//! * `--help`/`--helpful` (`--helpfull` for the gflags copy of
+//!   prjuray-tools, [`Gflags`]), `--helpshort`, `--helpon=M`, `--helpmatch=S`,
 //!   `--helppackage`, `--helpxml`, `--version` print to stdout like
 //!   gflags (exit code 1, 0 for `--version`), with the flags of each
 //!   source file listed under `Flags from <file>:`;
@@ -112,8 +113,35 @@ const GFLAGS_CC: &str = "third_party/gflags/src/gflags.cc";
 const COMPLETIONS_CC: &str = "third_party/gflags/src/gflags_completions.cc";
 const REPORTING_CC: &str = "third_party/gflags/src/gflags_reporting.cc";
 
-/// The flags gflags itself defines.
+/// The gflags copy a tool is built with. prjxray's
+/// `third_party/gflags` and prjuray-tools' (gflags 2.2.2) differ in one
+/// flag name: `--helpful` (prjxray) is `--helpfull` in prjuray-tools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Gflags {
+    /// prjxray's copy: `--helpful`.
+    #[default]
+    Prjxray,
+    /// prjuray-tools' copy: `--helpfull`.
+    Prjuray,
+}
+
+impl Gflags {
+    /// The name of the "all flags" help flag.
+    pub const fn help_full(self) -> &'static str {
+        match self {
+            Gflags::Prjxray => "helpful",
+            Gflags::Prjuray => "helpfull",
+        }
+    }
+}
+
+/// The flags gflags itself defines (prjxray's copy).
 pub fn builtin_flags() -> Vec<Flag> {
+    builtin_flags_of(Gflags::Prjxray)
+}
+
+/// The flags gflags itself defines, in the given copy.
+pub fn builtin_flags_of(version: Gflags) -> Vec<Flag> {
     let f = |name, file, ty, default, help| Flag {
         name,
         file,
@@ -167,7 +195,7 @@ pub fn builtin_flags() -> Vec<Flag> {
             "show help on all flags [tip: all flags can have two dashes]",
         ),
         f(
-            "helpful",
+            version.help_full(),
             REPORTING_CC,
             Bool,
             "false",
@@ -227,6 +255,8 @@ pub struct Program {
     pub usage: Vec<u8>,
     /// The program's own flags (the gflags ones are added).
     pub flags: Vec<Flag>,
+    /// The gflags copy (`--helpful` or `--helpfull`).
+    pub gflags: Gflags,
 }
 
 /// The parsed flags and the remaining (positional) arguments.
@@ -519,7 +549,7 @@ pub fn parse(
     args: &[Vec<u8>],
     getenv: &dyn Fn(&str) -> Option<Vec<u8>>,
 ) -> Outcome {
-    let mut flags = builtin_flags();
+    let mut flags = builtin_flags_of(program.gflags);
     flags.extend(program.flags.iter().cloned());
     // GetAllFlags order: file name, then flag name.
     flags.sort_by(|a, b| (a.file, a.name).cmp(&(b.file, b.name)));
@@ -675,7 +705,7 @@ pub fn parse(
     if is_true(&state, "helpshort") {
         return help(view.usage_matching(&progname_substrings()));
     }
-    if is_true(&state, "help") || is_true(&state, "helpful") {
+    if is_true(&state, "help") || is_true(&state, program.gflags.help_full()) {
         return help(view.usage_matching(&[]));
     }
     let helpon = get(&state, "helpon");
@@ -953,6 +983,7 @@ mod tests {
                     help: "a number",
                 },
             ],
+            gflags: Gflags::Prjxray,
         }
     }
 

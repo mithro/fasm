@@ -103,6 +103,9 @@ FRM_FILES = {
                          '\n'),
     'ecc_bits.frm': '0x00400100 ' + ','.join(['0xFFFFFFFF'] * 101) + '\n',
     'empty.frm': '',
+    # Frames of prjxray's UltraScale (123 words) and UltraScale+ (93).
+    'us.frm': '0x00400100 ' + ','.join(['0x00010001'] * 123) + '\n',
+    'usp.frm': '0x00400100 ' + ','.join(['0x00010001'] * 93) + '\n',
 }
 
 
@@ -247,6 +250,13 @@ RUN_CASES = [
     # A .frm that is not a regular file.
     BASE + ['--frm_file=/proc/version'],
 ] + [BASE + ['--frm_file=' + TMP + '/' + name] for name in sorted(FRM_FILES)]
+# prjxray's UltraScale(+): Series7 parts, frame addresses and ECC with 123 /
+# 93 words per frame.
+RUN_CASES += [
+    BASE + ['--frm_file=' + TMP + '/' + name, '--architecture=' + arch]
+    for name in ('us.frm', 'usp.frm', 'extra_frames.frm')
+    for arch in ('UltraScale', 'UltraScalePlus')
+]
 
 
 @needs_db
@@ -265,9 +275,9 @@ def test_other_part_file(tmp_path):
 
 
 @needs_db
-@pytest.mark.parametrize('arch', ['UltraScale', 'UltraScalePlus', 'Spartan6'])
+@pytest.mark.parametrize('arch', ['Spartan6'])
 def test_unsupported_architecture(tmp_path, arch):
-    """Documented difference: only Series7 is implemented."""
+    """Documented difference: Spartan6 is not implemented."""
     code, _, stderr, bit = run(
         RUST_CLI, BASE + ['--frm_file=' + SMOKE, '--architecture=' + arch],
         tmp_path)

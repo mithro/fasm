@@ -42,6 +42,9 @@
 
 use std::io::Write;
 
+use fasm_xilinx::bitstream::BitstreamFormat;
+use fasm_xilinx::Architecture;
+
 use crate::argparse::{Argument, ArgumentParser, Outcome, Values};
 use crate::fasm2frames::{
     build_frames, create_output, parser as fasm2frames_parser, path, write_frm_file, Environment,
@@ -180,7 +183,7 @@ fn assemble(
             String::from_utf8_lossy(&command)
         )
     };
-    let part_data = match read_part(&part_file) {
+    let part_data = match read_part(&part_file, Architecture::Series7) {
         Ok(part) => part,
         Err(PartError::Abort(message)) => {
             // The tool dies with SIGABRT; the shell (`/bin/sh`, dash)
@@ -200,6 +203,7 @@ fn assemble(
     let result = write_frames(
         &frames,
         &part_data,
+        &BitstreamFormat::native(Architecture::Series7),
         &frm_name,
         &part,
         &bit_out,

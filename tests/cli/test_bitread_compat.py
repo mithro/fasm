@@ -218,6 +218,13 @@ RUN_CASES = [
     ['--part_file=' + SMOKE_T, SMOKE_T],
     ['--part_file=' + OTHER_PART_FILE, '-z', '-y', SMOKE_T],
     ['-y', PART_FILE],
+    # prjxray's UltraScale(+): Series7 parts, frame addresses and ECC with
+    # 123 / 93 words per frame.
+    [P, '-z', '-y', '--architecture=UltraScale', SMOKE_T],
+    [P, '-x', '-C', '--architecture=UltraScalePlus', SMOKE_T],
+    [P, '-z', '-o', TMP + '/out.txt', '--architecture=UltraScalePlus',
+     SMOKE_T],
+    [P, '-p', '-o', TMP + '/out.pgm', '--architecture=UltraScale', SMOKE_T],
 ] + [[P, '-z', '-y', '--aux', TMP + '/out.aux', TMP + '/' + name]
      for name in sorted(inputs()) if name not in ('smoke.bit', )]
 
@@ -269,9 +276,9 @@ def test_frm_out_extension(tmp_path):
     assert frm.read_text().splitlines() == expected
 
 
-@pytest.mark.parametrize('arch', ['UltraScale', 'UltraScalePlus', 'Spartan6'])
+@pytest.mark.parametrize('arch', ['Spartan6'])
 def test_unsupported_architecture(tmp_path, arch):
-    """Documented difference: only Series7 is implemented."""
+    """Documented difference: Spartan6 is not implemented."""
     result = subprocess.run(
         [str(RUST_CLI), '--architecture=' + arch,
          str(SMOKE)],
