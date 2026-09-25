@@ -162,11 +162,14 @@ for entry in "${DATA_FILES[@]}"; do
 done
 
 mkdir -p "$BUILD/classes"
-javac -nowarn -d "$BUILD/classes" -cp "$BUILD/$RW_JAR" \
-    "$REPO_ROOT/tools/e2e/rapidwright/RwCheck.java" \
-    "$REPO_ROOT/tools/e2e/rapidwright/RwDesign.java" 2>&1 | grep -v '^Picked up' || true
-test -f "$BUILD/classes/RwCheck.class"
-test -f "$BUILD/classes/RwDesign.class"
+if ! javac -nowarn -d "$BUILD/classes" -cp "$BUILD/$RW_JAR" \
+        "$REPO_ROOT/tools/e2e/rapidwright/RwCheck.java" \
+        "$REPO_ROOT/tools/e2e/rapidwright/RwDesign.java" \
+        > "$BUILD/javac.log" 2>&1; then
+    grep -v '^Picked up' "$BUILD/javac.log" >&2
+    echo "setup-rapidwright: javac failed" >&2
+    exit 1
+fi
 
 PFI_COMMIT="04a02101d1f7f03a2d33716192fb478e1e8605af"
 SCHEMA_COMMIT="c985b4648e66414b250261c1ba4cbe45a2971b1c"
@@ -177,10 +180,16 @@ if [ "$INTERCHANGE" = 1 ]; then
         python3 -m venv "$BUILD/venv-interchange"
     fi
     V="$BUILD/venv-interchange/bin/pip"
-    timeout 1800 "$V" install -q --only-binary=:all: pycapnp==1.3.0 \
-        python-sat==1.9.dev15 PyYAML==6.0.3
-    timeout 1800 "$V" install -q --no-deps \
-        "git+https://github.com/chipsalliance/python-fpga-interchange.git@${PFI_COMMIT}"
+    # Installed and at the pins already: nothing to do.
+    if ! "$V" freeze 2>/dev/null | grep -qx 'pycapnp==1.3.0' || \
+            ! "$V" freeze 2>/dev/null | grep -qx 'python-sat==1.9.dev15' || \
+            ! "$V" freeze 2>/dev/null | grep -qx 'PyYAML==6.0.3' || \
+            ! "$V" freeze 2>/dev/null | grep -q "python-fpga-interchange.git@${PFI_COMMIT}"; then
+        timeout 1800 "$V" install -q --only-binary=:all: pycapnp==1.3.0 \
+            python-sat==1.9.dev15 PyYAML==6.0.3
+        timeout 1800 "$V" install -q --no-deps \
+            "git+https://github.com/chipsalliance/python-fpga-interchange.git@${PFI_COMMIT}"
+    fi
     if [ ! -d "$BUILD/fpga-interchange-schema/.git" ]; then
         timeout 600 git clone -q https://github.com/chipsalliance/fpga-interchange-schema.git \
             "$BUILD/fpga-interchange-schema"
