@@ -345,6 +345,17 @@ and compares the `.frm` files, stdout, exit codes and stderr modulo the
 normalisation rules below; `tests/cli/test_fasm2frames_compat.py` covers
 the command line (help at many widths, argparse errors, the `XRAY_*`
 variables, error cases).
+`make xilinx-difftest-all` (T5.9) runs the same comparison, and the
+bitstream tools and `xcfasm`, for every part of the artix7, kintex7,
+spartan7 and zynq7 databases on a generated corpus that sets every
+segbits feature and pseudo PIP of the part (`tools/gen-xilinx-corpus.py`,
+`DESIGN-xilinx-db.md` §8.9); `tests/cli/test_xilinx_corpus.py` checks
+one part against golden reference results. First full run (125 parts,
+2651 fasm2frames runs, 8814 xc7frames2bit/bitread runs, 375 xcfasm runs,
+68.6 minutes with 4 jobs): no difference beyond the rules below; the only
+"explained" runs are the 125 of `errors/value_range.fasm` (one per part),
+which is rule 4, and rule 1 applied to the other error files
+(`FasmLookupError`, `KeyError`, `FasmInconsistentBits`).
 
 ### Differences
 

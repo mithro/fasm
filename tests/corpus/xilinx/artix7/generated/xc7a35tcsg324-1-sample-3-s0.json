@@ -1,0 +1,123 @@
+{
+ "comment": "Reference results (tests/oracle/fasm2frames-oracle) for the corpus of tools/gen-xilinx-corpus.py; written by python3 tests/cli/test_xilinx_corpus.py --write-goldens",
+ "files_sha256": {
+  "errors/absent_tile.fasm": "17c2f83a7323ef4c7e717969c8ba36cacf25ec9d05514bce37a4b328063111ed",
+  "errors/inconsistent.fasm": "a5c7c5ed682f698903e7f2a566fb26dd11ea337d325c80d18cfed78ffaefb55a",
+  "errors/lookup_errors.fasm": "38f792dc6aef55fb82c6c09d7ab4e8f7e1648f0bc88fc9724e1b98458a74d7e0",
+  "errors/stepdown_unbonded.fasm": "90cefd486c17d1caff37456917955133f41d0880e768d924fa99decbb2454db2",
+  "errors/value_range.fasm": "de4a51d690addde1935e4ab3cef327b920bd8ae29612aeb2bf14126c7d8d96cc",
+  "features-10.fasm": "5a2fdc2b9863971d2ebc9c150f9cfaffe306f7631c8a6e9fa8d18ebe78132d1b",
+  "features-11.fasm": "88438351ce5755bfea67bce7d5a88288d137b3745a51b93786d7d08c8adf1a40",
+  "features-2.fasm": "09418b5cbe28276075025aace6bf196481b216955b623f495fe8e038a558b2e1",
+  "features-3.fasm": "1cc3ecd0c7033c159e4c237c0a88a231f38c9218ba9981f059abffd554d562ff",
+  "features-4.fasm": "39f024681776fdf3bb051b4678d1a56ce0a71a3ddd0421a14c183e866b75bc38",
+  "features-5.fasm": "a3a3fa1b1fb747e1a6e776b161fa890027d5521e959444663b3fc81aae66bd24",
+  "features-6.fasm": "23c136311e4d4889900ed513ffb45d161bf25113afbcd23b652ed0ea9218629e",
+  "features-7.fasm": "da4fba14b69fa480af7adf4900366f72d81a2dd01f3711ae0ffb8583ea1a9cc0",
+  "features-8.fasm": "b781e78c41eee190c86230896be6998ad3ca1ffaedc74cda3bfe6eab6e3bc7df",
+  "features-9.fasm": "461a5dde55310e7487c9522dfdcab07cfbc23b7bf27406299a8eea5e525caecf",
+  "features.fasm": "2198bee69c209c12912ba5b035d9e71856d3d96c869da3b676979417e88cde03"
+ },
+ "generator": {
+  "generator_version": 2,
+  "seed": "0",
+  "tiles": [
+   "sample",
+   "3"
+  ]
+ },
+ "part": "xc7a35tcsg324-1",
+ "prjxray_db_commit": "0a0addedd73e7e4139d52a6d8db4258763e0f1f3",
+ "reference": {
+  "f4pga_xc_fasm_commit": "25dc605c9c0896204f0c3425b52a332034cf5e5c",
+  "prjxray_commit": "c9f02d8576042325425824647ab5555b1bc77833",
+  "source": "tests/oracle/build/xilinx/status.json"
+ },
+ "runs": {
+  "errors/absent_tile.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "KeyError: 'GTP_CHANNEL_0_MID_RIGHT_X0Y0'\n"
+  },
+  "errors/inconsistent.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "prjxray.fasm_assembler.FasmInconsistentBits: FASM line \"BRAM_L_X6Y10.RAMB18_Y0.READ_WIDTH_B_18 { why = \"conflicts\" }\" wanted to set bit (4195099, 21, 13) but was cleared by FASM line \"BRAM_L_X6Y10.RAMB18_Y0.READ_WIDTH_B_1\"\n"
+  },
+  "errors/lookup_errors.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "sha256:dd73dbc3a018e101443accd9b76a8cf70a3c023cef0ccce6cba0695a54465622"
+  },
+  "errors/stepdown_unbonded.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "KeyError: 'LIOB33_X0Y147'\n"
+  },
+  "errors/value_range.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "<value range error>"
+  },
+  "features-10.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "d51517c887a7a59922e43dda2799b468ae17084b9a109346d295cb4dcf21bb3e",
+   "stderr": ""
+  },
+  "features-11.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "e23b0ad8f27947181bb921bcefd5f5c1f4922180a6de3982fd3c1dfc2d0af6f0",
+   "stderr": ""
+  },
+  "features-2.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "e54289574bcf8145dcd0972d86fc5f7af9b4de3325c6e8a1a02b9dc238f69fa9",
+   "stderr": ""
+  },
+  "features-3.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "5862a4729262c8d14e0ca90d0baec1cb7e798c2caedfcdb7a4c470339faf4801",
+   "stderr": ""
+  },
+  "features-4.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "27fe49cfd039852de7540b3b56894ca98b493f899c1d2252baf43426c6f24f67",
+   "stderr": ""
+  },
+  "features-5.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "f6a1a5e6b5c181adf2deddca70396a5eaa15265e6b3dcbe7c94a2341adcc3f99",
+   "stderr": ""
+  },
+  "features-6.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "fae42e0b8384099f9221355f6f87c081e365877472f84385d96041fa95ac975c",
+   "stderr": ""
+  },
+  "features-7.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "ef4c647712ada2afba9dd99c1237557cda2d7915cca704dd28d56b3fc1a3bb2a",
+   "stderr": ""
+  },
+  "features-8.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "3358e62fa1b8ff3efbe187326fdb2bdff2420929bd502eb77f1e0b36f14e9741",
+   "stderr": ""
+  },
+  "features-9.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "71d3ebf1e1b308753f171a99add7cf69cd6627cafbf0453e8a1ff08d95f9c27f",
+   "stderr": ""
+  },
+  "features.fasm[dense]": {
+   "exit_code": 0,
+   "frm_sha256": "37dbe3f927445cce68c69c5218288f699d4593383ab0412262f83cecf2ac8d58",
+   "stderr": "sha256:fe9230ac0296b2f4f969275f656ee895e8e0318cec6951840688ef2ad6b10191"
+  },
+  "features.fasm[sparse]": {
+   "exit_code": 0,
+   "frm_sha256": "80c5159964a61389c99ff145598df7a09c58ead5ad2a32691b117e9096e8d504",
+   "stderr": "sha256:fe9230ac0296b2f4f969275f656ee895e8e0318cec6951840688ef2ad6b10191"
+  }
+ }
+}

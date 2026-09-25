@@ -2543,6 +2543,218 @@ across remounts (then files are just re-hashed); use
 `CacheOptions::verify_contents` / `fasm-db-cache verify` where that
 matters.
 
+### 8.9 All-parts differential testing (T5.9)
+
+`tools/gen-xilinx-corpus.py` (generator), `tools/difftest-xilinx.py
+--family/--families` (comparison), `make xilinx-difftest-all`,
+`tests/cli/test_xilinx_corpus.py` (fast CI check). Usage and disk layout:
+`tests/oracle/README.md`, "All-parts differential test".
+
+**What is generated.** For one part of a prjxray-db family (stdlib only,
+deterministic for given `--tiles`, `--seed`, `--density`,
+`--max-per-tile`):
+
+* The generator reads what prjxray reads (the fabric from
+  `mapping/{parts,devices}.yaml`, `<fabric>/tilegrid.json`, the tile types
+  from the `tile_type_*.json` names, `segbits_<t>.db`,
+  `segbits_<t>.block_ram.db`, `ppips_<t>.db`, the part's `part.json`
+  `iobanks`, `package_pins.csv` and `required_features.fasm`) and runs a
+  Python model of prjxray's lookup (`TileSegbits.feature_to_bits`: pseudo
+  PIPs first, the exact name only for address 0, then
+  `feature_addresses`; `TileSegbitsAlias`: the aliased type's tables,
+  sites renamed, offset minus `start_offset`, the alias tile's own pseudo
+  PIPs) for every segbits key and pseudo PIP of every tile type (and
+  alias) of the grid, including the aliased type's pseudo PIPs under the
+  alias tile's names (e.g. `LIOB33_SING_*.IOB_DIFFI_IN0.IOB_PADOUT1` from
+  `ppips_liob33.db`: no bits on either side). The tiles of a type with
+  the same alias form a *group* (the bottom and top `_SING` IOB tiles of
+  a clock region are two groups of one type: `start_offset` 2 or 0,
+  different sites). Each result is a *unit* (`NAME` or `NAME[n]`) with
+  its bits relative to the tile. Keys that no FASM feature reaches are
+  listed in the manifest (`unreachable`: a `NAME[0]` shadowed by a plain
+  `NAME`, a key of another type, a site the alias map renames away): none
+  in the four families.
+* Units are placed on tiles of their type with a global bit map keyed
+  like prjxray's `frames` dict (frame, *unwrapped* word, bit): a unit fits
+  if none of its bits is already stored with the other value (bits past
+  the frame end, which prjxray drops, do not count). `--tiles first`: the
+  tiles in `tilegrid.json` order, each unit on the first tile where it
+  fits; `sample N` (default 3): N tiles per type, one random tile in each
+  of N equal slices of the type's tile list, each first given a random
+  conflict free subset (each unit with probability `--density`, default
+  0.5), then the units not placed yet go on the first of those (then of
+  further random tiles) where they fit; `all`: every tile gets a random
+  subset (8.07 M lines for xc7a35t). Units that conflict on every tile of
+  their type (exclusive options of types with few tiles, e.g. the
+  `CLK_BUFG_*` muxes or the `DRIVE`/`IOSTANDARD` options of the `*_SING`
+  IOB tiles) go to further files: `features-2.fasm`, ... (fresh bit map
+  each), so **every reachable unit of every group of the part is set at
+  least once**, except the STEPDOWN units below, over 5 to 22 files per
+  part. The generator asserts this at the end: per group, the distinct
+  units placed over all files plus those listed in `uncovered` are all
+  its units (manifest `coverage`; the tests check it too).
+* The part's `required_features.fasm` (zynq7) is stored first in every
+  file's bit map. The PUDC_B tile is kept free (so `--emit_pudc_b_pullup`
+  adds its pull-up). STEPDOWN: each group with a STEPDOWN feature gets
+  a *bonded* host tile (a STEPDOWN feature of a tile without IO bank is a
+  `KeyError` in `fasm2frames.py`), in as few banks as possible; the other
+  tiles of those banks are kept free, and the model replays
+  `fasm2frames.py`'s propagation (unused IOB sites of the banks get every
+  tag of the bank, `HCLK_IOI3_<loc>` gets `STEPDOWN`, with and without the
+  PUDC_B site in use) and moves any generated unit that would conflict
+  with it to the next file. Groups without a bonded tile cannot have
+  their STEPDOWN units placed (listed in `uncovered`, 4 units per part):
+  both `RIOB33_SING` groups on xc7a35tcpg236 and xc7a50tcpg236 (4 speed
+  grades each) and xc7z010clg225 (3), both `LIOB33_SING` groups on
+  xc7z020clg400 (3): 14 parts. (Generator version 1 chose one STEPDOWN
+  host per tile type, so the other `_SING` group's STEPDOWN units were
+  neither placed nor listed: 2-6 units on 111 parts, found by the review;
+  fixed in version 2.)
+* Lines: plain units as `F`, `F = 1` or `F = 1'b1`; the addresses of a
+  multi bit feature placed on a tile as ranges `F[hi:lo] = value` whose
+  set bits are those addresses (0 bits are never looked up, so ranges may
+  include unplaced addresses and up to two past the last one), in the
+  formats `W'hX`, `'hx`, `W'bB`, `W'dD` (below 2^32), plain decimal (below
+  2^31) and `W'oO` (at most 30 bits, i.e. 10 octal digits), which the
+  reference's ANTLR parser decodes correctly (see "Parser" in
+  `COMPAT.md`), single addresses as `F[n]`, `F[n] = 1` or
+  `F[n:n] = 1'b1`; two `= 0` disables per tile (`F = 0`,
+  `F[n+1:n] = 2'b00`) of units not placed there (no lookup); annotations
+  (`{ src = "src12", net = "net7" }`), end of line comments, comment and
+  blank lines. Block RAM `INIT_xx`/`INITP_xx` (`BLOCK_RAM` bus, up to 256
+  bit ranges) and the `_SING` tiles' wrapped (negative word) and dropped
+  (past the frame end, `frame_set: invalid word address` on stderr) bits
+  are included.
+* `errors/`: `lookup_errors.fasm` (unknown features, addresses past the
+  last one, a range with 1 bits past it, a gap address, a suffix on a
+  real feature, a feature of a bits block the tile lacks when a part has
+  one: batched `FasmLookupError`, every message in order),
+  `absent_tile.fasm` (a tile of a family type the part does not have, or
+  `X999Y999`, after lookup errors: `KeyError`, the earlier errors lost),
+  `value_range.fasm` (the ANTLR value range error, rule 4),
+  `inconsistent.fasm` (the first real conflict the packing met:
+  `FasmInconsistentBits`), `stepdown_unbonded.fasm` (`KeyError`).
+* `manifest.json`: options, files, per tile type counts, `uncovered`,
+  `unreachable`, the STEPDOWN banks and hosts, PUDC_B. `--expected-frm`
+  also writes the sparse `.frm` the model predicts for each features file.
+
+Default sizes (`sample 3`, density 0.5; generator version 2): 43-62 k
+lines per part (52 k lines, 11 features files and 5 error files for
+xc7a35tcsg324-1), 6.71 M lines and 1752 files over the 125 parts
+(version 1: 6.60 M lines, 2151 files);
+generation takes 2-6 s per part.
+
+**What is compared, per part** (`tools/difftest-xilinx.py --families
+artix7,kintex7,spartan7,zynq7 --all-parts`, parts in parallel with
+`--jobs`, each part's runs in sequence): `features.fasm` with the dense,
+`--sparse`, `--emit_pudc_b_pullup` and `--sparse --debug` flag sets (the
+first three also through `xc7frames2bit` and the 11 `bitread` flag sets
+on the reference `.bit`), once more `--sparse` with `FASM_XDB_CACHE=0` for
+the Rust tool (every other Rust run uses a per part cache directory,
+written by the first run and loaded by the others), the other features
+files `--sparse` (through `xc7frames2bit` and two `bitread` flag sets),
+the error files `--sparse`, and `xcfasm` with its three flag sets: the
+`.frm`, `.bit`, `bitread` outputs, stdout, stderr and exit codes byte for
+byte, with the normalisation rules of `make xilinx-difftest` (a run where
+rule 3 or 4 applied counts as "explained"). The reference results are
+cached on disk (key: command line, the contents of every input file, the
+reference wrappers, binaries and venv packages, the database commit), so
+a rerun only runs the Rust tools; large cached outputs (the `bitread`
+dumps) are kept as a SHA-256.
+
+**Run matrix** of the first full run (default options, all 125 parts,
+generator version 1): 2151 FASM files, 6.60 M lines; 2651 fasm2frames
+runs, 8814 xc7frames2bit/bitread runs and 375 xcfasm runs on each side.
+Version 2 (above) has fewer, fuller files (1752 files, 6.71 M lines), so
+fewer runs; its full run against the reference is still to be made:
+
+| family | parts | files | lines | fasm2frames | bitstream tools | xcfasm |
+|---|---|---|---|---|---|---|
+| artix7 | 88 | 1484 | 4 854 990 | 1836 | 6096 | 264 |
+| kintex7 | 16 | 184 | 687 111 | 248 | 864 | 48 |
+| spartan7 | 9 | 213 | 447 912 | 249 | 810 | 27 |
+| zynq7 | 12 | 270 | 610 462 | 318 | 1044 | 36 |
+
+**Results** (`make xilinx-difftest-all`, `ORACLE_DIR` the shared oracle
+of `tests/oracle/setup-xilinx.sh`, prjxray
+`c9f02d8576042325425824647ab5555b1bc77833`, f4pga-xc-fasm
+`25dc605c9c0896204f0c3425b52a332034cf5e5c`, prjxray-db
+`0a0addedd73e7e4139d52a6d8db4258763e0f1f3`; default corpus, `--jobs 4`,
+2026-09-24/25, run by the orchestrator):
+
+* **0 unexplained differences.** fasm2frames: 2651 runs, 2526 identical,
+  125 explained, 0 different; xc7frames2bit + bitread: 8814 runs, all
+  identical; xcfasm: 375 runs, all identical. 11840 reference runs and
+  11840 Rust runs.
+* The 125 explained runs are exactly one per part: `errors/value_range.fasm
+  [sparse]` (a feature value that does not fit its range, e.g. `F = 2` on
+  a one bit feature). This is the value range error already listed in the
+  `fasm2frames` section of `COMPAT.md` (rule 4): the reference's ANTLR
+  parser fails its assertion inside a ctypes callback and the tool dies
+  with `TypeError: 'NoneType' object is not iterable`, the Rust tool
+  reports `Exception: Parse error at L:C - value 2 does not fit ...`; both
+  exit with 1 and write an empty `.frm`. No other rule 3 or 4 case
+  occurred. Rule 1 (the reference's traceback dropped, the last line
+  compared exactly) applied 588 times, to every other error file:
+  `lookup_errors.fasm` (125, `FasmLookupError` with every message in
+  order), `absent_tile.fasm` (125, `KeyError`), `inconsistent.fasm` (125,
+  `FasmInconsistentBits`) and `stepdown_unbonded.fasm` (88: the parts that
+  have an unbonded IOB tile with a STEPDOWN feature, `KeyError`), plus the
+  125 `value_range.fasm` runs. Rule 2 did not apply (no syntax errors in
+  the generated corpus).
+* No Rust bug and no new reference quirk was found: the reference
+  behaviours the corpus reaches (lookup, alias tiles, wrapped and dropped
+  `_SING` bits with their `frame_set` warnings, pseudo PIPs, block RAM,
+  STEPDOWN propagation, PUDC_B pull-up including kintex7, required
+  features of zynq7, sparse zero filling, `--debug`, the bitstream writer
+  and reader on 125 parts) were already reproduced.
+* **Wall time 4114 s (68.6 min)** with `--jobs 4`. Per part (generation,
+  reference and Rust runs of that part in sequence) 46-271 s, median 91 s,
+  mean 130 s (16214 s in total); the Rust side and the generation are
+  7-15 s of it, so the reference costs about 40-260 s per part: the
+  xc7a200t parts (61 k lines, dense frames of 24 k addresses) take the
+  longest, 271 s. The earlier estimate from the §8.6 numbers (15-25 min)
+  was low because each part's large file goes through the reference
+  `fasm2frames` seven times (four variants, three `xcfasm` runs) and the
+  bitstream tools 3 x 12 times. A rerun with the result cache
+  (`<work-dir>/results`; the whole work directory, with the generated
+  corpora, was 549 MB) only runs the Rust tools: a few minutes. For a quick check, `make xilinx-difftest-quick` (or
+  `--parts-sample N`: N parts per family over as many fabrics and
+  packages as possible) runs 4 parts in about 2-3 minutes; the harness
+  prints an up front estimate (130 s per part) and an ETA after each part.
+* `tests/cli/test_xilinx_corpus.py` compares the Rust `fasm2frames` with
+  golden reference results for xc7a35tcsg324-1 (`--tiles sample 3`; one
+  run per file plus the dense run of `features.fasm`, with and without
+  the database cache: for generator version 1, 24 files and 25 runs
+  (`features.fasm` dense and sparse, 18 other features files, 5 error
+  files); for version 2, 16 files and 17 runs), recorded in
+  `tests/corpus/xilinx/artix7/generated/xc7a35tcsg324-1-sample-3-s0.json`
+  with the reference commits above. The test fails with the command to
+  regenerate the golden file when the generator or the fetched database
+  no longer match it.
+* The harness was also run over the whole matrix with the Rust tools on
+  both sides (`--oracle target/release/fasm2frames ...`): 326 s wall time
+  with `--jobs 4` (generation of all corpora included; 7-15 s per part);
+  corrupted cache entries (a changed `.frm`, a changed digest of a
+  `bitread` dump) are reported as differences.
+* Model cross check (no reference involved): the Rust `fasm2frames
+  --sparse` output equals the generator model's `--expected-frm` for
+  every features file of every part with three generator configurations
+  (`sample 3` density 0.5 seed 0: 1563 files; `first`; `sample 5` density
+  0.8 seed 7), again with generator version 2 (`sample 3`, 1164 features
+  files, dense `--emit_pudc_b_pullup` runs without error too), and for `--tiles all` on xc7a35tcsg324-1 (8.07 M lines, 19
+  files); every generated file assembles without error with the Rust
+  tool, dense and `--sparse --emit_pudc_b_pullup`, on all 125 parts
+  (including kintex7, whose PUDC_B features exist although
+  `fasm2frames.py` notes its IOSTANDARD choice is wrong for K70T). No
+  Rust bug was found this way.
+  `tests/cli/test_gen_xilinx_corpus.py` runs this cross check on the
+  test databases of `rust/fasm-xilinx/testdata` (and on xc7a35tcsg324-1
+  `--tiles first` when fetched), without reference tools.
+* Database facts found on the way: no unreachable segbits key in the four
+  families; the most exclusive options per tile type need up to 22 files
+  for the parts with few `_SING` IOB tiles.
+
 ## 9. Open questions / risks
 
 1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**

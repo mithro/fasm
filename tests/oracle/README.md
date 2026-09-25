@@ -533,6 +533,71 @@ when its prerequisite hasn't been set up:
    been run. All four tests passed on the container this was developed
    in (`4 passed in 0.88s`).
 
+### All-parts differential test (`make xilinx-difftest-all`, T5.9)
+
+`make xilinx-difftest` compares the Rust tools with these reference tools
+on the checked-in corpus (one artix7 part). `make xilinx-difftest-all`
+does it for **every part** of the four prjxray-db families (88 artix7,
+16 kintex7, 9 spartan7, 12 zynq7), on a synthetic corpus generated per
+part by `tools/gen-xilinx-corpus.py` (every segbits feature, block RAM
+segbits feature and pseudo PIP of every tile type of the part's grid,
+conflict free, over as many files as exclusive features need, plus an
+error corpus):
+
+```sh
+make xilinx-difftest-all                       # 4 families, all parts, 4 jobs
+make xilinx-difftest-quick                     # one part per family
+make xilinx-difftest-all XILINX_DIFFTEST_ALL_ARGS="--parts 'xc7a35t*'"
+python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
+    --oracle tests/oracle/fasm2frames-oracle ...   # one part
+```
+
+* Wall time (first run, `--jobs 4`, this container): **68.6 minutes** for
+  the 125 parts (46-271 s per part, mean 130 s, almost all of it in the
+  reference tools; xc7a200t parts are the slowest); a rerun from the
+  result cache takes a few minutes. `make xilinx-difftest-quick`
+  (`--parts-sample 1`: one part per family, different fabrics) takes
+  about 2-3 minutes. The harness prints an estimate at the start and an
+  ETA after each part.
+* Result of the first run (generator version 1; version 2 fixed the
+  STEPDOWN units of the second `_SING` alias group and adds the alias
+  tiles' pseudo PIPs, see §8.9): 2651 fasm2frames runs (2526 identical, 125
+  explained: the value range error of `errors/value_range.fasm`, rule 4
+  of the `fasm2frames` section of `docs/rewrite/COMPAT.md`), 8814
+  xc7frames2bit/bitread runs and 375 xcfasm runs, all identical; 0
+  unexplained differences.
+* Families missing from `$FASM_DB_CACHE` (default `tests/oracle/build/db`)
+  are fetched with `tools/fetch-db.sh` (after a free space check; the
+  four families take about 400 MiB checked out). `--db-cache` also takes
+  several directories separated by `:`.
+* Everything else goes to `XILINX_DIFFTEST_WORK` (default
+  `tests/oracle/build/difftest-xilinx`): `corpus/<family>/<part>/<opts>/`
+  (the generated files, reused while the generator, its options and the
+  database commit are unchanged; about 365 MB for all parts with the
+  default `--tiles sample 3`), `results/` (the reference results, keyed by
+  command line, input file contents, the reference tools and the database
+  commit; about 1.4 MB per part, 549 MB for the whole work directory
+  of a full run; a rerun only runs the Rust tools; delete
+  it or pass `--no-result-cache` after changing the oracle in a way its
+  key does not see) and `run/` (per part scratch, removed when the part is
+  done, including the part's Rust `FASM_XDB_CACHE` directory).
+* The output is one line per part as it finishes, then a table (part,
+  fabric, lines, files, fasm2frames and xcfasm runs identical / explained
+  / different, bitstream tool runs, seconds) and the totals;
+  `--json-report FILE` writes the rows. Exit status 1 on any unexplained
+  difference.
+* `tests/cli/test_xilinx_corpus.py` is the fast version for CI: the
+  xc7a35tcsg324-1 corpus (`--tiles sample 3`) through the Rust
+  `fasm2frames` with and without its database cache, against golden
+  reference results (`tests/corpus/xilinx/artix7/generated/`, written by
+  `python3 tests/cli/test_xilinx_corpus.py --write-goldens`).
+  `tests/cli/test_gen_xilinx_corpus.py` needs no reference tools: the
+  generator's own model of prjxray (`--expected-frm`) against the Rust
+  `fasm2frames` on the test databases.
+
+See `docs/rewrite/DESIGN-xilinx-db.md` §8.9 for what is generated and
+compared, the run matrix and the timings.
+
 ### What worked / what didn't
 
 On the container this was developed in (Ubuntu, `cmake` 3.28,
