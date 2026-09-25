@@ -13,7 +13,14 @@ name: wheels
 
 on:
   push:
-    branches: ['**']
+    # Not `branches: ['**']`: that would run this a second time for every
+    # commit already covered by a pull_request event (every branch this
+    # repository pushes to has an open PR against it in the normal
+    # workflow, see docs/rewrite/WORKFLOW.md), doubling the wheel/sdist
+    # build cost for no extra coverage. Limited to the branches releases
+    # actually get cut from/merged into, plus tags (a `v*` tag push is
+    # also what `publish` gates on, see that job).
+    branches: [master, claude/master, claude/epic-goldberg-uc7xqf]
     tags: ['v*']
   pull_request:
   # Lets a maintainer publish an already-built tag without pushing a new
@@ -25,13 +32,28 @@ on:
         type: boolean
         default: false
 
+# Least-privilege default (the `publish` job opts back into `id-token:
+# write` for itself); and cancel a superseded run on the same branch/PR
+# instead of letting redundant wheel builds pile up.
+permissions:
+  contents: read
+
+concurrency:
+  group: wheels-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # abi3 wheels: one wheel per platform/arch covers every CPython >= 3.9
   # (pyo3 "abi3-py39", see rust/fasm-python/Cargo.toml), with the
-  # `xilinx` feature on (the default). aarch64 Linux is emulated with
-  # QEMU (maturin-action sets it up); this is slow (~3-4x a native
-  # build) but the crate is small enough that it stays well within a
-  # normal CI budget.
+  # `xilinx` feature on (the default). The Linux aarch64 wheel is
+  # cross-compiled on the ubuntu-latest (x86_64) runner -- maturin-action
+  # installs the aarch64 Rust target and a manylinux cross container/
+  # linker for it (rust-cross's manylinux-cross images), it does not run
+  # the build under QEMU emulation (QEMU only comes in if maturin-action
+  # is also asked to run tests inside the target container, which this
+  # job does not do -- testing the aarch64 wheel happens separately, if
+  # at all, since none of this repository's runners are natively
+  # aarch64; see test-wheel's comment).
   wheels:
     name: wheel (${{ matrix.os }}, ${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -129,16 +151,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # `macos-latest` is an Apple Silicon (arm64) runner (as of this
+        # writing); it must install the `aarch64` wheel, not the
+        # `x86_64` one (pip refuses to install a wheel whose platform tag
+        # does not match the host). `macos-15-intel` is GitHub's current
+        # Intel (x86_64) macOS runner label, added here (test-only,
+        # cheap: it does not rebuild anything, just installs the
+        # `wheels` job's already-built x86_64 artifact) so that wheel
+        # gets tested natively too, instead of only cross-built and
+        # never run.
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
         include:
           - os: ubuntu-latest
             artifact: wheels-ubuntu-latest-x86_64
           - os: macos-latest
+            artifact: wheels-macos-latest-aarch64
+          - os: macos-15-intel
             artifact: wheels-macos-latest-x86_64
           - os: windows-latest
             artifact: wheels-windows-latest-x86_64
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.os == 'ubuntu-latest'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -151,6 +186,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pytest dist/*.whl
+      # tests/test_xilinx_python.py additionally compares fasm.xilinx
+      # against the Rust command line tools, found through FASM_CLI_DIR
+      # (same as python.yml's `test` job); only worth the extra `cargo
+      # build` on one leg of this matrix, not on every OS -- the
+      # Rust-side behaviour it exercises is not platform specific, and
+      # python.yml's own `test` job already runs it on every supported
+      # Python version.
+      - name: Build the Rust command line tools (ubuntu-latest only)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build --release -p fasm-cli
       - name: Run tests against the installed wheel
         # cwd outside the checkout, --import-mode=importlib: import the
         # installed fasm package, not the source tree (which has no
@@ -160,9 +205,16 @@ jobs:
         run: |
           mkdir -p "${RUNNER_TEMP}/pytest-wheel"
           cd "${RUNNER_TEMP}/pytest-wheel"
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            export FASM_CLI_DIR="${GITHUB_WORKSPACE}/target/release"
+            EXTRA_TESTS="${GITHUB_WORKSPACE}/tests/test_xilinx_python.py"
+          else
+            EXTRA_TESTS=""
+          fi
           python -m pytest --import-mode=importlib \
             "${GITHUB_WORKSPACE}/tests/test_simple.py" \
-            "${GITHUB_WORKSPACE}/tests/test_stubs.py"
+            "${GITHUB_WORKSPACE}/tests/test_stubs.py" \
+            ${EXTRA_TESTS}
 
   # Publishing to PyPI with trusted publishing (no stored token): OIDC
   # `id-token: write` exchanges this run's identity for a short-lived
@@ -172,17 +224,21 @@ jobs:
   #
   #   1. Publishing is the user's decision (docs/rewrite/TASKS.md T8.4 /
   #      AGENTS.md: this task prepares metadata and workflows only).
-  #   2. PyPI trusted publishing must be configured by a PyPI project
-  #      owner first: create the "fasm" project (or its first release) on
-  #      PyPI, then add a trusted publisher under
-  #      https://pypi.org/manage/project/fasm/settings/publishing/ (or,
-  #      for a brand new project, https://pypi.org/manage/account/publishing/)
-  #      with Owner=<the GitHub org/user>, Repository=fasm,
-  #      Workflow=wheels.yml, Environment=pypi. See docs/RELEASING.md.
-  #   3. The crates.io name `fasm` used by the Rust crates is already
+  #   2. PyPI trusted publishing must be configured first. The "fasm"
+  #      project already exists on PyPI (this project's own prior
+  #      package, see docs/RELEASING.md); an account that already
+  #      administers it adds a trusted publisher under
+  #      https://pypi.org/manage/project/fasm/settings/publishing/ with
+  #      Owner=<the GitHub org/user>, Repository=fasm,
+  #      Workflow=wheels.yml, Environment=pypi. See docs/RELEASING.md
+  #      ("Configuring PyPI trusted publishing") for the full steps and
+  #      the repository-URL decision (chipsalliance/fasm vs. mithro/fasm)
+  #      that Owner above depends on.
+  #   3. The crates.io name `fasm` used by the Rust crates is separately
   #      taken by an unrelated project (docs/RELEASING.md); this does not
-  #      block PyPI (crates.io and PyPI are separate namespaces) but is
-  #      worth knowing before the first release.
+  #      block PyPI (crates.io and PyPI are separate namespaces, and
+  #      PyPI's own "fasm" is this project's, not a collision) but is
+  #      worth resolving before a coordinated release of both.
   #
   # To enable an actual publish once trusted publishing is configured:
   # push a `v*` tag AND re-run (or dispatch) this workflow with the

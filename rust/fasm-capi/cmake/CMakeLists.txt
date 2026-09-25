@@ -26,8 +26,15 @@
 # what this repository's own tests and docs/CAPI.md use, and it needs no
 # extra CMake ExternalProject/Corrosion machinery to shell out to cargo);
 # this file is for projects that already drive their whole build with
-# CMake and would rather `add_subdirectory`/`ExternalProject_Add` this
-# directory, or configure+build+install it standalone:
+# CMake and would rather configure+build+install it standalone, or pull
+# it in with `ExternalProject_Add`/`FetchContent` (each runs this as its
+# own, separate `cmake --build`/`--install`, which is the right fit for a
+# `project()` of its own like this one; plain `add_subdirectory` is not
+# recommended here -- it would fold this file's own `project(fasm
+# LANGUAGES NONE)` into the parent build's directory scope instead of
+# keeping it a separate configure/build/install, and gets no benefit
+# from doing so since there is no CMake target here a parent build could
+# usefully depend on directly, only the install step's files):
 #
 #   cmake -S rust/fasm-capi/cmake -B build -DCMAKE_INSTALL_PREFIX=/some/prefix \
 #       -DCMAKE_BUILD_TYPE=Release
@@ -40,7 +47,10 @@
 # CMAKE_BUILD_TYPE-driven cargo profile switch: a C API consumer wants an
 # optimized library regardless of how it built the CMake side of things).
 
-cmake_minimum_required(VERSION 3.13)
+# 3.18, not this repository's usual minimum of 3.13 (rust/fasm-capi/
+# tests/c/CMakeLists.txt, generate-config.cmake): find_program()'s
+# REQUIRED keyword below needs it.
+cmake_minimum_required(VERSION 3.18)
 project(fasm LANGUAGES NONE)
 
 include(GNUInstallDirs)
@@ -63,6 +73,12 @@ file(GLOB_RECURSE FASM_RUST_SOURCES CONFIGURE_DEPENDS
     "${FASM_REPO_ROOT}/rust/fasm/src/*.rs"
     "${FASM_REPO_ROOT}/rust/fasm-xilinx/src/*.rs"
     "${FASM_REPO_ROOT}/rust/fasm-capi/src/*.rs")
+list(APPEND FASM_RUST_SOURCES
+    "${FASM_REPO_ROOT}/Cargo.toml"
+    "${FASM_REPO_ROOT}/rust/fasm/Cargo.toml"
+    "${FASM_REPO_ROOT}/rust/fasm-xilinx/Cargo.toml"
+    "${FASM_REPO_ROOT}/rust/fasm-xilinx/build.rs"
+    "${FASM_REPO_ROOT}/rust/fasm-capi/Cargo.toml")
 
 add_custom_command(
     OUTPUT "${FASM_SHARED_LIB}" "${FASM_STATIC_LIB}"
