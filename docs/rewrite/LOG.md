@@ -591,3 +591,9 @@ what happened, branch/commit references, open issues.
   real numbers; the 125 explained runs are exactly errors/value_range.fasm
   = COMPAT rule 4, the 588 traceback normalisations are exactly the error
   files). Independent review (Opus) started; T6.2 running.
+* T5.9 review (Opus): independent coverage checker, cache keying, rule
+  classification, determinism across Python 3.10-3.13, quick target 127 s
+  all fine. REQUEST CHANGES: STEPDOWN units of the second _SING alias group
+  were silently skipped on all 125 parts (host chosen per tile type, not
+  per alias group) and the coverage tests could not detect drops; run
+  count typo in §8.9. Fixes requested; golden must be regenerated after.
