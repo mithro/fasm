@@ -213,6 +213,19 @@ PARSE_ERROR_RE = re.compile(r'^Exception: Parse error at (\d+):(\d+) - .*$',
                             re.S)
 
 
+# The Rust parser's messages for the value range errors of rule 4 (a value
+# wider than its range or declared width, an address range whose end is
+# before its start).
+VALUE_RANGE_MESSAGE_RE = re.compile(r'does not fit|before its start')
+
+
+def is_rust_value_range_error(stderr):
+    """The Rust side of rule 4: a parse error about a value range."""
+    return bool(
+        PARSE_ERROR_RE.match(stderr)
+        and VALUE_RANGE_MESSAGE_RE.search(stderr.split('\n', 1)[0]))
+
+
 def strip_traceback(stderr):
     """Rule 1: removes the traceback header and frames."""
     lines = stderr.split('\n')
@@ -444,7 +457,7 @@ def compare(case,
         o_err = strip_traceback(o_err)
     o_type, _ = exception_type(o_err)
     if (CTYPES_MARKER in o_err and o_err.rstrip('\n').endswith(NONE_TYPE)
-            and PARSE_ERROR_RE.match(r[2])):
+            and is_rust_value_range_error(r[2])):
         # Rule 4: ANTLR value range error.
         rules['4-value-range'] += 1
         if o[0] != 1 or r[0] != 1:
@@ -635,7 +648,7 @@ def compare_xcfasm(case, tools, tmpdir, runner=PLAIN_RUNNER, rust_env=None):
         rules['1-traceback'] += 1
     o_type, _ = exception_type(o_err)
     if (CTYPES_MARKER in o_err and o_err.rstrip('\n').endswith(NONE_TYPE)
-            and PARSE_ERROR_RE.match(r_err)):
+            and is_rust_value_range_error(r_err)):
         rules['4-value-range'] += 1
         o_err = r_err = '<value range error>'
     elif (o_type is not None and o_type not in EXACT_EXCEPTIONS
@@ -786,13 +799,31 @@ def fetch_family(db_dirs, family):
 
 
 def db_commit(family_dir):
-    """The commit of the prjxray-db checkout (or 'unknown')."""
+    """The commit of the prjxray-db checkout (a detached HEAD, or the
+    branch HEAD names, loose or packed), or None."""
+    git = os.path.join(os.path.dirname(family_dir), '.git')
     try:
-        with open(os.path.join(os.path.dirname(family_dir), '.git',
-                               'HEAD')) as f:
+        with open(os.path.join(git, 'HEAD')) as f:
+            head = f.read().strip()
+    except OSError:
+        return None
+    if not head.startswith('ref: '):
+        return head if re.match(r'^[0-9a-f]{40}$', head) else None
+    ref = head[len('ref: '):]
+    try:
+        with open(os.path.join(git, ref)) as f:
             return f.read().strip()
     except OSError:
-        return 'unknown'
+        pass
+    try:
+        with open(os.path.join(git, 'packed-refs')) as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) == 2 and parts[1] == ref:
+                    return parts[0]
+    except OSError:
+        pass
+    return None
 
 
 def oracle_identity(paths):
@@ -838,7 +869,8 @@ def generator_options(args):
 
 def generate(db, part, options, corpus_dir, commit):
     """Generates the corpus of a part unless the manifest of the same
-    generator, options and database is there; returns the manifest."""
+    generator, options and database is there (never reused when the
+    database commit is unknown); returns the manifest."""
     key = hashlib.sha256(
         json.dumps([file_sha256(GENERATOR), options, commit,
                     db]).encode()).hexdigest()
@@ -846,7 +878,7 @@ def generate(db, part, options, corpus_dir, commit):
     stamp = os.path.join(corpus_dir, 'key')
     try:
         with open(stamp) as f:
-            if f.read().strip() == key:
+            if commit is not None and f.read().strip() == key:
                 with open(manifest) as m:
                     return json.load(m)
     except (OSError, ValueError):
@@ -1089,11 +1121,20 @@ def families_main(args, tools):
             parts = [
                 p for p in parts if any(fnmatch.fnmatch(p, g) for g in globs)
             ]
+            if not parts and len(families) == 1:
+                print('difftest-xilinx: no part of %s matches %s' %
+                      (family, args.parts),
+                      file=sys.stderr)
+                return EXIT_NOT_SET_UP
         elif args.parts_sample:
             parts = sample_parts(db, parts, args.parts_sample)
         elif not args.all_parts:
             parts = parts[:1]
         selected += [(family, db, p) for p in parts]
+    if not selected:
+        print('difftest-xilinx: no part selected (--parts %s)' % args.parts,
+              file=sys.stderr)
+        return EXIT_NOT_SET_UP
     if args.list:
         for family, db, part in selected:
             print('%s %s' % (family, part))
@@ -1107,7 +1148,11 @@ def families_main(args, tools):
         sorted(commits.items())
     ])
     cache_dir = None
-    if not args.no_result_cache:
+    unknown = sorted(db for db, commit in commits.items() if commit is None)
+    if unknown and not args.no_result_cache:
+        print('difftest-xilinx: not using the result cache: unknown '
+              'database commit of %s' % ', '.join(unknown))
+    elif not args.no_result_cache:
         cache_dir = os.path.join(args.work_dir, 'results')
     runner = Runner(cache_dir, salt)
     start = time.time()

@@ -139,7 +139,7 @@ def normalised_stderr(difftest, stderr):
     if (difftest.CTYPES_MARKER in stderr
             and stderr.rstrip('\n').endswith(difftest.NONE_TYPE)):
         return '<value range error>'
-    if difftest.PARSE_ERROR_RE.match(stderr) and 'does not fit' in stderr:
+    if difftest.is_rust_value_range_error(stderr):
         # The Rust side of a value range error.
         return '<value range error>'
     stderr = difftest.normalise(stderr, rules)
