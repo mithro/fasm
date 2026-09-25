@@ -14,16 +14,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `.bit` -> frames: prjxray's `BitstreamReader<Series7>` and
-//! `Configuration<Series7>::InitWithPackets` (design document §6.6), the
-//! library behind `bitread`.
+//! `.bit` -> frames: prjxray's (and prjuray-tools') `BitstreamReader` and
+//! `Configuration<ArchType>::InitWithPackets` (design document §6.6,
+//! §8.10), the library behind `bitread`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
-use super::ecc;
+use super::ecc::Ecc;
 use super::packet::{command, register, Packet, PacketIter, OPCODE_WRITE};
-use super::writer::same_row;
+use super::writer::{same_row, BitstreamFormat};
 use crate::arch::{Architecture, FrameAddress};
 use crate::frames::Frames;
 use crate::part::Part;
@@ -85,13 +85,33 @@ impl BitstreamReader {
     pub fn configuration(&self, part: &Part) -> Result<Configuration<'_>, ReadError> {
         Configuration::from_packets(part, self.packets())
     }
+
+    /// Replays the packets on `part` in `format` (see
+    /// [`Configuration::from_packets_with`]).
+    ///
+    /// # Errors
+    ///
+    /// See [`Configuration::from_packets_with`].
+    pub fn configuration_with(
+        &self,
+        part: &Part,
+        format: &BitstreamFormat,
+    ) -> Result<Configuration<'_>, ReadError> {
+        Configuration::from_packets_with(part, format, self.packets())
+    }
 }
 
 /// Why a bitstream cannot be read for a part.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ReadError {
-    /// Only Series7 is implemented (UltraScale and UltraScale+: T6.2).
-    UnsupportedArchitecture(Architecture),
+    /// The part is not of the format's part type
+    /// ([`BitstreamFormat::addressing`]).
+    ArchitectureMismatch {
+        /// The part's architecture.
+        part: Architecture,
+        /// The part type of the format.
+        format: Architecture,
+    },
     /// An `IDCODE` write does not match the part ("Bitstream does not
     /// appear to be for this part").
     IdcodeMismatch {
@@ -105,9 +125,9 @@ pub enum ReadError {
 impl fmt::Display for ReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReadError::UnsupportedArchitecture(arch) => write!(
+            ReadError::ArchitectureMismatch { part, format } => write!(
                 f,
-                "reading {arch} bitstreams is not supported yet (only Series7)"
+                "the part is a {part} part, the bitstream format needs a {format} part"
             ),
             ReadError::IdcodeMismatch { found, expected } => write!(
                 f,
@@ -120,37 +140,58 @@ impl fmt::Display for ReadError {
 impl std::error::Error for ReadError {}
 
 /// The frames written by a bitstream: frame address -> words (usually
-/// 101; the last frame of a packet can be shorter).
+/// the format's words per frame; the last frame of a packet can be
+/// shorter).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Configuration<'a> {
     frames: BTreeMap<u32, &'a [u32]>,
     words_per_frame: usize,
+    ecc: Ecc,
 }
 
 impl<'a> Configuration<'a> {
-    /// `Configuration<Series7>::InitWithPackets`, a literal port of the
-    /// register machine: only `Write` packets count; `MASK`, `CTL1` (masked
-    /// by `MASK`), `CMD` (`WCFG` starts a new write), `IDCODE` (must match
-    /// the part), `FAR` (restarts the write if `CMD` holds `WCFG` and bit
-    /// 21 of `CTL1`, the per frame CRC quirk, is clear) and `FDRI`: its
-    /// data is cut into frames starting at the latched frame address and
-    /// following [`Part::next_frame_address`], skipping two frames of
-    /// padding whenever the next address is in another row, half or block
-    /// type; a later write of the same address replaces the frame.
+    /// [`Configuration::from_packets_with`] in the part's
+    /// [`BitstreamFormat::native`] format.
     ///
     /// # Errors
     ///
-    /// [`ReadError::IdcodeMismatch`]; [`ReadError::UnsupportedArchitecture`]
-    /// for a non Series7 part.
+    /// See [`Configuration::from_packets_with`].
     pub fn from_packets(
         part: &Part,
         packets: impl IntoIterator<Item = Packet<'a>>,
     ) -> Result<Self, ReadError> {
+        Self::from_packets_with(part, &BitstreamFormat::native(part.architecture), packets)
+    }
+
+    /// `Configuration<ArchType>::InitWithPackets` (Series7, UltraScale and
+    /// UltraScale+ share it), a literal port of the register machine: only
+    /// `Write` packets count; `MASK`, `CTL1` (masked by `MASK`), `CMD`
+    /// (`WCFG` starts a new write), `IDCODE` (must match the part), `FAR`
+    /// (restarts the write if `CMD` holds `WCFG` and bit 21 of `CTL1`, the
+    /// per frame CRC quirk, is clear) and `FDRI`: its data is cut into
+    /// frames of the format's word count starting at the latched frame
+    /// address and following [`Part::next_frame_address`], skipping two
+    /// frames of padding whenever the next address is in another row,
+    /// half or block type; a later write of the same address replaces the
+    /// frame.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError::IdcodeMismatch`]; [`ReadError::ArchitectureMismatch`]
+    /// if the part is not of the format's part type.
+    pub fn from_packets_with(
+        part: &Part,
+        format: &BitstreamFormat,
+        packets: impl IntoIterator<Item = Packet<'a>>,
+    ) -> Result<Self, ReadError> {
         let arch = part.architecture;
-        if arch != Architecture::Series7 {
-            return Err(ReadError::UnsupportedArchitecture(arch));
+        if arch != format.addressing {
+            return Err(ReadError::ArchitectureMismatch {
+                part: arch,
+                format: format.addressing,
+            });
         }
-        let wpf = arch.words_per_frame();
+        let wpf = format.words_per_frame;
         let mut command_register = 0u32;
         let mut frame_address_register = 0u32;
         let mut mask_register = 0u32;
@@ -221,7 +262,18 @@ impl<'a> Configuration<'a> {
         Ok(Configuration {
             frames,
             words_per_frame: wpf,
+            ecc: format.ecc,
         })
+    }
+
+    /// The words per frame of the format the bitstream was read in.
+    pub fn words_per_frame(&self) -> usize {
+        self.words_per_frame
+    }
+
+    /// The frame ECC of the format the bitstream was read in.
+    pub fn ecc(&self) -> Ecc {
+        self.ecc
     }
 
     /// Number of frames.
@@ -246,16 +298,18 @@ impl<'a> Configuration<'a> {
 
     /// The frames as [`Frames`] (a short frame is zero filled to the full
     /// word count), for writing a `.frm` file or a new bitstream. With
-    /// `clear_ecc`, the Series7 ECC bits (low 13 bits of word 50) are
-    /// cleared, which gives back the frames `fasm2frames` wrote (its
-    /// `.frm` files never have ECC bits set); with `skip_zero`, all zero
-    /// frames are left out (a sparse `.frm`).
+    /// `clear_ecc`, the ECC bits of the format ([`Ecc::ecc_mask`]; Series7:
+    /// the low 13 bits of word 50) are cleared, which gives back the
+    /// frames `fasm2frames` wrote (its `.frm` files never have ECC bits
+    /// set); with `skip_zero`, all zero frames are left out (a sparse
+    /// `.frm`).
     pub fn to_frames(&self, clear_ecc: bool, skip_zero: bool) -> Frames {
         let mut out = Frames::new(self.words_per_frame);
+        let ecc = self.ecc;
         for (&address, &words) in &self.frames {
             let ecc_clear = |i: usize, w: u32| {
-                if clear_ecc && i == ecc::SERIES7_ECC_WORD {
-                    w & !ecc::SERIES7_ECC_MASK
+                if clear_ecc {
+                    w & !ecc.ecc_mask(i)
                 } else {
                     w
                 }

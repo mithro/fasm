@@ -153,11 +153,12 @@ pub fn verify_ecc(frame: &[u32]) -> Option<bool> {
 
 /// The frame ECC algorithm of an architecture (`Frames<ArchType>::updateECC`
 /// and `verifyECC<ArchType>`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Ecc {
     /// `xc7series::updateECC`: 13 bits in word 50. prjxray also uses it
     /// for its UltraScale and UltraScale+ architectures (on their 123 and
     /// 93 word frames).
+    #[default]
     Series7,
     /// `xcuseries::updateECC`: 48 bits in word 60 and the low half of
     /// word 61 (123-word frames).
