@@ -102,7 +102,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VTR_COMMIT=25e723a24aa0ae7a0061cd89dd84b1fb62afcc09
-VTR="${VTR_ROOT:-$REPO_ROOT/tools/e2e/build/vtr}"
+VTR_DEFAULT="$REPO_ROOT/tools/e2e/build/vtr"
+VTR="${VTR_ROOT:-$VTR_DEFAULT}"
 BENCH="${VTR_SYMBIFLOW_BENCHMARKS:-$REPO_ROOT/tools/e2e/build/vtr-symbiflow-benchmarks}"
 OUT="${VTR_GENFASM_OUT:-$REPO_ROOT/tools/e2e/build/out/vtr-genfasm}"
 TIMEOUT="${VTR_TIMEOUT:-900}"
@@ -183,8 +184,21 @@ ensure_vtr() {
         && -f "$VTR/vtr_flow/primitives.v" ]]; then
     return 0
   fi
-  log "cloning VTR $VTR_COMMIT (blobless, sparse) into $VTR"
-  rm -rf "$VTR"
+  # Never delete anything that is not ours: clone only into the default
+  # directory (a clone of ours, e.g. an interrupted one, is redone) or
+  # into a directory that does not exist or is empty.
+  if [[ -e "$VTR" && ! -d "$VTR" ]]; then
+    log "VTR_ROOT=$VTR is not a directory"
+    exit 2
+  fi
+  if [[ -d "$VTR" && -n "$(ls -A "$VTR")" ]]; then
+    if [[ "$(realpath -m "$VTR")" != "$(realpath -m "$VTR_DEFAULT")" ]]; then
+      log "VTR_ROOT=$VTR is not empty but is not a VTR checkout with utils/fasm/test/test_fasm_arch.xml, vtr_flow/benchmarks/blif and vtr_flow/primitives.v (at $VTR_COMMIT): refusing to touch it; point VTR_ROOT at such a checkout, or at an empty or nonexistent directory to clone into"
+      exit 2
+    fi
+    rm -rf "$VTR"
+  fi
+  log "cloning VTR $VTR_COMMIT (blobless, sparse, about 60 MB) into $VTR"
   mkdir -p "$VTR"
   git -C "$VTR" init -q
   git -C "$VTR" remote add origin https://github.com/verilog-to-routing/vtr-verilog-to-routing

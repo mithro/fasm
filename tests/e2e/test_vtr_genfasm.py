@@ -336,6 +336,34 @@ def test_rust_fasm2frames_matches_the_reference(fasm, tmp_path):
                                   'top.frm')
 
 
+def test_run_script_never_deletes_a_foreign_vtr_root(tmp_path):
+    """A VTR_ROOT that is not a VTR checkout and not empty is left alone
+    (run-vtr-genfasm.sh would otherwise clone over it); `--list` reaches
+    the check without any toolchain or network."""
+    foreign = tmp_path / 'not-vtr'
+    foreign.mkdir()
+    (foreign / 'keep.txt').write_text('mine')
+    env = dict(os.environ, VTR_ROOT=str(foreign))
+    r = subprocess.run(['bash', str(RUN), '--list', 'test_fasm_arch'],
+                       env=env,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       timeout=60)
+    assert r.returncode == 2, r
+    assert b'refusing to touch it' in r.stderr
+    assert (foreign / 'keep.txt').read_text() == 'mine'
+    assert sorted(p.name for p in foreign.iterdir()) == ['keep.txt']
+    # A file is refused as well.
+    env['VTR_ROOT'] = str(foreign / 'keep.txt')
+    r = subprocess.run(['bash', str(RUN), '--list', 'test_fasm_arch'],
+                       env=env,
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE,
+                       timeout=60)
+    assert r.returncode == 2 and b'not a directory' in r.stderr
+    assert (foreign / 'keep.txt').read_text() == 'mine'
+
+
 need_toolchain = pytest.mark.skipif(
     not (F4PGA_ENV / 'bin' / 'genfasm').exists()
     or not (VTR_ROOT / 'utils/fasm/test/test_fasm_arch.xml').exists(),
