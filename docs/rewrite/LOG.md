@@ -692,3 +692,8 @@ what happened, branch/commit references, open issues.
   the sub-agent model (Claude Opus 5.5) rather than the session line;
   left as is (history is not rewritten). Independent review (Opus)
   started.
+* T7.3 review (Opus): corpus hashes 30/30, Rust = flow = oracle on 9
+  designs incl. both linux_litex_demo, rebuilds byte identical, 94 tests,
+  xilinx-difftest 227/150/6 with the new corpus, 107 old cases unchanged.
+  REQUEST CHANGES: the genfasm failure check misses SIGBUS/SIGTERM/plain
+  non-zero exits; setup-f4pga.sh --help truncated. Fixes requested.
