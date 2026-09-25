@@ -61,10 +61,25 @@
 #   Output: $OUT/xc7a50t_test/<circuit>/<board>/{top.fasm,top.frm,top.bit,
 #   info.json,difftest.json,*.log.xz}
 #
+# Group `verilog` (Xilinx FASM): VTR's Verilog benchmarks
+#   (vtr_flow/benchmarks/verilog/*.v) through the f4pga flow for the
+#   Arty A7-35T (xc7a35tcsg324-1, xc7a50t_test): the f4pga-examples
+#   Makefile steps symbiflow_synth (Yosys, top module found with
+#   `hierarchy -auto-top`), symbiflow_pack, symbiflow_place,
+#   symbiflow_route, symbiflow_write_fasm (genfasm), with a PCF from
+#   tools/e2e/vtr/make-pcf.py (the benchmarks have no pin constraints; the
+#   placer needs one). VTR's hard blocks that a benchmark instantiates
+#   (single_port_ram, dual_port_ram, multiply, adder) get their models
+#   from vtr_flow/primitives.v (tools/e2e/vtr/hard-block-models.py). A
+#   benchmark that has more port bits than the package has pins, or that
+#   synthesis, packing, placement or routing reject, is recorded as not
+#   implementable.
+#   Output: like xc7a50t_test, in $OUT/xc7a50t_test/<benchmark>/arty_35/
+#
 # Usage:
 #   tools/e2e/run-vtr-genfasm.sh --list [GROUP]
 #   tools/e2e/run-vtr-genfasm.sh [--keep] [--no-size-filter] [--jobs N] GROUP [CIRCUIT...]
-#   tools/e2e/run-vtr-genfasm.sh [--keep] [--jobs N] --all
+#   tools/e2e/run-vtr-genfasm.sh [--keep] [--jobs N] --all      # all three groups
 #
 # Environment:
 #   VTR_ROOT          a VTR checkout at VTR_COMMIT with utils/fasm/test and
@@ -153,13 +168,18 @@ list() {
     ensure_vtr
     test_arch_circuits | awk '{ printf "test_fasm_arch %-40s %s\n", $1, $2 }'
   fi
+  if [[ -z $group || $group == verilog ]]; then
+    ensure_vtr
+    verilog_circuits | awk '{ printf "verilog        %s\n", $1 }'
+  fi
   if [[ -z $group || $group == xc7a50t_test ]]; then
     echo "$XC7_CIRCUITS" | awk 'NF { printf "xc7a50t_test   %-28s %-9s %-14s %s%s\n", $1, $2, $3, $4, ($6 == "yes" ? "  (VTR nightly task)" : "") }'
   fi
 }
 
 ensure_vtr() {
-  if [[ -f "$VTR/utils/fasm/test/test_fasm_arch.xml" && -d "$VTR/vtr_flow/benchmarks/blif" ]]; then
+  if [[ -f "$VTR/utils/fasm/test/test_fasm_arch.xml" && -d "$VTR/vtr_flow/benchmarks/blif" \
+        && -f "$VTR/vtr_flow/primitives.v" ]]; then
     return 0
   fi
   log "cloning VTR $VTR_COMMIT (blobless, sparse) into $VTR"
@@ -169,6 +189,7 @@ ensure_vtr() {
   git -C "$VTR" remote add origin https://github.com/verilog-to-routing/vtr-verilog-to-routing
   git -C "$VTR" sparse-checkout set --no-cone /utils/fasm/ /vtr_flow/benchmarks/blif/ \
     /vtr_flow/benchmarks/microbenchmarks/ /vtr_flow/benchmarks/tests/ \
+    '/vtr_flow/benchmarks/verilog/*.v' /vtr_flow/primitives.v \
     /vtr_flow/tasks/regression_tests/vtr_reg_nightly_test1/symbiflow/ \
     /vtr_flow/scripts/download_symbiflow.py
   timeout 1800 git -C "$VTR" fetch -q --depth 1 --filter=blob:none origin "$VTR_COMMIT"
@@ -288,6 +309,97 @@ run_test_arch() {
   [[ $status == built || $status == unimplementable* || $status == not\ run* ]]
 }
 
+# The reference frames and bitstream of OUT/top.fasm: the f4pga flow's
+# xcfasm command line (as tools/e2e/run-f4pga-examples.sh), with --frm_out.
+reference_frames() {
+  local out="$1" part="$2" family="$3"
+  local db="$F4PGA_PRJXRAY_DB/$family"
+  xcfasm --db-root "$db" --part "$part" --part_file "$db/$part/part.yaml" \
+    --sparse --emit_pudc_b_pullup --fn_in "$out/top.fasm" \
+    --frm_out "$out/top.frm" --bit_out "$out/top.bit" \
+    --frm2bit xc7frames2bit > "$out/xcfasm.log" 2>&1
+}
+
+# The VTR Verilog benchmarks through the f4pga flow (group `verilog`).
+verilog_circuits() {
+  (cd "$VTR/vtr_flow/benchmarks/verilog" && ls ./*.v) | sed 's#^\./##; s#\.v$##' | sort
+}
+
+run_verilog() {
+  local circuit="$1"
+  local board=arty_35 device=xc7a50t_test part=xc7a35tcsg324-1 family=artix7
+  local out="$OUT/xc7a50t_test/$circuit/$board"
+  local arch="$F4PGA_INSTALL_DIR/xc7/share/f4pga/arch/$device"
+  local netlist="vtr_flow/benchmarks/verilog/$circuit.v"
+  rm -rf "$out"
+  mkdir -p "$out"
+  if [[ ! -f "$VTR/$netlist" ]]; then
+    log "unknown verilog circuit $circuit (--list verilog)"
+    return 2
+  fi
+  cp "$VTR/$netlist" "$out/"
+  local top status=built synth_s=- pnr_s=- genfasm_s=- r
+  # VTR's hard blocks (single_port_ram, ...): their vtr_flow/primitives.v
+  # models.
+  local vfiles=("$circuit.v")
+  if python3 "$REPO_ROOT/tools/e2e/vtr/hard-block-models.py" "$VTR/vtr_flow/primitives.v" \
+      "$out/$circuit.v" "$out/vtr_hard_blocks.v" > "$out/hard_blocks.txt"; then
+    vfiles+=(vtr_hard_blocks.v)
+  fi
+  top=$(cd "$out" && timeout 600 yosys -p "read_verilog ${vfiles[*]}; hierarchy -auto-top" 2>/dev/null \
+    | sed -n 's/^Top module:  *\\//p' | head -1 || true)
+  if [[ -z $top ]]; then
+    status="unimplementable: yosys cannot elaborate the design (no top module)"
+  fi
+  if [[ $status == built ]]; then
+    r=$(cd "$out" && run_timed synth.log symbiflow_synth -t "$top" -v "${vfiles[@]}" -d "$family" -p "$part")
+    synth_s=${r#* }
+    if [[ ${r%% *} != 0 ]]; then
+      status="unimplementable: synthesis: $(grep -m1 -E '^ERROR|Error' "$out/synth.log" | cut -c1-200)"
+    fi
+  fi
+  if [[ $status == built ]]; then
+    local why
+    if ! why=$(python3 "$REPO_ROOT/tools/e2e/vtr/make-pcf.py" "$out/$top.eblif" "$arch/$part/pinmap.csv" "$out/top.pcf"); then
+      status="unimplementable: $why"
+    fi
+  fi
+  if [[ $status == built ]]; then
+    local start step
+    start=$(date +%s.%N)
+    for step in pack place route; do
+      local args=(-e "$top.eblif" -d "$device")
+      [[ $step == place ]] && args+=(-n "$top.net" -P "$part" -p top.pcf)
+      r=$(cd "$out" && run_timed "$step.log" "symbiflow_$step" "${args[@]}")
+      if [[ ${r%% *} != 0 ]]; then
+        status="unimplementable: $step: $(vpr_error "$out/$step.log")"
+        [[ $status == "unimplementable: $step: " ]] && status="failed: $step exit ${r%% *}"
+        break
+      fi
+    done
+    pnr_s=$(python3 -c "print(round($(date +%s.%N) - $start, 2))")
+  fi
+  if [[ $status == built ]]; then
+    r=$(cd "$out" && run_timed write_fasm.log symbiflow_write_fasm -e "$top.eblif" -d "$device")
+    genfasm_s=${r#* }
+    local why
+    if [[ ${r%% *} != 0 || ! -f "$out/$top.fasm" ]]; then
+      status="failed: symbiflow_write_fasm exit ${r%% *}"
+    elif ! why=$("$REPO_ROOT/tools/e2e/f4pga/check-genfasm.sh" "$out" "$out/write_fasm.log"); then
+      status="failed: $why"
+    else
+      [[ $top == top ]] || mv "$out/$top.fasm" "$out/top.fasm"
+      reference_frames "$out" "$part" "$family" || status="failed: xcfasm"
+    fi
+  fi
+  if [[ $KEEP == 0 ]]; then
+    (cd "$out" && find . -maxdepth 1 -type f ! -name 'top.*' ! -name '*.log' ! -name 'top.pcf' -delete)
+  fi
+  compress_logs "$out"
+  write_info "$out" "$device" "$circuit" "$netlist" 500 "$status" "$pnr_s" "$genfasm_s" - "$board" "$part" "$family" no "$synth_s" "$top"
+  [[ $status == built || $status == unimplementable* ]]
+}
+
 run_xc7() {
   local circuit="$1"
   local line
@@ -330,15 +442,7 @@ run_xc7() {
     else
       [[ $fasm == ./top.fasm ]] || mv "$out/$fasm" "$out/top.fasm"
       status=built
-      # The reference frames and bitstream: the f4pga flow's xcfasm
-      # command line (as tools/e2e/run-f4pga-examples.sh), with --frm_out.
-      local db="$F4PGA_PRJXRAY_DB/$family"
-      if ! xcfasm --db-root "$db" --part "$part" --part_file "$db/$part/part.yaml" \
-          --sparse --emit_pudc_b_pullup --fn_in "$out/top.fasm" \
-          --frm_out "$out/top.frm" --bit_out "$out/top.bit" \
-          --frm2bit xc7frames2bit > "$out/xcfasm.log" 2>&1; then
-        status="failed: xcfasm"
-      fi
+      reference_frames "$out" "$part" "$family" || status="failed: xcfasm"
     fi
   fi
   if [[ $KEEP == 0 ]]; then
@@ -367,7 +471,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 case "$GROUP" in
-  test_fasm_arch|xc7a50t_test|all) ;;
+  test_fasm_arch|xc7a50t_test|verilog|all) ;;
   *) usage; exit 2 ;;
 esac
 
@@ -410,6 +514,18 @@ if [[ $GROUP == xc7a50t_test || $GROUP == all ]]; then
   for c in "${todo[@]}"; do
     log "xc7a50t_test: $c"
     run_xc7 "$c" || rc=1
+  done
+  python3 "$REPO_ROOT/tools/e2e/vtr/write-info.py" --summary "$OUT/xc7a50t_test"
+fi
+if [[ $GROUP == verilog || $GROUP == all ]]; then
+  if [[ ${#SELECT[@]} -gt 0 && $GROUP != all ]]; then
+    todo=("${SELECT[@]}")
+  else
+    mapfile -t todo < <(verilog_circuits)
+  fi
+  for c in "${todo[@]}"; do
+    log "verilog: $c"
+    run_verilog "$c" || rc=1
   done
   python3 "$REPO_ROOT/tools/e2e/vtr/write-info.py" --summary "$OUT/xc7a50t_test"
 fi

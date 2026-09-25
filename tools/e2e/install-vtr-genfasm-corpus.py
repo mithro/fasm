@@ -89,6 +89,83 @@ XC7_OPTIONS = ('--max_router_iterations 500 --routing_failure_predictor off '
                '--initial_pres_fac 4.0 --check_rr_graph off')
 
 
+INTRO_TASK = """# {circuit} / {board} -- VTR genfasm FASM (T7.4)
+
+`{fasm_name}` is the FASM VTR's `genfasm` writes for the `{circuit}`
+benchmark of VTR's nightly `symbiflow` regression task{task} on the f4pga
+toolchain's `{device}` architecture, by `tools/e2e/run-vtr-genfasm.sh
+xc7a50t_test {circuit}` (see `tools/e2e/README.md`, "VTR genfasm
+designs (T7.4)"): VPR packs, places and routes the benchmark's eblif
+with the task's options, then genfasm writes the FASM. {frm_note}
+
+## Target
+
+* Board: {board_name} (`{board}`), part `{part}` (family `{family}`),
+  VPR device `{device}`
+* Netlist, SDC and placement constraints:
+  `benchmarks/circuits/{circuit}.eblif`, `benchmarks/sdc/{circuit}.sdc`,
+  `benchmarks/place_constr/{circuit}.place`
+  of the symbiflow-arch-defs benchmark tarball `fb1b251a` (sha256
+  `2f5fed77c069e7e787f909e75f8aaf2db6ec1ea669a17a4f13d196c55931cc3d`,
+  what VTR's `vtr_flow/scripts/download_symbiflow.py` downloads); made
+  for that symbiflow-arch-defs, read by VPR with the one below
+* VPR: `vpr arch.timing.xml {circuit}.eblif --read_rr_graph
+  rr_graph_{device}.rr_graph.real.bin <options> --read_router_lookahead
+  rr_graph_{device}.lookahead.bin --read_placement_delay_lookup
+  rr_graph_{device}.place_delay.bin --sdc_file {circuit}.sdc
+  --fix_clusters {circuit}.place`, {vpr_s:.0f} s
+* genfasm: `genfasm arch.timing.xml {circuit}.eblif --read_rr_graph
+  rr_graph_{device}.rr_graph.real.bin <options>`, {genfasm_s:.1f} s
+* `<options>` (the task's `script_params`): `{options}`
+* FASM: {lines} lines, {size} bytes
+
+"""
+INTRO_VERILOG = """# {circuit} / {board} -- VTR genfasm FASM (T7.4)
+
+`{fasm_name}` is the FASM of VTR's Verilog benchmark `{circuit}`
+(`vtr_flow/benchmarks/verilog/{circuit}.v`, top module `{top}`) built with
+the f4pga flow for the {board_name} on the f4pga toolchain's `{device}`
+architecture, by `tools/e2e/run-vtr-genfasm.sh verilog {circuit}` (see
+`tools/e2e/README.md`, "VTR genfasm designs (T7.4)"): `symbiflow_synth`
+(Yosys), `symbiflow_pack`, `symbiflow_place` (with the PCF of
+`tools/e2e/vtr/make-pcf.py`: every port bit on a package pin in pin map
+order, the benchmarks have no pin constraints), `symbiflow_route` and
+`symbiflow_write_fasm` (genfasm, plus the synthesis' extra FASM, like the
+f4pga-examples designs). {frm_note}
+
+## Target
+
+* Board: {board_name} (`{board}`), part `{part}` (family `{family}`),
+  VPR device `{device}`
+* Synthesis {synth_s:.0f} s, pack + place + route {vpr_s:.0f} s,
+  `symbiflow_write_fasm` {genfasm_s:.1f} s
+* FASM: {lines} lines, {size} bytes
+
+"""
+COMMON = """## Tools
+
+* VPR and genfasm: {toolchain}, `vpr --version` {version}
+  (VTR [`25e723a2`]({vtr_url})).
+* Architecture: symbiflow-arch-defs `20220920-124259`/`007d1c1` (conda
+  package `{device}` of `tools/e2e/setup-f4pga.sh`).
+* Reference frames and bitstream: the f4pga flow's `xcfasm --sparse
+  --emit_pudc_b_pullup` (f4pga-xc-fasm `25dc605c`, prjxray-tools
+  `0.1_3015_gae546d6b`) with the flow's prjxray-db `0a0added`, identical
+  to the pinned `tools/fetch-db.sh` copy.
+
+## Reference outputs
+
+```
+sha256  top.fasm  {fasm_sha}
+sha256  top.frm   {frm_sha}  ({frm_size} bytes)
+sha256  top.bit   {bit_sha}  ({bit_size} bytes)
+```
+
+`top.bit` holds the build date and time and the `.frm` path in its
+header; see `docs/rewrite/DESIGN-xilinx-db.md` §8.14.
+"""
+
+
 def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -250,83 +327,35 @@ def install_xilinx(src, info):
         json.dump({'part': info['part'], 'family': info['family']}, f,
                   sort_keys=True)
         f.write('\n')
-    readme = """# {circuit} / {board} -- VTR genfasm FASM (T7.4)
-
-`{fasm_name}` is the FASM VTR's `genfasm` writes for the `{circuit}`
-benchmark of VTR's nightly `symbiflow` regression task{task} on the f4pga
-toolchain's `{device}` architecture, by `tools/e2e/run-vtr-genfasm.sh
-xc7a50t_test {circuit}` (see `tools/e2e/README.md`, "VTR genfasm
-designs (T7.4)"): VPR packs, places and routes the benchmark's eblif
-with the task's options, then genfasm writes the FASM. {frm_note}
-
-## Target
-
-* Board: {board_name} (`{board}`), part `{part}` (family `{family}`),
-  VPR device `{device}`
-* Netlist, SDC and placement constraints:
-  `benchmarks/circuits/{circuit}.eblif`, `benchmarks/sdc/{circuit}.sdc`,
-  `benchmarks/place_constr/{circuit}.place`
-  of the symbiflow-arch-defs benchmark tarball `fb1b251a` (sha256
-  `2f5fed77c069e7e787f909e75f8aaf2db6ec1ea669a17a4f13d196c55931cc3d`,
-  what VTR's `vtr_flow/scripts/download_symbiflow.py` downloads)
-* VPR: `vpr arch.timing.xml {circuit}.eblif --read_rr_graph
-  rr_graph_{device}.rr_graph.real.bin <options> --read_router_lookahead
-  rr_graph_{device}.lookahead.bin --read_placement_delay_lookup
-  rr_graph_{device}.place_delay.bin --sdc_file {circuit}.sdc
-  --fix_clusters {circuit}.place`, {vpr_s:.0f} s
-* genfasm: `genfasm arch.timing.xml {circuit}.eblif --read_rr_graph
-  rr_graph_{device}.rr_graph.real.bin <options>`, {genfasm_s:.1f} s
-* `<options>` (the task's `script_params`): `{options}`
-* FASM: {lines} lines, {size} bytes
-
-## Tools
-
-* VPR and genfasm: {toolchain}, `vpr --version` {version}
-  (VTR [`25e723a2`]({vtr_url})).
-* Architecture: symbiflow-arch-defs `20220920-124259`/`007d1c1` (conda
-  package `{device}` of `tools/e2e/setup-f4pga.sh`); the benchmarks were
-  made for symbiflow-arch-defs `fb1b251a`, and VPR reads them with this
-  one.
-* Reference frames and bitstream: the f4pga flow's `xcfasm --sparse
-  --emit_pudc_b_pullup` (f4pga-xc-fasm `25dc605c`, prjxray-tools
-  `0.1_3015_gae546d6b`) with the flow's prjxray-db `0a0added`, identical
-  to the pinned `tools/fetch-db.sh` copy.
-
-## Reference outputs
-
-```
-sha256  top.fasm  {fasm_sha}
-sha256  top.frm   {frm_sha}  ({frm_size} bytes)
-sha256  top.bit   {bit_sha}  ({bit_size} bytes)
-```
-
-`top.bit` holds the build date and time and the `.frm` path in its
-header; see `docs/rewrite/DESIGN-xilinx-db.md` §8.14.
-""".format(circuit=circuit,
-           board=board,
-           board_name=BOARDS.get(board, board),
-           task=(' (listed in its `config.txt`)' if info['in_vtr_task'] else
-                 ' (in the task\'s benchmark tarball, not in its '
-                 '`config.txt` list)'),
-           fasm_name=fasm_name,
-           frm_note=frm_note,
-           part=info['part'],
-           family=info['family'],
-           device=info['device'],
-           vpr_s=info['vpr_seconds'],
-           genfasm_s=info['genfasm_seconds'],
-           options=XC7_OPTIONS,
-           lines=fasm.count(b'\n'),
-           size=len(fasm),
-           toolchain=TOOLCHAIN,
-           version=VERSION,
-           vtr_url='https://github.com/verilog-to-routing/'
-           'vtr-verilog-to-routing/commit/' + VTR_COMMIT,
-           fasm_sha=sha256(fasm),
-           frm_sha=sha256(frm),
-           frm_size=len(frm),
-           bit_sha=sha256(bit),
-           bit_size=len(bit))
+    template = INTRO_VERILOG if 'top' in info else INTRO_TASK
+    readme = (template + COMMON).format(
+        top=info.get('top'),
+        synth_s=info.get('synth_seconds') or 0,
+        circuit=circuit,
+        board=board,
+        board_name=BOARDS.get(board, board),
+        task=(' (listed in its `config.txt`)' if info.get('in_vtr_task') else
+              ' (in the task\'s benchmark tarball, not in its '
+              '`config.txt` list)'),
+        fasm_name=fasm_name,
+        frm_note=frm_note,
+        part=info['part'],
+        family=info['family'],
+        device=info['device'],
+        vpr_s=info['vpr_seconds'],
+        genfasm_s=info['genfasm_seconds'],
+        options=XC7_OPTIONS,
+        lines=fasm.count(b'\n'),
+        size=len(fasm),
+        toolchain=TOOLCHAIN,
+        version=VERSION,
+        vtr_url='https://github.com/verilog-to-routing/'
+        'vtr-verilog-to-routing/commit/' + VTR_COMMIT,
+        fasm_sha=sha256(fasm),
+        frm_sha=sha256(frm),
+        frm_size=len(frm),
+        bit_sha=sha256(bit),
+        bit_size=len(bit))
     with open(os.path.join(dst, 'README.md'), 'w') as f:
         f.write(readme)
     return dst

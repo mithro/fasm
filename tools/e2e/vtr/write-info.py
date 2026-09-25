@@ -20,7 +20,7 @@
 prints the summary of a group's runs.
 
   write-info.py OUT ARCH CIRCUIT NETLIST CHAN_WIDTH STATUS VPR_S GENFASM_S
-                NAMES [BOARD PART FAMILY IN_VTR_TASK]
+                NAMES [BOARD PART FAMILY IN_VTR_TASK [SYNTH_S TOP]]
   write-info.py --summary GROUP_DIR
 
 For an Xilinx run (BOARD given) it also writes difftest.json (part and
@@ -65,6 +65,13 @@ def write(argv):
             'family': family,
             'in_vtr_task': task == 'yes',
         })
+        if len(argv) > 13:
+            info['synth_seconds'] = num(argv[13])
+            info['top'] = argv[14]
+            info['flow'] = 'f4pga symbiflow_* (yosys synthesis)'
+        else:
+            info['flow'] = 'VTR nightly symbiflow task (eblif)'
+
         with open(os.path.join(out, 'difftest.json'), 'w') as f:
             json.dump({'part': part, 'family': family}, f, sort_keys=True)
     for name in FILES:
@@ -104,7 +111,7 @@ def summary(root):
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--summary':
         summary(sys.argv[2])
-    elif len(sys.argv) in (10, 14):
+    elif len(sys.argv) in (10, 14, 16):
         write(sys.argv[1:])
     else:
         sys.exit(__doc__.split('\n\n')[1])
