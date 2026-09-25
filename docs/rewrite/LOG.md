@@ -839,3 +839,18 @@ what happened, branch/commit references, open issues.
   xilinx-difftest and uray-difftest identical, fuzz 300k runs clean. The
   agent's classifier refused a callgrind profile and reading the foldhash
   source. Independent review (Opus) started.
+* T7.4 implemented on branch `worktree-agent-af7815efaa978bd81` (12
+  commits): genfasm (f4pga vtr-optimized 8.0.0_5699, VTR 25e723a24) on
+  1502 generic BLIFs with VTR's test_fasm_arch (428 produce FASM, 44.5k
+  lines; the rest do not fit / need >6 input LUTs / too large) and 42
+  Xilinx designs (19 produce FASM: symbiflow task benchmarks incl.
+  picosoc, murax, ibex, minilitex, linux_arty 352k lines, and 9 VTR
+  Verilog benchmarks through the f4pga flow). All identical vs the Python
+  oracle parser and, for Xilinx, vs the flow's tools and the pinned db
+  (difftest-xilinx 64/64 + 48/48 + 576 identical); Rust xcfasm 30-40x
+  faster. VTR's own `wire` test emits digit-leading routing features that
+  all three parsers reject (new difftest class all_three_reject). Corpus
+  +4.3 MB (tests/corpus/vtr/test_fasm_arch, xilinx/artix7/designs/vtr),
+  tools/e2e/run-vtr-genfasm.sh + helpers, test_vtr_genfasm.py (469),
+  §8.14, COMPAT "VTR genfasm output". difftest.py 201 files 0 unexplained.
+  No Rust change. Independent review (Opus) started.
