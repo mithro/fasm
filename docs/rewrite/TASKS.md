@@ -182,12 +182,21 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 - [x] T8.1 Benchmarks (`cargo bench`) and `docs/rewrite/BENCHMARKS.md` with
       comparison against Python textX/ANTLR and fasm2frames.py.
-- [r] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
+- [x] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
       cache, frame assembly). Known: on pip heavy FASM the parser runs at
       150-164 MB/s (target 200) with ~48% of instructions in idstring
       interning and ~9% in UTF-8 validation of names; speed up the interner
       hit path and validate names byte-wise (they are ASCII by grammar).
-- [ ] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
+- [ ] T8.2b Performance follow-ups from the T8.2 review: the `stress`
+      parser class is still 120-129 MB/s cold (new tile name insertion
+      ~175 ns each) and the interner hit path (51 ns vs 38 ns for a flat
+      HashMap) is memory bound in the level-0 probe; add a unit test for
+      the canonical `[`-in-name fallback; make the `CanonicalLines::push`
+      expect message match its 2^31 check; try `#[inline(always)]` on
+      `find_pieces` instead of the duplicated `find_levels` body; cheaper
+      hasher for `CanonicalLines::index`; library `fasm_tuple_to_string`
+      canonical path still sorts formatted Strings (after T8.2).
+- [~] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
 - [ ] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
       install for the C API, release notes.

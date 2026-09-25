@@ -854,3 +854,15 @@ what happened, branch/commit references, open issues.
   tools/e2e/run-vtr-genfasm.sh + helpers, test_vtr_genfasm.py (469),
   §8.14, COMPAT "VTR genfasm output". difftest.py 201 files 0 unexplained.
   No Rust change. Independent review (Opus) started.
+* T8.2 review (Opus): scanner proven exact (exhaustive classifier, word
+  scan vs byte loop, 6,000 random differential inputs and 32 adversarial
+  UTF-8 files identical to the pre-change binary), canonical ordering
+  argument verified incl. the `[` fallback, sort_by_string stable and
+  identical to string order, all identity suites and 200k fuzz runs
+  clean, benchmarks reproduced (canonical 1M lines 10.2 s -> 2.1 s, 2466
+  -> 490 MiB). APPROVE. Merged with --no-ff; merged tree: 487 Rust tests,
+  difftest.py 151 files 0 unexplained, tests/cli 2126 passed,
+  xilinx-difftest 311/311 + 213/213, uray-difftest 0 different, Python
+  suites 1710 passed against a fresh maturin build. Worktree removed;
+  follow-ups recorded as T8.2b.
+* T8.3 (documentation pass) started (Sonnet); T7.4 under review.
