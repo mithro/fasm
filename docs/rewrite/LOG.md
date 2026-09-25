@@ -783,3 +783,15 @@ what happened, branch/commit references, open issues.
   produce no FASM), 12 designs nextpnr 0.8.2 cannot place/route. Snap
   quirks: --emit_pudc_b_pullup always fails (old IN_ONLY name), fasm falls
   back to textX (libffi.so.7). Independent review (Opus) started.
+* T8.1 done: review fixes b1c75f8 (every-feature timed per conflict free
+  file with rc==0 required: xc7a35t features.fasm Rust 363 ms vs oracle
+  18.6 s (51x), all 11 files 0.69 s vs 22.2 s; xczu3eg 0.41 s vs 8.8 s;
+  failures/timeouts reported as such; /bin/true RSS floor row; explicit
+  primed FASM_XDB_CACHE), 2bacd39 (corrected numbers: picosoc and
+  linux_litex_demo rows, 1M line parser 492 ms / 127 MB/s vs ANTLR 16 s,
+  canonical on 1M lines 9.7 s and 2.4 GiB because tool.rs buffers the
+  expanded output; factual fixes). Merged with --no-ff; fmt/clippy
+  --all-targets/test clean (478), flake8 clean. Worktree removed. T8.2
+  targets, ranked: interner hit path (52 vs 38 ns), byte-wise ASCII name
+  validation, IdString sort (2.7x), streaming canonical output, stress /
+  pips parser classes below 200 MB/s.
