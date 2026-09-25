@@ -597,3 +597,14 @@ what happened, branch/commit references, open issues.
   were silently skipped on all 125 parts (host chosen per tile type, not
   per alias group) and the coverage tests could not detect drops; run
   count typo in §8.9. Fixes requested; golden must be regenerated after.
+* T5.9 done: review fixes 5ab7dbd (STEPDOWN host per alias group, per
+  group coverage check and manifest, aliased pseudo PIPs, db commit
+  check), b82763f (symbolic HEAD, --parts exit 3, stricter rule 4),
+  27b9d6a (docs), golden regenerated with the reference (d01146b).
+  Orchestrator ran `make xilinx-difftest-quick` on the version 2 corpus:
+  4 parts, 59 files, fasm2frames 75 runs = 71 identical + 4 explained
+  (value_range) + 0 different, 249 bitstream tool runs, 12 xcfasm runs
+  identical. Merged with --no-ff; merged tree: fmt/clippy clean, 450
+  Rust tests, tests/cli 1608 passed / 12 skipped, flake8 clean. Worktree
+  removed. The full version 2 all-parts run (about 70 min) is started in
+  the background and its result logged when done.

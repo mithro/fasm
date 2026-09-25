@@ -131,7 +131,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       prjxray-db (a snapshot with STARTUP/CFG_CENTER ppips that the pinned
       f4pga/prjxray-db lacks) at a stable, checksummed cache path so tests
       can select it without the full toolchain install (after T5.8, T7.2).
-- [r] T5.9 `tools/gen-corpus.py`: synthetic FASM exercising every segbits
+- [x] T5.9 `tools/gen-corpus.py`: synthetic FASM exercising every segbits
       feature of every tile type in a database; `tools/difftest-xilinx.py`
       comparing frames and bitstreams against the reference tools for every
       artix7/kintex7/spartan7/zynq7 part in prjxray-db (after T5.6, T5.8).
