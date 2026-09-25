@@ -11,8 +11,8 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 
 * Board: Digilent Basys 3 (`basys3`), part `xc7a35tcpg236-1` (family `artix7`),
   VPR device `xc7a50t_test`
-* Netlist, SDC and placement constraints:
-  `benchmarks/circuits/counter_basys3.eblif`, `benchmarks/sdc/counter_basys3.sdc`,
+* Netlist, (no SDC in the tarball) placement constraints:
+  `benchmarks/circuits/counter_basys3.eblif`, 
   `benchmarks/place_constr/counter_basys3.place`
   of the symbiflow-arch-defs benchmark tarball `fb1b251a` (sha256
   `2f5fed77c069e7e787f909e75f8aaf2db6ec1ea669a17a4f13d196c55931cc3d`,
@@ -21,10 +21,10 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 * VPR: `vpr arch.timing.xml counter_basys3.eblif --read_rr_graph
   rr_graph_xc7a50t_test.rr_graph.real.bin <options> --read_router_lookahead
   rr_graph_xc7a50t_test.lookahead.bin --read_placement_delay_lookup
-  rr_graph_xc7a50t_test.place_delay.bin --sdc_file counter_basys3.sdc
+  rr_graph_xc7a50t_test.place_delay.bin
   --fix_clusters counter_basys3.place`, 14 s
 * genfasm: `genfasm arch.timing.xml counter_basys3.eblif --read_rr_graph
-  rr_graph_xc7a50t_test.rr_graph.real.bin <options>`, 20.2 s
+  rr_graph_xc7a50t_test.rr_graph.real.bin <options>`, 19.1 s
 * `<options>` (the task's `script_params`): `--max_router_iterations 500 --routing_failure_predictor off --router_high_fanout_threshold 1000 --constant_net_method route --route_chan_width 500 --router_heap bucket --clock_modeling route --place_delta_delay_matrix_calculation_method dijkstra --place_delay_model delta_override --router_lookahead extended_map --check_route quick --strict_checks off --allow_dangling_combinational_nodes on --disable_errors check_unbuffered_edges:check_route --congested_routing_iteration_threshold 0.8 --incremental_reroute_delay_ripup off --base_cost_type delay_normalized_length_bounded --bb_factor 10 --initial_pres_fac 4.0 --check_rr_graph off`
 * FASM: 1703 lines, 75129 bytes
 
@@ -44,7 +44,7 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 ```
 sha256  top.fasm  564973aef113e4efb63614c28931bcf323b1f688dc8fe6962375a0d00eb34471
 sha256  top.frm   97ce6d4146f02542a012f430765daf3c3933740a6be8f4c0ad46e15644445254  (1258884 bytes)
-sha256  top.bit   6688539a9e362361237f2e45813c3e530184a037e31dd569e1c0fd578d22b825  (2192231 bytes)
+sha256  top.bit   48586055924aa18a946ddff3059356713bb9fbd2150e5cb14365aaffe50318c0  (2192231 bytes)
 ```
 
 `top.bit` holds the build date and time and the `.frm` path in its

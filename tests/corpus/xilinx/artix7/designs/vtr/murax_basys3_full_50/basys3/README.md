@@ -11,8 +11,8 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 
 * Board: Digilent Basys 3 (`basys3`), part `xc7a35tcpg236-1` (family `artix7`),
   VPR device `xc7a50t_test`
-* Netlist, SDC and placement constraints:
-  `benchmarks/circuits/murax_basys3_full_50.eblif`, `benchmarks/sdc/murax_basys3_full_50.sdc`,
+* Netlist, (no SDC in the tarball) placement constraints:
+  `benchmarks/circuits/murax_basys3_full_50.eblif`, 
   `benchmarks/place_constr/murax_basys3_full_50.place`
   of the symbiflow-arch-defs benchmark tarball `fb1b251a` (sha256
   `2f5fed77c069e7e787f909e75f8aaf2db6ec1ea669a17a4f13d196c55931cc3d`,
@@ -21,10 +21,10 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 * VPR: `vpr arch.timing.xml murax_basys3_full_50.eblif --read_rr_graph
   rr_graph_xc7a50t_test.rr_graph.real.bin <options> --read_router_lookahead
   rr_graph_xc7a50t_test.lookahead.bin --read_placement_delay_lookup
-  rr_graph_xc7a50t_test.place_delay.bin --sdc_file murax_basys3_full_50.sdc
-  --fix_clusters murax_basys3_full_50.place`, 72 s
+  rr_graph_xc7a50t_test.place_delay.bin
+  --fix_clusters murax_basys3_full_50.place`, 75 s
 * genfasm: `genfasm arch.timing.xml murax_basys3_full_50.eblif --read_rr_graph
-  rr_graph_xc7a50t_test.rr_graph.real.bin <options>`, 27.3 s
+  rr_graph_xc7a50t_test.rr_graph.real.bin <options>`, 20.5 s
 * `<options>` (the task's `script_params`): `--max_router_iterations 500 --routing_failure_predictor off --router_high_fanout_threshold 1000 --constant_net_method route --route_chan_width 500 --router_heap bucket --clock_modeling route --place_delta_delay_matrix_calculation_method dijkstra --place_delay_model delta_override --router_lookahead extended_map --check_route quick --strict_checks off --allow_dangling_combinational_nodes on --disable_errors check_unbuffered_edges:check_route --congested_routing_iteration_threshold 0.8 --incremental_reroute_delay_ripup off --base_cost_type delay_normalized_length_bounded --bb_factor 10 --initial_pres_fac 4.0 --check_rr_graph off`
 * FASM: 42401 lines, 1636834 bytes
 
@@ -44,7 +44,7 @@ with the task's options, then genfasm writes the FASM. `genfasm.frm.xz` is the r
 ```
 sha256  top.fasm  9243efa037bf43abeb0a7542a5066b9e988cf1eeb020925ecc3f65df068bedd3
 sha256  top.frm   e32bba9849ac496d25906482a81c09f6daf3d7e97d6347fe7a8ce7837dbd22fe  (2504304 bytes)
-sha256  top.bit   c176954b82ee38fbe73ea93338f80fa6bcb98eda17876cda19115a983fe767ef  (2192237 bytes)
+sha256  top.bit   edd0f824522bf988a30daed5c3aaebe700ef3c70adbc11c7656b17d034498eda  (2192237 bytes)
 ```
 
 `top.bit` holds the build date and time and the `.frm` path in its

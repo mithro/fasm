@@ -358,7 +358,7 @@ run_verilog() {
     if [[ ${r%% *} == 124 ]]; then
       status="unimplementable: synthesis timed out ($TIMEOUT s)"
     elif [[ ${r%% *} != 0 ]]; then
-      status="unimplementable: synthesis: $(grep -m1 -E '^ERROR|Error' "$out/synth.log" | cut -c1-200)"
+      status="unimplementable: synthesis: $(grep -m1 -o 'ERROR: .*' "$out/synth.log" | cut -c1-200)"
       [[ $status == "unimplementable: synthesis: " ]] && status="failed: synthesis exit ${r%% *}"
     fi
   fi
@@ -429,11 +429,15 @@ run_xc7() {
   # shellcheck disable=SC2206
   local common=("$arch/arch.timing.xml" "$circuit.eblif" --read_rr_graph "$arch/$rr.rr_graph.real.bin" $XC7_VPR_OPTIONS)
   local r status vpr_s genfasm_s=-
+  # Like VTR's task runner (vtr_flow/scripts/python_libs/vtr/task.py): the
+  # SDC only when the tarball has one (not for counter_basys3 and the
+  # murax_basys3 circuits; VPR would warn and use its default constraints).
+  local sdc=()
+  [[ -f "$BENCH/benchmarks/sdc/$circuit.sdc" ]] && sdc=(--sdc_file "$BENCH/benchmarks/sdc/$circuit.sdc")
   r=$(cd "$out" && run_timed vpr.log vpr "${common[@]}" \
     --read_router_lookahead "$arch/$rr.lookahead.bin" \
     --read_placement_delay_lookup "$arch/$rr.place_delay.bin" \
-    --sdc_file "$BENCH/benchmarks/sdc/$circuit.sdc" \
-    --fix_clusters "$BENCH/benchmarks/place_constr/$circuit.place")
+    "${sdc[@]}" --fix_clusters "$BENCH/benchmarks/place_constr/$circuit.place")
   vpr_s=${r#* }
   if [[ ${r%% *} != 0 ]]; then
     status="failed: vpr exit ${r%% *} $(vpr_error "$out/vpr.log")"

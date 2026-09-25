@@ -71,6 +71,9 @@ def write(argv):
             info['flow'] = 'f4pga symbiflow_* (yosys synthesis)'
         else:
             info['flow'] = 'VTR nightly symbiflow task (eblif)'
+            info['sdc'] = os.path.exists(
+                os.path.join(os.environ.get('BENCH', ''), 'benchmarks', 'sdc',
+                             circuit + '.sdc'))
 
         with open(os.path.join(out, 'difftest.json'), 'w') as f:
             json.dump({'part': part, 'family': family}, f, sort_keys=True)

@@ -102,8 +102,8 @@ with the task's options, then genfasm writes the FASM. {frm_note}
 
 * Board: {board_name} (`{board}`), part `{part}` (family `{family}`),
   VPR device `{device}`
-* Netlist, SDC and placement constraints:
-  `benchmarks/circuits/{circuit}.eblif`, `benchmarks/sdc/{circuit}.sdc`,
+* Netlist, {sdc_what}placement constraints:
+  `benchmarks/circuits/{circuit}.eblif`, {sdc_path}
   `benchmarks/place_constr/{circuit}.place`
   of the symbiflow-arch-defs benchmark tarball `fb1b251a` (sha256
   `2f5fed77c069e7e787f909e75f8aaf2db6ec1ea669a17a4f13d196c55931cc3d`,
@@ -112,7 +112,7 @@ with the task's options, then genfasm writes the FASM. {frm_note}
 * VPR: `vpr arch.timing.xml {circuit}.eblif --read_rr_graph
   rr_graph_{device}.rr_graph.real.bin <options> --read_router_lookahead
   rr_graph_{device}.lookahead.bin --read_placement_delay_lookup
-  rr_graph_{device}.place_delay.bin --sdc_file {circuit}.sdc
+  rr_graph_{device}.place_delay.bin{sdc_opt}
   --fix_clusters {circuit}.place`, {vpr_s:.0f} s
 * genfasm: `genfasm arch.timing.xml {circuit}.eblif --read_rr_graph
   rr_graph_{device}.rr_graph.real.bin <options>`, {genfasm_s:.1f} s
@@ -338,6 +338,10 @@ def install_xilinx(src, info):
     readme = (template + COMMON).format(
         top=info.get('top'),
         hard_blocks=hard_blocks,
+        sdc_what='SDC and ' if info.get('sdc') else '(no SDC in the tarball) ',
+        sdc_path=('`benchmarks/sdc/%s.sdc`,' % circuit
+                  if info.get('sdc') else ''),
+        sdc_opt=' --sdc_file %s.sdc' % circuit if info.get('sdc') else '',
         synth_s=info.get('synth_seconds') or 0,
         circuit=circuit,
         board=board,
