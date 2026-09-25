@@ -36,7 +36,11 @@
  },
  "part": "xc7a35tcsg324-1",
  "prjxray_db_commit": "0a0addedd73e7e4139d52a6d8db4258763e0f1f3",
- "reference": {},
+ "reference": {
+  "f4pga_xc_fasm_commit": "25dc605c9c0896204f0c3425b52a332034cf5e5c",
+  "prjxray_commit": "c9f02d8576042325425824647ab5555b1bc77833",
+  "source": "tests/oracle/build/xilinx/status.json"
+ },
  "runs": {
   "errors/absent_tile.fasm[sparse]": {
    "exit_code": 1,

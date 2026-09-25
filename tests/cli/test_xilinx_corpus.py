@@ -39,6 +39,10 @@ golden file. To (re)write the golden file with the reference tools
 
     python3 tests/cli/test_xilinx_corpus.py --write-goldens
 
+(`--update-header` only refreshes the recorded reference commits, read
+from `tests/oracle/build/xilinx/status.json` or the pinned defaults of
+`tests/oracle/setup-xilinx.sh`, and keeps the results.)
+
 `FASM_DB_CACHE` selects the database directory, `FASM2FRAMES_RUST` the
 Rust binary, `FASM2FRAMES_ORACLE` the reference and `XILINX_CORPUS_GOLDEN`
 the golden file.
@@ -47,6 +51,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -159,15 +164,47 @@ def run_tool(tool, db, corpus_dir, rel, flags, out, env=None):
             result.stderr.decode('utf-8', 'surrogateescape'))
 
 
+REFERENCE_KEYS = ('prjxray_commit', 'f4pga_xc_fasm_commit')
+
+
 def reference_versions():
+    """The commits of the reference tools: the resolved commits recorded
+    by tests/oracle/setup-xilinx.sh in build/xilinx/status.json, else the
+    pinned defaults of setup-xilinx.sh (the tools are not run)."""
     versions = {}
-    status = ORACLE.parent / 'build' / 'status.json'
+    status = ORACLE.parent / 'build' / 'xilinx' / 'status.json'
     if status.exists():
         data = json.loads(status.read_text())
-        for key in ('prjxray_commit', 'f4pga_xc_fasm_commit'):
-            if key in data:
-                versions[key] = data[key]
+        for key in REFERENCE_KEYS:
+            value = data.get(key + '_resolved') or data.get(key)
+            if value:
+                versions[key] = value
+        if versions:
+            versions['source'] = 'tests/oracle/build/xilinx/status.json'
+            return versions
+    setup = ORACLE.parent / 'setup-xilinx.sh'
+    if setup.exists():
+        text = setup.read_text()
+        for key in REFERENCE_KEYS:
+            m = re.search(r'%s="\$\{%s:-([0-9a-f]+)\}"' %
+                          (key.upper(), key.upper()), text)
+            if m:
+                versions[key] = m.group(1)
+        if versions:
+            versions['source'] = 'tests/oracle/setup-xilinx.sh (pinned)'
     return versions
+
+
+def update_header():
+    """Rewrites the golden file's header (reference versions, database
+    commit) and keeps its hashes and results."""
+    golden = json.loads(GOLDEN.read_text())
+    golden['reference'] = reference_versions()
+    db = find_db()
+    if db is not None:
+        golden['prjxray_db_commit'] = db_commit(db)
+    GOLDEN.write_text(json.dumps(golden, indent=1, sort_keys=True) + '\n')
+    print('updated the header of %s: %r' % (GOLDEN, golden['reference']))
 
 
 def db_commit(db):
@@ -219,8 +256,11 @@ if __name__ == '__main__':
     if sys.argv[1:] == ['--write-goldens']:
         write_goldens()
         sys.exit(0)
-    sys.exit('usage: %s --write-goldens (or run it with pytest)' %
-             sys.argv[0])
+    if sys.argv[1:] == ['--update-header']:
+        update_header()
+        sys.exit(0)
+    sys.exit('usage: %s --write-goldens | --update-header (or run it with '
+             'pytest)' % sys.argv[0])
 
 import pytest  # noqa: E402
 
@@ -255,7 +295,10 @@ def golden():
 def test_golden_header(golden):
     assert golden['part'] == PART
     assert golden['generator']['tiles'] == TILES
-    assert golden['reference'], 'no reference tool versions recorded'
+    for key in REFERENCE_KEYS:
+        assert re.match(r'^[0-9a-f]{40}$', golden['reference'].get(key, '')), (
+            'no %s recorded: python3 tests/cli/test_xilinx_corpus.py '
+            '--update-header' % key)
 
 
 def test_generated_files_match_golden(corpus, golden):
