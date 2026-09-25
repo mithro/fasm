@@ -735,6 +735,44 @@ Rust change was needed.
 | The environment's `bin/fasm2frames` | prjxray's console script, broken: `ModuleNotFoundError: No module named 'utils'` (prjxray's pip package does not install `utils/`) | the comparisons run the flow's `xc_fasm.fasm2frames` (`tools/e2e/f4pga/fasm2frames-flow`), which the flow's `xcfasm` uses |
 | `genfasm` killed or crashing | `symbiflow_write_fasm` ignores its exit status: a truncated `top.fasm` (`genfasm` of an Arty A7-100T design was killed by the OOM killer here, leaving 320 lines without any routing), then a bitstream of it, and `make` succeeds | `run-f4pga-examples.sh` marks such a build as failed (`tools/e2e/f4pga/check-genfasm.sh`: genfasm's log, `fasm.log` or `vpr_stdout.log`, must end with `Writing Implementation FASM` and `The entire flow of VPR took`, and no bash signal report may name genfasm; a SIGTERM only shows as a bare `Terminated`, a non-zero exit not at all); the truncated FASM is valid FASM and the Rust tools reproduce the flow's frames and bitstream of it too |
 
+## The openXC7 snap's tools (nextpnr-xilinx examples, T7.6)
+
+### Rule
+
+For every design built with the openXC7 snap `0.8.2` (nextpnr-xilinx
+examples, openXC7 demo-projects and primitive-tests;
+`tools/e2e/run-nextpnr-examples.sh`, `docs/rewrite/DESIGN-xilinx-db.md`
+§8.13), with the snap's bundled prjxray-db: the Rust `fasm2frames` writes
+the flow's frames (the snap's `fasm2frames`, dense) byte for byte, and
+the same frames and exit codes as the snap's `fasm2frames --sparse`;
+`--emit_pudc_b_pullup` gives the oracle's frames (the snap's tool fails
+there, see below); `xc7frames2bit` on the flow's frames writes the flow's
+`.bit` (up to the `.frm` path in the header's design field, the time
+injected with `SOURCE_DATE_EPOCH`); `xcfasm` writes both; `bitread` prints
+what the snap's `bitread` prints with all 11 `BITREAD_FLAGS` sets; the
+`fasm` CLI prints what the snap's `fasm` (textX, see below) and the
+oracle's print, with and without `--canonical`. With the pinned database
+the Rust tools and the oracle agree too (frames, exit codes, last error
+line); the frames are the snap database's except where the design uses
+features only the snap database has. No difference was found; no Rust
+change was needed.
+
+The snap's `fasm2frames` is prjxray's `utils/fasm2frames.py` (the snap
+builds prjxray `master` at its build time), not f4pga-xc-fasm's
+`xc_fasm.fasm2frames` that the Rust tool reproduces; the two files differ
+only in the licence header, formatting, `OpenSafeFile` (a lock file) for
+`package_pins.csv`, `part.json` and the ROI, the function name, and the
+PUDC_B feature below.
+
+### Differences and quirks of the reference flow
+
+| Case | openXC7 snap 0.8.2 | Rust / this repository |
+|---|---|---|
+| `fasm2frames --emit_pudc_b_pullup` on a design that does not use the PUDC_B pin (every design built here) | `prjxray.fasm_assembler.FasmLookupError: Segment DB LIOB33, key LIOB33.IOB_Y0.LVCMOS12_LVCMOS15_LVCMOS18_LVCMOS25_LVCMOS33_LVTTL_SSTL135_SSTL15.IN_ONLY not found ...`, exit code 1: prjxray's `utils/fasm2frames.py` still emits the IN_ONLY feature under its old name, which neither the snap's nor the pinned prjxray-db has (both name it `...LVCMOS33_LVDS_25_LVTTL_SSTL135_SSTL15_TMDS_33.IN_ONLY`) | the feature f4pga-xc-fasm emits (`..._LVDS_25_LVTTL_SSTL135_SSTL15_TMDS_33.IN_ONLY`, plus `LVCMOS25_LVCMOS33_LVTTL.IN` and `PULLTYPE.PULLUP`), like the oracle: the frames are the oracle's (`compare-nextpnr-examples.py` checks this and reports the snap's failure as explained). Repro: `fasm2frames --db-root $PRJXRAY_DB_DIR/artix7 --part xc7a35tcsg324-1 --emit_pudc_b_pullup tests/corpus/xilinx/artix7/designs/nextpnr-xilinx/blinky/arty-a35/top.fasm x.frm` after `source tools/e2e/openxc7-env.sh` |
+| The snap's `fasm` package without snapd's `core20` base (tools/e2e/setup-openxc7.sh patches the interpreter, the libraries of `core20` are not there) | its ANTLR extension does not load (`ImportError: libffi.so.7`), so `fasm` and `fasm2frames` print a `RuntimeWarning: Unable to import fast Antlr4 parser implementation` on stderr and parse with textX | same output as the textX run; the comparisons check stdout, frames and exit codes, not this warning |
+| Designs using `STARTUPE2`, `BSCANE2` or a GTP reference clock (`config-primitive-startupe2`, primitive-tests `startupe2`, `jtag-test`, `gtp_common/internal-refclk`) with the pinned database | -- (the snap flow uses the snap database, which has the `ppips_cfg_center_*.db` pseudo PIPs and `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED`, see `tools/e2e/README.md`, "A note on prjxray-db provenance") | with the pinned database both the Rust tool and the oracle fail with the same `FasmLookupError` (`Segment DB CFG_CENTER_MID, key CFG_CENTER_MID.CFG_CENTER_STARTUP_USRDONEO.CFG_CENTER_IMUX42_8 not found ...`, `... CFG_CENTER_STARTUP_USRCCLKO.CFG_CENTER_CLK1_7 ...`, `... CFG_CENTER_LOGIC_OUTS_B17_11.CFG_CENTER_BSCAN3_TDI ...`, `Segment DB GTP_COMMON, key GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED ...`): a database difference, not a tool difference |
+| `.bit` header | names the `.frm` file as given to `xc7frames2bit` (relative, e.g. `blinky.frames`) and the build time | the comparison skips the path and injects the time (as for the f4pga flow above) |
+
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);

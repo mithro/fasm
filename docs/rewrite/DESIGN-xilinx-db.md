@@ -3238,6 +3238,142 @@ contents, the wrappers, `build/xilinx/bin`, prjuray's `utils/`, the
   prjuray-tools commits from `tests/oracle/build/xilinx/status.json`, the
   prjuray-db commit); the Rust `uray-fasm2frames` and `fasm2frames` with
   and without the database cache; 9 s.
+### 8.13 nextpnr-xilinx examples (T7.6)
+
+The example designs of nextpnr-xilinx (`xilinx/examples`, openXC7 tag
+`0.8.2` = `dea2f28c`, the source of the installed openXC7 snap `0.8.2`;
+upstream gatecat/nextpnr-xilinx `8f178fc6` has the same examples) and of
+the openXC7 organisation's demo repositories (demo-projects `c5246c58`,
+the last commit written for this toolchain generation, including its
+`regression/` cases; primitive-tests `d29ee7c5`), built with the openXC7
+snap flow each example documents: yosys `synth_xilinx`, `nextpnr-xilinx
+--fasm`, the snap's `fasm2frames` (prjxray `utils/fasm2frames.py`) and
+`xc7frames2bit`, all with the snap's bundled prjxray-db (flow, collection
+and comparison: `tools/e2e/run-nextpnr-examples.sh`,
+`compare-nextpnr-examples.py`, `install-nextpnr-examples-corpus.py`;
+details, workarounds and what was not built: `tools/e2e/README.md`,
+"nextpnr-xilinx examples corpus (T7.6)"). Every Artix-7 design with a
+chipdb here or one its Makefile would build (xc7a35tcpg236-1 and
+xc7a100tfgg676-1 were built, 85 s and 152 s) was attempted; the 20 that
+nextpnr-xilinx 0.8.2 places and routes are in the corpus
+(`tests/corpus/xilinx/artix7/designs/{nextpnr-xilinx,openxc7-demo-projects,openxc7-primitive-tests}/<example>/<board>/`,
+2.5 MB: `top.fasm[.xz]`, the flow's dense frames `top.frm.xz`,
+`difftest.json`, a README of provenance, commands, sha256 of the flow's
+FASM, frames and bitstream, and the comparison results), so `make
+xilinx-difftest` covers them. The whole `--all` run took 27 minutes, 20
+of them the one regression case whose router never finishes.
+
+**What was compared, per design** (`compare-nextpnr-examples.py`; the
+columns of the matrix):
+
+* *Same as snap tools* (snap db): the Rust `fasm2frames` writes the
+  flow's frames byte for byte (dense, the flow's command line) and the
+  snap `fasm2frames`' frames with `--sparse`; with
+  `--emit_pudc_b_pullup` it writes the oracle's (snap db) frames -- the
+  snap's tool fails there on every design (a stale feature name,
+  `COMPAT.md`, "The openXC7 snap's tools"); the Rust `xc7frames2bit` on
+  the flow's frames writes the flow's `.bit` (up to the `.frm` path in
+  the header's design field, time injected); the Rust `xcfasm` (the snap
+  has none) with the snap's `xc7frames2bit` writes both; the Rust
+  `bitread` prints what the snap's prints for the flow's `.bit` with the
+  11 `BITREAD_FLAGS` sets; the Rust `fasm` CLI prints what the snap's
+  `fasm` (textX: its ANTLR extension does not load here) and the
+  oracle's print, with and without `--canonical`.
+* *Pinned db*: the Rust `fasm2frames` and the oracle agree (frames, exit
+  code, last error line); "same frames" when that is also the snap db's
+  result, "both fail" when the design uses features only the snap
+  database has (the `ppips_cfg_center_*` pseudo PIPs of `STARTUPE2` and
+  `BSCANE2`, `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED`; see
+  `tools/e2e/README.md`, "A note on prjxray-db provenance").
+* Timings: one run of each tool on this machine (4 cores, shared with
+  another agent's jobs; the Rust tools with a warm `FASM_XDB_CACHE`).
+  *Flow* is synthesis, the `$buf` workaround and place and route.
+
+| Source | Example | Board | Part | Built | FASM lines | Flow | Same as snap tools (frm, bit, xcfasm, bitread, fasm) | Pinned db = oracle | fasm2frames snap / Rust | xc7frames2bit snap / Rust | bitread snap / Rust | fasm --canonical snap / Rust |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| nextpnr-xilinx | attosoc | arty-a35 | `xc7a35tcsg324-1` | yes | 25718 | 12 s | yes | yes, same frames | 4.94 / 0.05 s | 0.06 / 0.03 s | 0.02 / 0.01 s | 3.94 / 0.027 s |
+| nextpnr-xilinx | attosoc | xczu2cg | `xczu2cg-sbva484-1-e` | skipped: UltraScale+ (xczu2cg chipdb, RapidWright json2dcp + Vivado, no FASM) | | | | | | | | |
+| nextpnr-xilinx | blinky | arty-a35 | `xc7a35tcsg324-1` | yes | 1046 | 5 s | yes | yes, same frames | 0.78 / 0.04 s | 0.06 / 0.03 s | 0.01 / 0.00 s | 0.29 / 0.003 s |
+| nextpnr-xilinx | blinky | artyz7-20 | `xc7z020clg400-1` | skipped: Zynq-7000 xc7z020 (zynq7; no chipdb, out of scope) | | | | | | | | |
+| nextpnr-xilinx | blinky | xczu2cg | `xczu2cg-sbva484-1-e` | skipped: UltraScale+ (xczu2cg chipdb, RapidWright json2dcp + Vivado, no FASM) | | | | | | | | |
+| nextpnr-xilinx | blinky | zcu104 | `xczu7ev-ffvc1156-2-e` | skipped: UltraScale+ (xczu7ev chipdb, RapidWright json2dcp + Vivado, no FASM) | | | | | | | | |
+| openxc7-demo-projects | blinky | digilent-arty | `xc7a35tcsg324-1` | yes | 738 | 5 s | yes | yes, same frames | 0.70 / 0.03 s | 0.06 / 0.03 s | 0.01 / 0.00 s | 0.22 / 0.002 s |
+| openxc7-demo-projects | blinky | digilent-basys-3 | `xc7a35tcpg236-1` | yes | 728 | 5 s | yes | yes, same frames | 0.66 / 0.03 s | 0.06 / 0.03 s | 0.01 / 0.01 s | 0.24 / 0.002 s |
+| openxc7-demo-projects | litex-ddr | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 196344 | 71 s | yes | yes, same frames | 43.27 / 0.23 s | 0.11 / 0.05 s | 0.09 / 0.02 s | 35.66 / 0.178 s |
+| openxc7-demo-projects | litex-sata | alientek-davincipro | `xc7a35tfgg484-2` | **no**: place and route failed (ERROR: IBUFDS_GTE2 instance IBUFDS_GTE2 output port must be connected to a GTPE2_COMMON instance, but is instead connected to an instance $auto$clkbufmap.cc:261) | | 31 s | | | | | | |
+| openxc7-demo-projects | regression-bram-sdp-unused-port | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 1522 | 9 s | yes | yes, same frames | 2.07 / 0.08 s | 0.27 / 0.14 s | 0.04 / 0.02 s | 0.38 / 0.005 s |
+| openxc7-demo-projects | regression-bufg-fabric-driven | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 872 | 8 s | yes | yes, same frames | 1.86 / 0.07 s | 0.25 / 0.14 s | 0.04 / 0.01 s | 0.23 / 0.002 s |
+| openxc7-demo-projects | regression-bufh-clock-constraint | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 817 | 8 s | yes | yes, same frames | 1.98 / 0.07 s | 0.26 / 0.14 s | 0.04 / 0.01 s | 0.23 / 0.002 s |
+| openxc7-demo-projects | regression-bufio-in-use | xc7a35tcsg324 | `xc7a35tcsg324-1` | **no**: place and route failed (ERROR: Unable to place cell 'bufio_i', no Bels remaining of type 'BUFIO') | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-bufr-pad-site | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Unable to place cell 'bufr_i', no Bels remaining of type 'BUFR') | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-bufr-sink-region | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Unable to place cell 'bufr_i', no Bels remaining of type 'BUFR') | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-clock-srcc-bufg | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 820 | 8 s | yes | yes, same frames | 2.03 / 0.07 s | 0.24 / 0.12 s | 0.05 / 0.01 s | 0.24 / 0.002 s |
+| openxc7-demo-projects | regression-config-primitive-startupe2 | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 875 | 8 s | yes | yes, both fail (snap-only features) | 1.93 / 0.07 s | 0.27 / 0.14 s | 0.04 / 0.01 s | 0.29 / 0.002 s |
+| openxc7-demo-projects | regression-const-holdout | xc7a35tcsg324 | `xc7a35tcsg324-1` | yes | 29125 | 12 s | yes | yes, same frames | 5.24 / 0.06 s | 0.07 / 0.04 s | 0.02 / 0.01 s | 4.28 / 0.021 s |
+| openxc7-demo-projects | regression-dsp-const-only-pins | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Unrouteable $PACKER_GND_NET sink $mul$top.v:9$4.CARRYCASCIN (SITEWIRE/DSP48_X0Y98/CARRYCASCIN)) | | 9 s | | | | | | |
+| openxc7-demo-projects | regression-dup-package-pin | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Cell '$iopadmap$top.led1$intcell$OBUF' cannot be bound to bel 'IOB_X0Y233/IOB33/OUTBUF' since it is already bound to cell '$iopadmap$top.led2$intcell$OBU) | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-fdse-fdpe-undefined-init | xc7z010clg400 | `xc7z010clg400-1` | skipped: Zynq-7000 xc7z010 (zynq7; out of scope) | | | | | | | | |
+| openxc7-demo-projects | regression-iddr-four-iff-flops | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Invalid global constant node 'INT_L_X0Y113/GND_WIRE') | | 8 s | | | | | | |
+| openxc7-demo-projects | regression-lut_shared_pin | xc7z010clg400 | `xc7z010clg400-1` | skipped: Zynq-7000 xc7z010 (zynq7; out of scope) | | | | | | | | |
+| openxc7-demo-projects | regression-lutram-clkinv | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Unable to place cell 'ram', no Bels remaining of type 'RAM64X1S') | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-lutram-ram64x1s | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Unable to place cell 'mem.0.0.genblk1.genblk1[0].genblk1.slice', no Bels remaining of type 'RAM64X1S') | | 4 s | | | | | | |
+| openxc7-demo-projects | regression-srl-init | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (ERROR: Invalid global constant node 'INT_L_X0Y113/GND_WIRE') | | 8 s | | | | | | |
+| openxc7-demo-projects | regression-srl-wemux | xc7a200tfbg484 | `xc7a200tfbg484-2` | **no**: place and route failed (timed out after 1200s;) | | 1204 s | | | | | | |
+| openxc7-demo-projects | regression-xorigport-unknown-name | xc7a200tfbg484 | `xc7a200tfbg484-2` | yes | 63 | 8 s | yes | yes, same frames | 1.74 / 0.07 s | 0.25 / 0.14 s | 0.04 / 0.01 s | 0.17 / 0.003 s |
+| openxc7-primitive-tests | gtp_channel | xc7a35tfgg484 | `xc7a35tfgg484-2` | yes | 1975 | 5 s | yes | yes, same frames | 2.96 / 0.04 s | 0.06 / 0.03 s | 0.01 / 0.00 s | 0.40 / 0.003 s |
+| openxc7-primitive-tests | gtp_common-external-refclk | xc7a100tfgg484 | `xc7a100tfgg484-1` | **no**: place and route failed (ERROR: Invalid global constant node 'INT_L_X0Y173/VCC_WIRE') | | 5 s | | | | | | |
+| openxc7-primitive-tests | gtp_common-internal-refclk | xc7a100tfgg484 | `xc7a100tfgg484-1` | yes | 301 | 6 s | yes | yes, both fail (snap-only features) | 4.78 / 0.05 s | 0.10 / 0.06 s | 0.01 / 0.01 s | 0.16 / 0.002 s |
+| openxc7-primitive-tests | jtag-test | acorn-cle215 | `xc7a200tfbg484-3` | yes | 818 | 9 s | yes | yes, both fail (snap-only features) | 1.77 / 0.08 s | 0.25 / 0.13 s | 0.04 / 0.01 s | 0.23 / 0.002 s |
+| openxc7-primitive-tests | mmcm-blinky-artix | xc7a100tfgg676 | `xc7a100tfgg676-1` | yes | 1283 | 9 s | yes | yes, same frames | 1.05 / 0.04 s | 0.12 / 0.06 s | 0.01 / 0.01 s | 0.30 / 0.003 s |
+| openxc7-primitive-tests | mmcm-blinky-artixx | xc7a100tfgg676 | `xc7a100tfgg676-1` | yes | 1283 | 9 s | yes | yes, same frames | 1.06 / 0.04 s | 0.11 / 0.06 s | 0.01 / 0.01 s | 0.32 / 0.003 s |
+| openxc7-primitive-tests | mmcm-reconfig | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 4927 | 8 s | yes | yes, same frames | 1.68 / 0.04 s | 0.11 / 0.05 s | 0.02 / 0.01 s | 0.82 / 0.009 s |
+| openxc7-primitive-tests | pll-reconfig | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 4277 | 7 s | yes | yes, same frames | 1.57 / 0.04 s | 0.10 / 0.05 s | 0.02 / 0.01 s | 0.70 / 0.006 s |
+| openxc7-primitive-tests | startupe2 | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 799 | 6 s | yes | yes, both fail (snap-only features) | 0.91 / 0.05 s | 0.10 / 0.06 s | 0.01 / 0.01 s | 0.23 / 0.002 s |
+
+Summed over the 20 designs: the snap's `fasm2frames` 83.0 s, the Rust
+one 1.25 s (66x; the oracle `xc_fasm.fasm2frames` with the pinned db
+27.4 s: the snap's runs its fasm parser with textX); the snap's `fasm
+--canonical` 49.4 s, Rust 0.28 s (176x); `xc7frames2bit` 2.9 s / 1.5 s
+and `bitread -z -y -o` 0.56 s / 0.20 s (C++ on the snap side, process
+start and I/O at these sizes).
+
+**Dense, sparse, pudc and debug variants against the oracle**
+(`tools/difftest-xilinx.py` over the committed corpus, `--filter
+'*designs/nextpnr-xilinx/*'` and `'*designs/openxc7-*'`, the oracle tools
+of `tests/oracle`): with the pinned database 80/80 fasm2frames runs and
+60/60 xcfasm runs identical (576 xc7frames2bit/bitread runs; the 4
+designs with snap-only features fail identically on both sides, so they
+have no bitstream runs), 2.2 minutes with `--jobs 2`; with the snap
+database (`--db-cache <snap>/opt/nextpnr-xilinx/external`) 80/80 and
+60/60 identical, 720 xc7frames2bit/bitread runs, 2.5 minutes.
+`tools/difftest.py` (Rust parser, `to_string`, canonical form and round
+trip against the original Python package, ANTLR and textX): 20/20 files
+identical (1.4 minutes).
+
+**Not built.** Other families: nextpnr-xilinx's `artyz7-20/blinky`
+(xc7z020), `attosoc`/`blinky` for xczu2cg and `zcu104/blinky`
+(UltraScale+, no FASM: RapidWright json2dcp and Vivado), the fork's
+`counter25` (Virtex-7, only on its `main`), demo-projects' Kintex-7,
+Spartan-7 and Zynq designs and its two xc7z010 regression cases,
+iologic-tests and dsp-tests (Kintex-7). Not placed or routed by
+nextpnr-xilinx 0.8.2 (errors in `tools/e2e/README.md`): demo-projects'
+`litex-sata/alientek-davincipro` (`IBUFDS_GTE2` driving a `BUFG`),
+primitive-tests' `gtp_common/external-refclk`, and 10 of the 17 Artix-7
+regression cases, which guard nextpnr-xilinx fixes made after 0.8.2
+(`srl-wemux` reached the 20 minute cap in the router).
+
+**Findings.** No difference between the Rust tools and the snap's or the
+oracle's; no Rust bug found, no Rust change. Quirks of the reference
+flow (`docs/rewrite/COMPAT.md`, "The openXC7 snap's tools"): the snap's
+`fasm2frames --emit_pudc_b_pullup` asks for a PUDC_B `IN_ONLY` feature
+that neither database has and fails on every design; the snap's `fasm`
+package falls back to textX here (its ANTLR extension needs `libffi.so.7`
+from snapd's `core20`); the pinned database lacks features some designs
+use. Flow notes (`tools/e2e/README.md`): this machine's Yosys needs the
+T7.2 `$buf` workaround for nextpnr-xilinx 0.8.2, applied to the written
+netlist; the flow is deterministic (two full runs gave the same 20 FASM
+files).
+
 ## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+
