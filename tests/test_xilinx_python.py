@@ -38,6 +38,7 @@
   otherwise.
 """
 
+import gc
 import io
 import lzma
 import os
@@ -45,6 +46,7 @@ import pickle
 import re
 import subprocess
 import threading
+import weakref
 
 import pytest
 
@@ -463,6 +465,95 @@ def test_roi(synthetic_db, tmp_path):
     asm = fx.FasmAssembler(synthetic_db)
     asm.mark_roi_frames((0, 100, 0, 100))
     assert len(asm.get_frames(sparse=True)) > 0
+
+
+def test_callback_cycle_is_collected(mini_db):
+    """ A feature callback referring back to its assembler (a bound
+    method of the object owning it) does not leak the assembler. """
+
+    class Tool:
+        def __init__(self):
+            self.seen = []
+            self.asm = fx.FasmAssembler(mini_db)
+            self.asm.set_feature_callback(self.on_feature)
+
+        def on_feature(self, feature):
+            self.seen.append(feature)
+
+    tool = Tool()
+    tool.asm.add_fasm_line('CLBLM_L_X10Y102.SLICEM_X0.A5FF.ZINI')
+    assert len(tool.seen) == 1
+    tool_ref = weakref.ref(tool)
+    asm_ref = weakref.ref(tool.asm)
+    del tool
+    gc.collect()
+    assert tool_ref() is None and asm_ref() is None
+
+
+def test_callback_errors_per_thread(mini_db):
+    """ Two threads whose callbacks raise on one assembler each get their
+    own exception. """
+    asm = fx.FasmAssembler(mini_db)
+
+    def raising(feature):
+        raise ValueError(threading.current_thread().name)
+
+    asm.set_feature_callback(raising)
+    results = {}
+
+    def work(name):
+        for _ in range(50):
+            try:
+                asm.add_fasm_line('CLBLM_L_X10Y102.SLICEM_X0.A5FF.ZINI')
+            except ValueError as e:
+                if str(e) != name:
+                    results[name] = str(e)
+                    return
+        results.setdefault(name, 'ok')
+
+    threads = [
+        threading.Thread(target=work, args=(n, ), name=n)
+        for n in ('t1', 't2', 't3')
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert results == {'t1': 'ok', 't2': 'ok', 't3': 'ok'}
+
+
+def test_argument_edge_cases(synthetic_db, tmp_path):
+    frames = fx.fasm2frames(
+        synthetic_db, fasm_text=SYNTHETIC_DESIGN, sparse=True)
+    # bytes paths, like Frames.write_frm.
+    out = os.fsencode(str(tmp_path / 'b.bit'))
+    assert fx.write_bitstream(
+        frames, synthetic_db, out, source_date_epoch=0) is None
+    assert read(out) == fx.write_bitstream(
+        frames, synthetic_db, source_date_epoch=0)
+    fasm_file = tmp_path / 'design.fasm'
+    fasm_file.write_text(SYNTHETIC_DESIGN)
+    fx.fasm2bit(
+        synthetic_db,
+        'xc7test-1',
+        str(fasm_file),
+        os.fsencode(str(tmp_path / 'c.bit')),
+        frm_out=tmp_path / 'c.frm',
+        source_date_epoch=0)
+    bit = read(tmp_path / 'c.bit')
+    assert str(tmp_path / 'c.frm').encode() in bit
+    # No words per frame.
+    for make in [
+            lambda: fx.Frames(words_per_frame=0),
+            lambda: fx.Frames({1: []}),
+            lambda: fx.Frames.from_frm('', 0),
+    ]:
+        with pytest.raises(ValueError):
+            make()
+    # Keys that are not frame addresses are missing.
+    for key in [-1, 2**32, 'x', 1.5]:
+        with pytest.raises(KeyError):
+            frames[key]
 
 
 def test_threads(mini_db):

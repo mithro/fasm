@@ -425,7 +425,7 @@ shared). With the feature:
 
 | Python | Reference it mirrors |
 |---|---|
-| `Database.open(db_root, part=None, cache=True)` (also `Database(...)`); `.root`, `.part`, `.layout`, `.architecture`, `.words_per_frame`, `.idcode`, `.tile_types()`, `.tile_type_features(t)`, `.pseudo_pips(t)`, `.tiles()` (`Tile` namedtuples), `.required_features()`, `.frame_addresses()`, `.lookup_feature(feature, address=0)` (a `FeatureBits` namedtuple, bits as `(frame, word, bit, value)` tuples) | `prjxray.db.Database`, `Grid`, `TileSegbits.feature_to_bits` |
+| `Database.open(db_root, part=None, cache=None)` (also `Database(...)`); `.root`, `.part`, `.layout`, `.architecture`, `.words_per_frame`, `.idcode`, `.tile_types()`, `.tile_type_features(t)`, `.pseudo_pips(t)`, `.tiles()` (`Tile` namedtuples), `.required_features()`, `.frame_addresses()`, `.lookup_feature(feature, address=0)` (a `FeatureBits` namedtuple, bits as `(frame, word, bit, value)` tuples) | `prjxray.db.Database`, `Grid`, `TileSegbits.feature_to_bits` |
 | `FasmAssembler(db, prjuray=None)`: `parse_fasm_filename(f, extra_features=None)`, `parse_fasm_string`, `parse_fasm_bytes`, `add_fasm_line(line, missing_features=None)`, `add_fasm_lines`, `add_required_features()`, `mark_roi_frames(roi)`, `propagate_stepdown()`, `set_feature_callback(fn)`, `get_frames(sparse=False)`, `.warnings`, `take_warnings()`, `len()` | `prjxray.fasm_assembler.FasmAssembler` (prjuray's with `prjuray=True`, the default for UltraScale(+) databases); the ROI / required features / STEPDOWN steps of `xc_fasm.fasm2frames` |
 | `Frames`: a read only `collections.abc.Mapping` of address to a `list` of words; `words_per_frame`, `to_dict()`, `frame_bytes(a)`, `to_bytes()`, `set_bits()`, `to_frm()`, `write_frm(path_or_file)`, `Frames.from_frm(text)`, `Frames.read_frm(path_or_file)`, `Frames(mapping, words_per_frame=None)`, `==` with any mapping, pickling | the `dict` `get_frames` returns, `dump_frm`, `xc7frames2bit`'s `.frm` reader |
 | `write_bitstream(frames, part, output=None, *, format=None, part_name=None, design_name=None, generator=None, source_date_epoch=None)`, `read_bitstream(source, part, *, format=None, clear_ecc=True, skip_zero=False)` | `xc7frames2bit`, `xcframes2bit`, `bitread --frm_out` |
@@ -441,7 +441,7 @@ and its part name for the header) or the path of a `part.yaml` (read like
 `--part_file`). An UltraScale(+) database uses prjuray's `fasm2frames`
 flow in `fasm2frames()`, like the `fasm2frames` tool.
 
-`cache=True` (or `None`) opens the database through the binary cache
+`cache=None` (the default) or `True` opens the database through the binary cache
 with the settings of the command line tools (`FASM_XDB_CACHE`, else
 `$XDG_CACHE_HOME/fasm/db`, else `~/.cache/fasm/db`; `FASM_XDB_CACHE=0`
 disables it), `False` without it, a path uses that directory.
@@ -464,6 +464,9 @@ the command line tools print, and every raised exception has a
 The classes are Python (`_types.py`) rather than `create_exception!` so
 that they can inherit from two bases.
 
+`fasm/xilinx/__init__.pyi` has the type stubs; `fasm/py.typed` marks the
+package as typed (PEP 561) so that type checkers use them.
+
 The one known difference from the tools' messages: for a FASM text with
 a value range error followed by a later syntax error, the tools report
 the syntax error (the ANTLR precedence, `fasm_cli::tool::error_to_report`)
@@ -471,6 +474,17 @@ and the bindings the first error in file order, like
 `fasm.parse_fasm_string` (see `COMPAT.md`).
 
 ### Ownership and threads
+
+The Python feature callback is kept in a field of the `FasmAssembler`
+object (the Rust callback installed in the assembler only holds that
+slot), and the class implements the garbage collector protocol
+(`__traverse__` visits the callback and the `Database`, with a `try_lock`
+so that the collector never blocks; `__clear__` drops the callback). A
+callback referring back to its assembler (a bound method of an object
+that owns it) therefore does not leak the assembler and its database:
+the cycle is collected (tested with a weak reference). The exception a
+callback raises is taken while the assembler is still locked, so two
+threads using one assembler never see each other's.
 
 `Database` holds an `Arc<Database>`; `FasmAssembler` holds a
 `FasmAssembler<'static>` built with `FasmAssembler::new_shared` (added to

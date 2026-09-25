@@ -27,6 +27,7 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pybacked::{PyBackedBytes, PyBackedStr};
 use pyo3::types::{PyList, PyString};
+use pyo3::{PyTraverseError, PyVisit};
 
 use super::{assembler_error, fs_path, Locked, PyDatabase, PyFrames, XTypes};
 use crate::convert::PyModel;
@@ -90,13 +91,29 @@ fn lines_from_py(py: Python<'_>, obj: Option<&Bound<'_, PyAny>>) -> PyResult<Vec
 /// with the GIL released. Methods of one assembler may be called from
 /// several threads (calls are serialised); a feature callback must not
 /// call its own assembler (``RuntimeError``).
-#[pyclass(frozen, name = "FasmAssembler", module = "fasm.xilinx")]
+///
+/// The assembler takes part in Python's cyclic garbage collection: a
+/// feature callback that refers back to its assembler (for example a
+/// bound method of an object that owns the assembler) is collected with
+/// it (``gc.collect()``), which removes the callback.
+#[pyclass(frozen, weakref, name = "FasmAssembler", module = "fasm.xilinx")]
 pub(crate) struct PyFasmAssembler {
     database: Py<PyDatabase>,
     db: Arc<Database>,
     state: Locked<FasmAssembler<'static>>,
-    /// The exception a feature callback raised during the current call.
+    /// The Python feature callback. The Rust callback installed in the
+    /// assembler only holds this slot, so that the garbage collector sees
+    /// the reference (`__traverse__`) and can break cycles (`__clear__`).
+    callback: Arc<Mutex<Option<Py<PyAny>>>>,
+    /// The exception a feature callback raised during the current call
+    /// (only used while the assembler's lock is held).
     callback_error: Arc<Mutex<Option<PyErr>>>,
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl PyFasmAssembler {
@@ -108,19 +125,20 @@ impl PyFasmAssembler {
         py: Python<'_>,
         f: impl FnOnce(&mut FasmAssembler<'static>) -> Result<R, AssemblerError> + Send,
     ) -> PyResult<R> {
-        self.take_callback_error();
-        let result = self.state.with(py, f)?;
-        result.map_err(|e| {
-            self.take_callback_error()
-                .unwrap_or_else(|| assembler_error(py, &e))
-        })
-    }
-
-    fn take_callback_error(&self) -> Option<PyErr> {
-        self.callback_error
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+        let errors = &self.callback_error;
+        // The callback's exception is taken while the assembler is still
+        // locked, so that concurrent calls never see each other's.
+        let (result, callback_error) = self.state.with(py, move |a| {
+            *lock(errors) = None;
+            let result = f(a);
+            let error = if result.is_err() {
+                lock(errors).take()
+            } else {
+                None
+            };
+            (result, error)
+        })?;
+        result.map_err(|e| callback_error.unwrap_or_else(|| assembler_error(py, &e)))
     }
 }
 
@@ -138,8 +156,26 @@ impl PyFasmAssembler {
             database: db.unbind(),
             db: shared,
             state: Locked::new(assembler),
+            callback: Arc::new(Mutex::new(None)),
             callback_error: Arc::new(Mutex::new(None)),
         })
+    }
+
+    fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
+        visit.call(&self.database)?;
+        // Never block in the garbage collector: the slot is only locked
+        // briefly, with the GIL held, by the callback wrapper.
+        if let Ok(callback) = self.callback.try_lock() {
+            if let Some(callback) = callback.as_ref() {
+                visit.call(callback)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn __clear__(&self) {
+        let callback = lock(&self.callback).take();
+        drop(callback);
     }
 
     /// The ``Database``.
@@ -270,26 +306,34 @@ impl PyFasmAssembler {
     /// every line added from now on, before its bits are looked up
     /// (``FasmAssembler.set_feature_callback``); an exception it raises
     /// aborts the call that added the line and propagates. ``None``
-    /// removes it.
+    /// removes it. A callback referring back to the assembler does not
+    /// keep it alive: the cycle is collected by the garbage collector.
     fn set_feature_callback(&self, py: Python<'_>, callback: Option<Py<PyAny>>) -> PyResult<()> {
         let Some(callback) = callback else {
+            let old = lock(&self.callback).take();
+            drop(old);
             return self.run(py, |a| {
                 a.clear_feature_callback();
                 Ok(())
             });
         };
-        let slot = Arc::clone(&self.callback_error);
+        let old = lock(&self.callback).replace(callback);
+        drop(old);
+        let slot = Arc::clone(&self.callback);
+        let errors = Arc::clone(&self.callback_error);
         let function: fasm_xilinx::FeatureCallback<'static> = Box::new(move |set_feature| {
             Python::attach(|py| -> PyResult<()> {
+                // Cleared by the garbage collector: nothing to call.
+                let Some(callback) = lock(&slot).as_ref().map(|c| c.clone_ref(py)) else {
+                    return Ok(());
+                };
                 let model = PyModel::get(py)?;
                 let value = model.set_feature(py, set_feature)?;
                 callback.bind(py).call1((value,))?;
                 Ok(())
             })
             .map_err(|e| {
-                *slot
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(e);
+                *lock(&errors) = Some(e);
                 AssemblerError::Python {
                     exception: "Exception",
                     message: "the feature callback raised an exception".to_owned(),
@@ -343,7 +387,9 @@ impl PyFasmAssembler {
         lines: Vec<FasmLine>,
         missing_features: Option<&Bound<'_, PyList>>,
     ) -> PyResult<()> {
-        let (result, missing) = self.state.with(py, move |a| {
+        let errors = &self.callback_error;
+        let (result, missing, callback_error) = self.state.with(py, move |a| {
+            *lock(errors) = None;
             let mut missing = Vec::new();
             let mut result = Ok(());
             for line in lines {
@@ -352,12 +398,14 @@ impl PyFasmAssembler {
                     break;
                 }
             }
-            (result, missing)
+            let error = if result.is_err() {
+                lock(errors).take()
+            } else {
+                None
+            };
+            (result, missing, error)
         })?;
-        let result = result.map_err(|e| {
-            self.take_callback_error()
-                .unwrap_or_else(|| assembler_error(py, &e))
-        });
+        let result = result.map_err(|e| callback_error.unwrap_or_else(|| assembler_error(py, &e)));
         match missing_features {
             Some(list) => {
                 for message in &missing {
