@@ -1016,7 +1016,7 @@ COMPAT.md`, "Bitstream readers compared with RapidWright".
 
 ```sh
 tools/e2e/setup-rapidwright.sh                      # jar + device files, ~150 MB
-tools/e2e/setup-rapidwright.sh --with-interchange   # + the FASM route, ~350 MB more
+tools/e2e/setup-rapidwright.sh --with-interchange   # + the FASM route, ~80 MB more
 ```
 
 Everything goes to `tools/e2e/build/rapidwright` (gitignored): the pinned

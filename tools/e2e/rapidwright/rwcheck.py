@@ -98,7 +98,11 @@ def run(cmd, **kw):
     kw.setdefault('stderr', subprocess.PIPE)
     p = subprocess.run([str(c) for c in cmd], timeout=1800, **kw)
     if p.returncode != 0:
-        err = (p.stderr or b'')[-2000:].decode(errors='replace')
+        # Long lines (an assertion printing a whole dict) are cut, so the
+        # last lines survive.
+        err = '\n'.join(
+            line[:300] for line in (p.stderr or b'').decode(
+                errors='replace').splitlines())[-2000:]
         raise RuntimeError(
             '%s failed (%d): %s' %
             (' '.join(map(str, cmd)), p.returncode, err))

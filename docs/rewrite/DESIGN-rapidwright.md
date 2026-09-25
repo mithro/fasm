@@ -93,8 +93,9 @@ adaptations, §4), `rwcheck.py` (the comparisons), and
     invalid literal for int() with base 16: "64'h00000000ffff0000"`: a
     LUT INIT in Verilog syntax the generator cannot decode), `bug709`
     (`AssertionError: .../ram_reg_0_15_6_6/SP`: LUTRAM macros are not
-    supported), `verilog_ethernet` (a macro/LUTRAM failure of the same
-    kind);
+    supported), `verilog_ethernet` (`AssertionError: ('VCC',
+    dict_keys([...]))`: the generator looks for a cell instance `VCC` in
+    the logical netlist, which Vivado's netlist does not have);
   * RapidWrightDCP `bug226` (xc7a35t) and `bug635` (xc7a200t) produce
     FASM (85400 and 710 lines) that **both** `fasm2frames` reject with
     the same `FasmLookupError` lines: the generator emits RAMB18 features
