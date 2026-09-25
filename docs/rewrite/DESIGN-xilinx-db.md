@@ -3600,7 +3600,8 @@ the flow and corpus bitstreams, which were written by `xc7frames2bit`).
 The five FASM designs are stored with their reference sparse frames in
 `tests/corpus/xilinx/{artix7,zynq7}/designs/rapidwright/` (712 KB), so
 `tools/difftest-xilinx.py` and `tests/e2e/test_rapidwright.py` use them
-without RapidWright. Comparing against an original bitstream is not
+without RapidWright (`difftest-xilinx.py --corpus-root` over just these:
+5 files, 20 fasm2frames runs with its four flag sets, all identical). Comparing against an original bitstream is not
 possible without Vivado (no DCP with a bitstream is readable, and
 RapidWright cannot make frames from a design).
 
