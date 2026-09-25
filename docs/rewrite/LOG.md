@@ -736,3 +736,13 @@ what happened, branch/commit references, open issues.
   the assembler and database. Fix requested plus small optionals. The
   reviewer was refused deleting its own scratch/target by its classifier;
   those are removed with the worktree after the merge.
+* T5.10 done: review fixes 88fe289 (FasmAssembler takes part in GC:
+  __traverse__/__clear__, weakref support, per call callback errors),
+  b9f67d9 (bytes paths, ValueError for empty frames, KeyError for any
+  missing key, py.typed), f10a637 (OSError kind on C file errors, ABI
+  note). Merged with --no-ff (no conflicts). Merged tree: fmt/clippy/doc
+  clean, 478 Rust tests, capi 20/20 under valgrind, Python (maturin
+  build from the repo root; a stale fasm/_fasm_rs.abi3.so from an older
+  develop had to be rebuilt) 1638 passed / 37 skipped incl. 51/51
+  test_xilinx_python.py, xilinx-difftest 227/227, uray-difftest 268 runs 0
+  different. Worktree removed. Phase 5 is complete except T5.3b/T5.8b.
