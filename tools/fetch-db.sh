@@ -30,7 +30,7 @@
 #
 #   Families:
 #     prjxray: artix7 kintex7 spartan7 zynq7
-#     prjuray: zynqusp
+#     prjuray: zynqusp (the only family of upstream prjuray-db, 2 parts)
 #
 # Examples:
 #   tools/fetch-db.sh prjxray artix7
