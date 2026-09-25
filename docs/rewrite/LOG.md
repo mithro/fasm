@@ -942,3 +942,22 @@ what happened, branch/commit references, open issues.
   on an arm64 runner, wrong binary names/speed-ups in CHANGELOG and the
   fasm-cli README. Fixes requested.
 * T7.5 (RapidWright capability study and cross-checks) started (Opus).
+* T7.4 merged tree verified: clippy clean, difftest.py 201 files (0
+  unexplained), tests/cli + tests/e2e 3265 passed / 17 skipped (one
+  transient failure in the first run while xilinx-difftest and
+  difftest.py were running concurrently; a clean rerun passed; to be
+  watched), xilinx-difftest and uray-difftest results recorded below when
+  the background run finishes.
+* T8.4 review fixes (4 commits: cargo package of all four crates in CI,
+  no workspace documentation URL, LICENSE in every crate package, CMake
+  IMPORTED_NO_SONAME + SameMinorVersion, CAPI.md find_package section,
+  RELEASING.md corrected incl. the existing PyPI `fasm` project and
+  crates.io trusted publishing, macOS wheel test legs, binary names and
+  speed-ups). Merged with --no-ff; cargo package -p fasm -p fasm-xilinx
+  -p fasm-cli -p fasm-capi verified (410/520/302/200 KiB), LICENSE
+  included, workflow YAML valid. Decisions left to the user: crates.io
+  crate name (`fasm` is taken), repository URL (chipsalliance vs mithro),
+  PyPI trusted publisher on the existing `fasm` project.
+* T5.3b (cache follow-ups: fingerprint in the file name, skip payload
+  hash on stat hits, faster cached open via bulk interning / lazy tile
+  type decode) started (Opus); T7.5 running.

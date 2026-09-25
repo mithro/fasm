@@ -109,7 +109,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T5.3 Binary cache for a loaded part database (versioned, content
       hashed, memory mappable) + `fasm-db-cache` maintenance subcommand
       (after T5.2).
-- [ ] T5.3b Cache follow-ups from the T5.3 review: loader fingerprint in the
+- [~] T5.3b Cache follow-ups from the T5.3 review: loader fingerprint in the
       cache file name (two builds sharing a cache directory currently
       overwrite each other), lazy per tile type decoding / interner bulk
       insert to reach the few ms open target, skip the payload hash when
