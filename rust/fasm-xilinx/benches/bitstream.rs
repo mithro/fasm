@@ -16,13 +16,25 @@
 
 //! Bitstream benchmark (`cargo bench -p fasm-xilinx --bench bitstream`).
 //!
-//! Writes and reads a Series7 bitstream with every frame of a part of the
-//! prjxray-db `artix7` database (from `$FASM_DB_CACHE` or
-//! `tests/oracle/build/db`; default part `xc7a200tffg1156-1`, 24060
-//! frames, `FASM_BENCH_PART` selects another), once with zero frames and
-//! once with random frames (30% of the words set), and reports the time of
-//! each phase (best of 5): `.frm` parsing, the ECC, [`bitstream_bytes`],
-//! the reader and `.frm` writing. Skipped when the database is missing.
+//! Writes and reads a bitstream with every frame of a part, for one part
+//! of each architecture that has a database (from `$FASM_DB_CACHE` or
+//! `tests/oracle/build/db`, see `tools/fetch-db.sh`):
+//!
+//! * Series7 (prjxray-db `artix7`): `xc7a35tcsg324-1` (small) and
+//!   `xc7a200tffg1156-1` (large, 24060 frames);
+//! * UltraScale+ (prjuray-db `zynqusp`): `xczu3eg-sfvc784-1-e`.
+//!
+//! UltraScale (prjuray-tools `xcuseries`) has no database in prjuray-db
+//! (see `docs/rewrite/DESIGN-xilinx-db.md` §8.10/§8.12: only synthetic and
+//! `ToolsTestData` UltraScale parts exist) and is skipped here; those are
+//! covered by the `fasm-xilinx` differential tests instead.
+//!
+//! `FASM_BENCH_PART`/`FASM_BENCH_FAMILY`/`FASM_BENCH_ARCH` override a
+//! single part instead of the default list. Once with zero frames and once
+//! with random frames (30% of the words set), reports the time of each
+//! phase (best of 5): `.frm` parsing, the ECC, [`bitstream_bytes`], the
+//! reader and `.frm` writing. Skipped parts (missing database) are noted
+//! and do not fail the run.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -46,22 +58,29 @@ fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1e3
 }
 
-fn main() {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let cache = std::env::var_os("FASM_DB_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| repo.join("tests/oracle/build/db"));
-    let part_name =
-        std::env::var("FASM_BENCH_PART").unwrap_or_else(|_| "xc7a200tffg1156-1".to_owned());
-    let path = cache
-        .join("prjxray-db/artix7")
-        .join(&part_name)
-        .join("part.yaml");
+/// One part to benchmark: database family directory, part name and
+/// architecture.
+struct Target {
+    family_dir: &'static str,
+    part_name: &'static str,
+    architecture: Architecture,
+}
+
+fn run_part(cache: &Path, target: &Target) {
+    let Target {
+        family_dir,
+        part_name,
+        architecture,
+    } = *target;
+    let path = cache.join(family_dir).join(part_name).join("part.yaml");
     if !path.exists() {
-        eprintln!("skipping: {} not found", path.display());
+        eprintln!(
+            "skipping {part_name} ({architecture:?}): {} not found",
+            path.display()
+        );
         return;
     }
-    let part = Part::from_yaml_file(&path, Architecture::Series7).unwrap();
+    let part = Part::from_yaml_file(&path, architecture).unwrap();
     let options = BitstreamOptions {
         design_name: b"bench.frm".to_vec(),
         part_name: part_name.as_bytes().to_vec(),
@@ -76,8 +95,9 @@ fn main() {
         state ^= state << 17;
         state
     };
+    let wpf = architecture.words_per_frame();
     for random in [false, true] {
-        let mut frames = Frames::zeroed(101, part.iter_frame_addresses().map(|a| a.0));
+        let mut frames = Frames::zeroed(wpf, part.iter_frame_addresses().map(|a| a.0));
         if random {
             let addresses: Vec<u32> = frames.addresses().to_vec();
             for address in addresses {
@@ -91,11 +111,11 @@ fn main() {
         let frm = frames.to_frm_string().into_bytes();
         let label = if random { "random" } else { "zero" };
         println!(
-            "{part_name}, {} frames, {label} ({:.1} MiB .frm):",
+            "{part_name} ({architecture:?}), {} frames, {label} ({:.1} MiB .frm):",
             frames.len(),
             frm.len() as f64 / 1048576.0
         );
-        let (t, read) = best(|| Frames::read_frm(&frm, 101, &mut |_| {}).unwrap());
+        let (t, read) = best(|| Frames::read_frm(&frm, wpf, &mut |_| {}).unwrap());
         println!("  read_frm             {:8.2} ms", ms(t));
         let (t, _) = best(|| {
             let mut copy = read.clone();
@@ -120,5 +140,54 @@ fn main() {
         println!("  read + to_frames     {:8.2} ms ({n} frames)", ms(t));
         let (t, _) = best(|| read.to_frm_string().len());
         println!("  write_frm            {:8.2} ms", ms(t));
+    }
+}
+
+fn main() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let cache = std::env::var_os("FASM_DB_CACHE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo.join("tests/oracle/build/db"));
+
+    if let Ok(part_name) = std::env::var("FASM_BENCH_PART") {
+        let family_dir =
+            std::env::var("FASM_BENCH_FAMILY").unwrap_or_else(|_| "prjxray-db/artix7".to_owned());
+        let architecture = match std::env::var("FASM_BENCH_ARCH").as_deref() {
+            Ok("UltraScale") => Architecture::UltraScale,
+            Ok("UltraScalePlus") => Architecture::UltraScalePlus,
+            _ => Architecture::Series7,
+        };
+        let name: &'static str = Box::leak(part_name.into_boxed_str());
+        let family: &'static str = Box::leak(family_dir.into_boxed_str());
+        run_part(
+            &cache,
+            &Target {
+                family_dir: family,
+                part_name: name,
+                architecture,
+            },
+        );
+        return;
+    }
+
+    let targets = [
+        Target {
+            family_dir: "prjxray-db/artix7",
+            part_name: "xc7a35tcsg324-1",
+            architecture: Architecture::Series7,
+        },
+        Target {
+            family_dir: "prjxray-db/artix7",
+            part_name: "xc7a200tffg1156-1",
+            architecture: Architecture::Series7,
+        },
+        Target {
+            family_dir: "prjuray-db/zynqusp",
+            part_name: "xczu3eg-sfvc784-1-e",
+            architecture: Architecture::UltraScalePlus,
+        },
+    ];
+    for target in &targets {
+        run_part(&cache, target);
     }
 }
