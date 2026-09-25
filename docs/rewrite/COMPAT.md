@@ -661,10 +661,40 @@ instead of 93` and skips every line): prjuray's `utils/fasm2bit.py`
 converts the frames to 32-bit words first; the Rust `fasm2frames` writes
 those directly for a prjuray-db part (the `fasm2frames` section).
 
-`tools/difftest-xilinx.py --prjuray` generates a corpus for every
-prjuray-db `zynqusp` part and compares both tools with the dense,
-`--sparse`, `--sparse --debug`, `--dump_bits` and ROI variants;
-`tests/cli/test_uray_tools_compat.py` covers the command line.
+`tools/difftest-xilinx.py --prjuray` (`make uray-difftest-all`, T6.3,
+`docs/rewrite/DESIGN-xilinx-db.md` §8.12) runs every part of every
+prjuray-db family (upstream has only `zynqusp`, with its two xczu3eg
+parts) on the every-feature corpus of `tools/gen-xilinx-corpus.py` (all
+54542 reachable features of the 27 tile types with segbits), random
+designs and error files, and compares both tools with the dense,
+`--sparse`, `--sparse --debug`, `--dump_bits` and ROI variants, then
+`fasm2frames`, `xcframes2bit` and `uray-bitread` on the results: no
+difference beyond the normalisation rules;
+`tests/cli/test_uray_corpus.py` checks one part against golden reference
+results, `tests/cli/test_uray_tools_compat.py` the command line.
+prjuray-db has no native UltraScale (`xcuseries`, non-plus) part, so
+UltraScale is covered only by the `ToolsTestData` Vivado bitstreams and
+the synthetic parts and unit tests of the `xcframes2bit` / `uray-bitread`
+section.
+
+**prjuray-db features that no FASM file can set** (a database
+limitation, the same for both tools): 34 segbits keys have a name part
+that starts with a digit, which is not a FASM identifier, e.g.
+`BRAM.RAMB18E2_L.READ_WIDTH_A.36` (6 keys of `BRAM`, 2 of
+`INT_INTF_LEFT_TERM_PSS`, `OUTPUTS_ENABLED.0/1`, 26 of
+`XIPHY_BYTE_RIGHT`, `...ISERDESE3.DATA_WIDTH.4/8`). Repro (prjuray-db
+`affbc5e5`):
+
+```
+$ printf 'BRAM_X8Y0.RAMB18E2_L.READ_WIDTH_A.36\n' > w.fasm
+$ tests/oracle/uray-fasm2frames-oracle --db-root <db>/prjuray-db/zynqusp \
+    --part xczu3eg-sfvc784-1-e w.fasm out.frm
+... Exception: Parse error at 1:33 - mismatched input '.' expecting {<EOF>, NEWLINE}
+$ target/release/uray-fasm2frames ... (same arguments)
+Exception: Parse error at 1:33 - unexpected '.', expected '[', '=', '{', '#' or end of line
+```
+
+Both exit with 1 at the same position (rule 2).
 
 ### Differences
 

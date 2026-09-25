@@ -161,7 +161,8 @@ which addressing scheme applies (see §9).
 `URAY_DATABASE=zynqusp`, `URAY_PART=xczu3eg-sfvc784-1-e`,
 `URAY_ARCH=UltraScalePlus` (`prjuray/settings/zynq_usp_3eg.sh:18-20`) —
 **prjuray-db as checked out here only documents UltraScale+ (Zynq
-UltraScale+), not plain UltraScale**; see §9.
+UltraScale+), not plain UltraScale**; see §9. (T6.3 checked upstream: `zynqusp`
+with the two xczu3eg parts is all there is, §8.12.)
 
 ## 3. File formats
 
@@ -2927,6 +2928,183 @@ round trip, identical to the reference).
 | `uray-bitread -x -o`, UltraScale / UltraScale+ | 0.49 / 0.18 s | 0.063 / 0.023 s |
 | `uray-fasm2frames`, dense `.frm` of xczu3eg (14898 frames, 30.6 MB) | 0.99 s | 0.33 s (0.29 s with the database cache) |
 
+### 8.12 prjuray-db all-parts differential testing (T6.3)
+
+`tools/gen-xilinx-corpus.py` (generator, now for both layouts),
+`tools/difftest-xilinx.py --prjuray` (comparison), `make
+uray-difftest-all`, `tests/cli/test_uray_corpus.py` (fast CI check with a
+golden file). Usage and disk layout: `tests/oracle/README.md`, "prjuray
+all-parts differential test".
+
+**What prjuray-db contains.** Upstream prjuray-db
+(`https://github.com/f4pga/prjuray-db`, branch `master` =
+`affbc5e555ebae16475f32e8fb2d6565d4204f3f`, the commit
+`tools/fetch-db.sh` pins; checked with `git ls-remote` and the tree of a
+blobless clone on 2026-09-25) has exactly one family directory,
+`zynqusp`, with two parts, `xczu3eg-sbva484-1-e` and
+`xczu3eg-sfvc784-1-e`, whose `tilegrid.json` files are identical (66385
+tiles, 158 tile types; `part.yaml`, `part.json` and `tileconn.json` are
+identical too, only `package_pins.csv` differs). Its only other
+branch, `next_zynqusp_db` (`2bcdfdcf`, merged into `master` by PR #2),
+has the same family and parts (a slightly different `zynqusp` tree). So
+**prjuray-db has no native UltraScale (`xcuseries`, non-plus) part**: UltraScale is covered by the Vivado
+bitstreams of prjuray-tools' `ToolsTestData.tar.gz` (below) and by the
+synthetic parts and unit tests of §8.10 only. The harness nevertheless
+discovers every family directory of `prjuray-db/` (a directory with
+`tile_types/`) and every part of each (a directory with a
+`tilegrid.json`), so a new family is tested without code changes.
+
+Of the 158 tile types of the zynqusp parts, 27 have a `segbits_*.db`
+(`BRAM` also `segbits_bram.block_ram.db`: the `BLOCK_RAM` bus, 256 frame
+columns), 29 have tiles with a bits block (`INT_INTF_R_PCIE4`, 95 of its
+360 tiles, and `PSS_ALTO` have bits but no segbits); there are no
+`ppips_*.db`, `mask_*.db` or `required_features.fasm` files and no
+aliases in the tilegrid. Every bits block ends at or before 16-bit word
+186 (the largest `offset + words` is 186, `XIPHY_BYTE_RIGHT` and
+`PSS_ALTO`), and every segbits bit of a tile lies inside it: no real
+feature reaches past the frame end or into the ECC words 90-92 (the
+`RCLK_*` tiles start at word 93).
+
+**Generator, prjuray-db layout** (`is_prjuray_layout`: a family
+directory with `tile_types/` and no `mapping/`). What changes, following
+prjuray's `utils/fasm2frames.py` (`prjuray/db.py`, `grid.py`,
+`tile_segbits.py`, `tile_segbits_alias.py`, `utils/fasm_assembler.py`,
+all read for this task; the assembler is prjxray's without its word
+checks, §8.10):
+
+* parts: the directories with a `tilegrid.json` (sorted), the tilegrid
+  `<part>/tilegrid.json`, tile types from `tile_types/`, no fabric
+  (manifest `fabric: null`, `layout: "prjuray"`); segbits, block RAM
+  segbits and ppips files as in prjxray-db (the lookup model,
+  `TileSegbits` / `TileSegbitsAlias`, is the same code);
+* positions in 16-bit words (`offset * 16 + word_bit`), 186 per frame;
+  a bit past the frame end is not dropped: a cleared one is stored in
+  the bit map (and conflicts), a set one would fail the whole file with
+  `IndexError` in `get_frames`, so a unit is not placed on a tile where
+  it sets one; a unit that does that on every tile of its group is
+  listed in `uncovered` (`sets a bit past the frame end on every tile`)
+  and one such line goes to `errors/past_frame_end.fasm`;
+* no IO bank, STEPDOWN or PUDC_B step (prjuray's `run()` has none): no
+  reserved tiles, no STEPDOWN hosts, `pudc_b: null`;
+* `--expected-frm` writes the sparse `.frm` of `uray-fasm2frames`
+  (186 16-bit words per frame);
+* error files: those of §8.9 except `stepdown_unbonded.fasm`, plus two
+  lookup errors in `lookup_errors.fasm` (a feature of a tile type
+  without segbits with a bits block, `PSS_ALTO`, and one without,
+  e.g. `AMS`: `FasmLookupError` either way), `feature_name.fasm` and
+  `past_frame_end.fasm` (only when a unit sets a bit past the frame end,
+  i.e. on the synthetic database).
+
+In both layouts a segbits key with a part that is not a FASM identifier
+(`[A-Za-z][A-Za-z0-9_]*`) is now listed in `unreachable` (`not a FASM
+feature name`), and `errors/feature_name.fasm` writes one to show the
+parse error (both parsers reject it at the `.` before the digit; rule 2).
+prjxray-db has no such key, so the prjxray corpora are byte identical to
+generator version 2 (checked on the test databases, xc7a35tcsg324-1 and
+xc7z020clg400-1 `--tiles first`; only `manifest.json` gains `layout`),
+and `GENERATOR_VERSION` stays 2. prjuray-db has 34:
+
+| tile type | keys | e.g. |
+|---|---|---|
+| `BRAM` | 6 | `BRAM.RAMB18E2_L.READ_WIDTH_A.36`, `BRAM.RAMB36E2.WRITE_WIDTH_B.72` |
+| `INT_INTF_LEFT_TERM_PSS` | 2 | `INT_INTF_LEFT_TERM_PSS.OUTPUTS_ENABLED.0` |
+| `XIPHY_BYTE_RIGHT` | 26 | `XIPHY_BYTE_RIGHT.BITSLICE_RX_TX_X0Y0.ISERDES.ISERDESE3.DATA_WIDTH.4` |
+
+These features cannot be set through FASM with any tool (a database
+limitation, `COMPAT.md`). Value formats: prjuray's `fasm2frames.py`
+parses with the same `fasm` package (the ANTLR parser of the oracle venv)
+as f4pga-xc-fasm, and `canonical_features` / `add_fasm_line` are the
+same, so the §8.9 restrictions (and no others) apply: every generated
+line was accepted by the reference.
+
+**Coverage** (`--tiles sample 3`, seed 0, both parts; the numbers are the
+same for every configuration tried): **27 of 27 tile types with segbits
+reached, 54542 of 54542 reachable units placed (features and addresses:
+the 54576 segbits keys minus the 34 above), `uncovered` empty,
+`unreachable` exactly the 34 keys**; per group coverage is asserted by
+the generator (`check_coverage`) and checked by the tests. 14 features
+files (the exclusive options of the six `HPIO_RIGHT`, four
+`HDIO_*_RIGHT` and three `CMT_RIGHT` / `RCLK_*` tiles need them), 19644
+lines, 81097 placements for xczu3eg-sfvc784-1-e (19604 lines, 81621
+placements for xczu3eg-sbva484-1-e), 5 error files; 2.8 s per part.
+
+| tile type | units | tiles | | tile type | units | tiles |
+|---|---|---|---|---|---|---|
+| BRAM | 37128 | 216 | | RCLK_BRAM_INTF_L | 160 | 6 |
+| CLEL_L | 768 | 720 | | RCLK_BRAM_INTF_TD_L | 160 | 9 |
+| CLEL_R | 768 | 4500 | | RCLK_BRAM_INTF_TD_R | 160 | 3 |
+| CLEM | 829 | 2520 | | RCLK_CLEL_L_L | 40 | 12 |
+| CLEM_R | 829 | 1080 | | RCLK_CLEM_L | 40 | 42 |
+| CMT_RIGHT | 104 | 3 | | RCLK_CLEM_R | 40 | 18 |
+| HDIO_BOT_RIGHT | 828 | 4 | | RCLK_DSP_INTF_CLKBUF_L | 288 | 3 |
+| HDIO_TOP_RIGHT | 812 | 4 | | RCLK_DSP_INTF_L | 80 | 6 |
+| HPIO_RIGHT | 1560 | 6 | | RCLK_DSP_INTF_R | 80 | 6 |
+| INT | 3778 | 5940 | | RCLK_HDIO | 512 | 4 |
+| INT_INTF_LEFT_TERM_PSS | 48 | 180 | | RCLK_INTF_LEFT_TERM_ALTO | 456 | 3 |
+| RCLK_AMS_CFGIO | 144 | 1 | | RCLK_INT_L / RCLK_INT_R | 1576 / 1576 | 75 / 24 |
+| RCLK_XIPHY_OUTER_RIGHT | 48 | 3 | | XIPHY_BYTE_RIGHT | 1730 | 12 |
+
+(T6.2's random corpus reached 17 of the 27 types and about 1.6 k of the
+features.)
+
+**What is compared, per part** (`--prjuray`, parts in parallel with
+`--jobs`, each part's runs in sequence; the driver, the result cache
+setup, `tally` and the `bitread` comparison are shared with the prjxray
+all-parts mode, whose output is unchanged: the old and the new script
+print the same and write the same JSON rows on two parts with the Rust
+tools on both sides): `uray-fasm2frames` (reference: prjuray
+`utils/fasm2frames.py`) on `features.fasm` dense, `--sparse`, `--sparse
+--debug`, `--dump_bits` and `--sparse --roi`, once more `--sparse` with
+`FASM_XDB_CACHE=0` for the Rust tool, the other features files and the
+error files `--sparse`, and T6.2's 20 random designs and 5 error cases
+(`--uray-files`, seed `--uray-seed` + part index) with the four flag sets
+(the first ten designs also with the ROI): 134 runs per part. For every
+run that succeeds with the dense, sparse or ROI flags and for the other
+features files, the reference `.frm` converted to 32-bit words must equal
+the Rust `fasm2frames` output, then `xcframes2bit` (reference
+prjuray-tools) turns it into a `.bit` that must be identical, and both
+`uray-bitread`s read it with the 9 flag sets (2 for the other features
+files). Finally the 5 `ToolsTestData` bitstreams (Series7, UltraScale,
+UltraScale+) with every `uray-bitread` flag set and their round trip.
+The Runner caches the reference results (key: command line, input file
+contents, the wrappers, `build/xilinx/bin`, prjuray's `utils/`, the
+`prjuray` and `fasm` packages of the oracle venv, the database commit).
+
+**Results** (`ORACLE_DIR` the shared oracle, prjuray
+`c550b03a26b4c4a9c4453353bd642a21f710b3ec`, prjuray-tools
+`f53f07b8fe37721137a57e9bee3b2b13e7676f53`, prjuray-db
+`affbc5e555ebae16475f32e8fb2d6565d4204f3f`; `--jobs 2`, next to a
+3-job prjxray run of the orchestrator, 2026-09-25):
+
+| run | uray-fasm2frames runs | identical | explained | different | fasm2frames + xcframes2bit + uray-bitread runs | wall time |
+|---|---|---|---|---|---|---|
+| default (`--tiles sample 3`), 2 parts, 88 files, 45938 lines | 268 | 258 | 10 | 0 | 1248 (all identical) | 406 s (393 / 394 s per part) |
+| the same from the result cache | 268 | 258 | 10 | 0 | 1248 | 96 s |
+| `--tiles first` (every feature once per file, 14 features files), 2 parts, 88 files, 39200 lines; random designs and `ToolsTestData` from the cache | 268 | 258 | 10 | 0 | 1248 (all identical) | 120 s |
+| `ToolsTestData` bitstreams x 9 flag sets + round trip | 5 | 5 | | 0 | | |
+
+* **0 unexplained differences, no Rust bug found.** The 10 explained
+  runs are the value range error (rule 4; `errors/value_range.fasm` and
+  the four flag sets of the random `value_range.fasm`, per part). Rule 1
+  applied 52 times (every error file), rule 2 10 times (the random
+  `syntax_error.fasm` and `errors/feature_name.fasm`).
+* Model cross check (no reference involved): the Rust `uray-fasm2frames
+  --sparse` equals the generator's `--expected-frm` for every features
+  file of both parts with `--tiles first`, `sample 3`, `sample 5
+  --density 0.8 --seed 7` and `all --max-per-tile 20` (300 k lines per
+  part): 112 files; on `synthetic-usp-db` with `sample 3`, `first` and
+  `all` (`tests/cli/test_gen_xilinx_corpus.py`, including the cleared
+  bit past the frame end of `EDGE.CLEAR_OUT` and the `IndexError` of
+  `EDGE.OUT`, both also checked against the reference by hand: identical).
+* `tests/cli/test_uray_corpus.py`: the golden
+  `tests/corpus/prjuray/zynqusp/generated/xczu3eg-sfvc784-1-e-sample-3-s0.json`
+  (reference results of `uray-fasm2frames` for the 19 files, 20 runs:
+  exit code, `.frm` SHA-256, normalised stderr, and the SHA-256 of the
+  32-bit conversion for the successful runs; header: the prjuray and
+  prjuray-tools commits from `tests/oracle/build/xilinx/status.json`, the
+  prjuray-db commit); the Rust `uray-fasm2frames` and `fasm2frames` with
+  and without the database cache; 9 s.
+
 ## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+
@@ -2949,6 +3127,9 @@ round trip, identical to the reference).
    UltraScale+ unless another database source is found (e.g. building one
    with the prjuray fuzzers, out of scope here) or the corrected
    `xcuseries` C++ types are exercised only via synthetic/unit tests.
+   **Confirmed by T6.3 (§8.12):** upstream prjuray-db (`master` =
+   `affbc5e5`) has only `zynqusp` (two xczu3eg parts); UltraScale is
+   covered by `ToolsTestData` and the synthetic parts only.
 3. **prjuray-db has zero `ppips_*.db` and zero `mask_*.db` files.**
    Confirmed by exhaustive `find`. This means, for every zynqusp tile type
    in the current database, `TileSegbits.ppips` is always empty — any
