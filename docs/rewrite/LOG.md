@@ -624,3 +624,11 @@ what happened, branch/commit references, open issues.
   runs, ToolsTestData round trips, prjxray regression unchanged; Rust
   2-8x faster. xcfasm has no UltraScale (xc_fasm lacks it); Spartan6 not
   implemented. Independent review (Opus) started.
+* T6.2 review (Opus): C++ sources read and matched (ECC, address fields,
+  part walk, headers, packets), 131 adversarial comparisons + 13,000 fuzz
+  mutations, all branch verification reproduced (473 Rust tests,
+  uray-difftest 220/220 + 1078 + 5/5, xilinx-difftest unchanged, 92 + 128
+  compat tests), --helppackage fix confirmed against the C++ tools.
+  REQUEST CHANGES: doc-only (COMPAT row for xcu(p)series part.yaml values
+  that overflow the address fields: reference hangs/accepts, Rust
+  rejects). T6.3 scope refined from the reviewer's coverage findings.
