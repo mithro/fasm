@@ -95,6 +95,7 @@ name = "fasm-python"
 version = "0.1.0"
 dependencies = [
  "fasm",
+ "fasm-xilinx",
  "pyo3",
 ]
 

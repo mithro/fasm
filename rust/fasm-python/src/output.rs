@@ -175,8 +175,8 @@ fn annotations_from_py(
         .map(Some)
 }
 
-/// A `fasm.model.FasmLine`.
-fn line_from_py(py_model: &PyModel, obj: &Bound<'_, PyAny>) -> Option<FasmLine> {
+/// A `fasm.model.FasmLine`, or `None` if it is outside of the fast path.
+pub(crate) fn line_from_py(py_model: &PyModel, obj: &Bound<'_, PyAny>) -> Option<FasmLine> {
     let fields = fields(obj, &py_model.fasm_line)?;
     let set_feature = fields.get_item(0).ok()?;
     let set_feature = if set_feature.is_none() {
