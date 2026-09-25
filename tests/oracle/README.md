@@ -574,6 +574,10 @@ python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
   of the `fasm2frames` section of `docs/rewrite/COMPAT.md`), 8814
   xc7frames2bit/bitread runs and 375 xcfasm runs, all identical; 0
   unexplained differences.
+* Result of the second run (generator version 2, `--jobs 3`, 117
+  minutes): 2252 fasm2frames runs (2127 identical, 125 explained, the same
+  `errors/value_range.fasm` per part), 7617 xc7frames2bit/bitread runs and
+  375 xcfasm runs, all identical; 0 unexplained differences.
 * Families missing from `$FASM_DB_CACHE` (default `tests/oracle/build/db`)
   are fetched with `tools/fetch-db.sh` (after a free space check; the
   four families take about 400 MiB checked out). `--db-cache` also takes

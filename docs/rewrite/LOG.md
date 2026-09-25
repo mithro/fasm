@@ -656,3 +656,8 @@ what happened, branch/commit references, open issues.
   accepts). 268 uray-fasm2frames runs = 258 identical + 10 explained
   (value range) + 0 different, 1248 bitstream tool runs identical, 406 s.
   No Rust bug found. Independent review (Opus) started.
+* Version 2 all-parts prjxray reference run finished: 125 parts, 1752
+  files, 6.71 M lines; fasm2frames 2252 runs = 2127 identical + 125
+  explained (value_range) + 0 different; 7617 bitstream tool runs and 375
+  xcfasm runs identical; 7039 s with 3 jobs. Recorded in §8.9,
+  tests/oracle/README.md and COMPAT.md.

@@ -2665,7 +2665,8 @@ dumps) are kept as a SHA-256.
 generator version 1): 2151 FASM files, 6.60 M lines; 2651 fasm2frames
 runs, 8814 xc7frames2bit/bitread runs and 375 xcfasm runs on each side.
 Version 2 (above) has fewer, fuller files (1752 files, 6.71 M lines), so
-fewer runs; its full run against the reference is still to be made:
+fewer runs; its full run against the reference (see the second results
+block below) is also clean:
 
 | family | parts | files | lines | fasm2frames | bitstream tools | xcfasm |
 |---|---|---|---|---|---|---|
@@ -2707,7 +2708,17 @@ of `tests/oracle/setup-xilinx.sh`, prjxray
   STEPDOWN propagation, PUDC_B pull-up including kintex7, required
   features of zynq7, sparse zero filling, `--debug`, the bitstream writer
   and reader on 125 parts) were already reproduced.
-* **Wall time 4114 s (68.6 min)** with `--jobs 4`. Per part (generation,
+* **Second full run, generator version 2** (same oracle and database
+  commits, default corpus, `--jobs 3` beside other work, 2026-09-25, run
+  by the orchestrator): 125 parts, 1752 FASM files, 6 712 737 lines;
+  fasm2frames 2252 runs, 2127 identical, 125 explained (again exactly
+  `errors/value_range.fasm [sparse]`, one per part), 0 different;
+  xc7frames2bit + bitread 7617 runs, all identical; xcfasm 375 runs, all
+  identical; 10244 reference and 10244 Rust runs; **0 unexplained
+  differences**; wall time 7039 s (117 min) with 3 jobs, all 125 per part
+  lines `ok`. So the STEPDOWN units of both `_SING` alias groups and the
+  aliased pseudo PIPs added in version 2 are byte identical too.
+* **Wall time 4114 s (68.6 min)** with `--jobs 4` for the version 1 run. Per part (generation,
   reference and Rust runs of that part in sequence) 46-271 s, median 91 s,
   mean 130 s (16214 s in total); the Rust side and the generation are
   7-15 s of it, so the reference costs about 40-260 s per part: the

@@ -355,7 +355,10 @@ one part against golden reference results. First full run (125 parts,
 68.6 minutes with 4 jobs): no difference beyond the rules below; the only
 "explained" runs are the 125 of `errors/value_range.fasm` (one per part),
 which is rule 4, and rule 1 applied to the other error files
-(`FasmLookupError`, `KeyError`, `FasmInconsistentBits`).
+(`FasmLookupError`, `KeyError`, `FasmInconsistentBits`). The second full
+run with generator version 2 (2252 fasm2frames runs, 7617
+xc7frames2bit/bitread runs, 375 xcfasm runs) gave the same picture: 0
+unexplained differences, 125 explained value range runs.
 
 ### Differences
 
