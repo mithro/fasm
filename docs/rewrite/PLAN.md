@@ -5,6 +5,36 @@ It is kept in the repository so that any agent (human or AI) can resume the
 work from any point. See `TASKS.md` for the live task list and `LOG.md` for
 the progress log. See `WORKFLOW.md` for the agent workflow rules.
 
+## Status
+
+See `TASKS.md` for the authoritative, up to date task list (this section
+is a pointer, not a duplicate — do not edit `TASKS.md`/`LOG.md` from here).
+As of the T8.3 documentation pass, Phases 0-6 are complete (`[x]`) except
+two optional/deferred follow-up tasks (T0.4b, T5.3b, T6.3b, T8.2b — small,
+logged improvements, not blockers). Phase 7 (toolchain end-to-end
+compatibility) is complete except T7.4 (VTR, implemented and in review)
+and T7.5 (RapidWright, not started). Phase 8 (performance/docs/packaging):
+T8.1 and T8.2 are done, T8.3 (this documentation pass) is in progress, and
+T8.4 (packaging: crates.io metadata, maturin wheels workflow, CMake
+install, release notes) has not started. See `LOG.md` for the detailed,
+dated history behind every one of these (branch names, commit hashes,
+review verdicts, measured numbers).
+
+### Design docs index
+
+The design documents referenced throughout this plan and by `TASKS.md`:
+
+| Document | Covers |
+|---|---|
+| `docs/rewrite/DESIGN-idstring.md` | the `idstring` interned string module (T1.1) |
+| `docs/rewrite/DESIGN-model.md` | the `model` module: `FasmLine`, `SetFasmFeature`, `Annotation`, `ValueFormat` (T1.2) |
+| `docs/rewrite/DESIGN-output.md` | output formatting, canonicalisation, merge/sort (T1.4) |
+| `docs/rewrite/DESIGN-python.md` | the `fasm-python` pyo3 bindings, including `fasm.xilinx` (T3.1-T3.3, T5.10) |
+| `docs/rewrite/DESIGN-capi.md` | the C ABI (`fasm-capi`) and the C++ header-only wrapper, including the Xilinx C/C++ API (T4.1, T4.2, T5.10) |
+| `docs/rewrite/DESIGN-xilinx-db.md` | the prjxray-db/prjuray-db database format, loader, cache, assembler and bitstream writer/reader (T5.1-T6.3) |
+| `docs/rewrite/BENCHMARKS.md` | the benchmark suite and measured numbers (T8.1, updated for T8.2) |
+| `docs/rewrite/COMPAT.md` | every documented behavioural divergence from the original Python/C++ tools, by tool |
+
 ## Goals (from the original request)
 
 1. Rewrite the `fasm` assembler in Rust, split into a **library** and a
