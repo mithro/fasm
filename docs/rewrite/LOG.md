@@ -710,3 +710,18 @@ what happened, branch/commit references, open issues.
   (documented), synthetic-db Series7 read-back oddity to investigate, the
   agent's classifier once denied a heredoc creating a file (it used the
   Write tool). Independent review (Opus) started.
+* T7.3 done: review fixes a50606d (tools/e2e/f4pga/check-genfasm.sh: log
+  must end with genfasm's VPR footer and no bash signal report; fake
+  genfasm self tests for KILL/BUS/TERM/SEGV/ABRT/exit), 2eb2f9f (--help,
+  free space check, pip --no-deps), 0f86712 (LiteX marker in the env,
+  compare exit status), 0466044 (docs). Merged 26b0958 with --no-ff;
+  conflicts with T6.2/T6.3 in difftest-xilinx.py argparse and §8.10-8.12
+  resolved keeping both sides and ordering the sections. Merged tree:
+  fmt/clippy clean, 473 Rust tests, xilinx-difftest 56 files 227/227 +
+  150/150 xcfasm + 6/6, uray-difftest 268 runs 0 different, tests/cli +
+  tests/e2e 2094 passed / 14 skipped. The 4.8 GB f4pga toolchain lives in
+  the T7.3 worktree (.claude/worktrees/agent-a10d4cdf1c15a7c33/tools/e2e/
+  build, baked conda paths; use F4PGA_E2E_ROOT=<that>/tools/e2e/build);
+  the worktree directory is kept for that reason (7.8 GB free, a fresh
+  `tools/e2e/setup-f4pga.sh` needs ~5 GB) and can be removed when disk is
+  needed. The two nexys_video (xc7a200t) pairs remain unbuilt here.
