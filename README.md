@@ -100,7 +100,7 @@ the Cargo workspace under `rust/`:
 ```
 cargo build --workspace
 cargo test --workspace
-cargo run -p fasm-cli -- --help
+cargo run -p fasm-cli --bin fasm -- --help
 ```
 
 `make rust-build`, `make rust-test`, `make rust-lint` and `make rust-doc`
