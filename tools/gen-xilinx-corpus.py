@@ -84,7 +84,7 @@ CLB_IO_CLK = 'CLB_IO_CLK'
 BLOCK_RAM = 'BLOCK_RAM'
 WORD_BITS = 32
 FRAME_WORDS = 101
-GENERATOR_VERSION = 1
+GENERATOR_VERSION = 2
 
 PUDC_FEATURES = (
     'LVCMOS12_LVCMOS15_LVCMOS18_LVCMOS25_LVCMOS33_LVDS_25_LVTTL_SSTL135_'
@@ -369,6 +369,14 @@ class TileFeatures(object):
         for key in own.ppips:
             if key.startswith(tile_type + '.'):
                 candidates.append((key[len(tile_type) + 1:], None, key))
+        if alias is not None:
+            # The aliased type's pseudo PIPs, under this tile's names (no
+            # bits either).
+            for key in source.ppips:
+                if key.startswith(source_type + '.'):
+                    name = to_own(key)
+                    if name is not None and '[' not in name:
+                        candidates.append((name, None, key))
         plain_names = set(n for n, a, _ in candidates if a is None)
         for name, address, key in candidates:
             if (name, address) in seen:
@@ -401,12 +409,18 @@ class TileFeatures(object):
         return self.by_label.get('%s[%d]' % (name, address))
 
 
-def tile_features(db, cache, tile):
-    info = db.grid[tile]
+def tile_alias(db, tile):
+    """The alias of a tile's bits blocks, or None."""
     alias = None
-    for b in info.get('bits', {}).values():
+    for b in db.grid[tile].get('bits', {}).values():
         if 'alias' in b:
             alias = b['alias']
+    return alias
+
+
+def tile_features(db, cache, tile):
+    info = db.grid[tile]
+    alias = tile_alias(db, tile)
     key = (info['type'], json.dumps(alias, sort_keys=True))
     if key not in cache:
         cache[key] = TileFeatures(db, info['type'], alias)
@@ -516,12 +530,20 @@ class Pass(object):
 class Group(object):
     """The tiles of a type that accept the same features (same alias)."""
 
-    def __init__(self, tile_type, tiles, features):
+    def __init__(self, tile_type, tiles, features, alias):
         self.tile_type = tile_type
         self.tiles = tiles
         self.features = features
+        self.alias = alias
         self.pool = []
         self.leftover = []
+        self.stepdown_host = None
+        if alias is None:
+            self.name = tile_type
+        else:
+            self.name = '%s (alias of %s, start_offset %d, sites %s)' % (
+                tile_type, alias['type'], alias['start_offset'],
+                json.dumps(alias['sites'], sort_keys=True))
 
 
 class Generator(object):
@@ -604,28 +626,30 @@ class Generator(object):
         if text not in self.notes:
             self.notes.append(text)
 
-    def choose_stepdown(self, tiles_by_type):
-        """Host tiles for the STEPDOWN features (bonded, in as few banks as
-        possible); returns the tiles kept free of generated features: the
-        other tiles of those banks and the PUDC_B tile."""
+    def choose_stepdown(self):
+        """A host tile for the STEPDOWN features of each group (tile type
+        and alias: the bottom and top `_SING` IOB tiles accept different
+        bits) that has any: bonded, in as few banks as possible. Returns
+        the tiles kept free of generated features: the other tiles of those
+        banks and the PUDC_B tile."""
         pudc = self.db.pudc_b()
         pudc_tile = pudc[0] if isinstance(pudc, tuple) else None
         wanted = {}
-        for tile_type, tiles in sorted(tiles_by_type.items()):
-            if tile_type not in self.db.known_types or not any(
-                    self.is_stepdown(tiles[0], u)
-                    for u in self.features_of(tiles[0]).units):
+        for index, group in enumerate(self.groups):
+            if not any(
+                    self.is_stepdown(group.tiles[0], u)
+                    for u in group.features.units):
                 continue
             banks = {}
-            for t in tiles:
+            for t in group.tiles:
                 bank = self.db.tile_to_bank.get(t)
                 if bank is not None and t != pudc_tile:
                     banks.setdefault(bank, []).append(t)
             if banks:
-                wanted[tile_type] = banks
+                wanted[index] = banks
             else:
-                self.note('no bonded %s tile: its STEPDOWN features are not '
-                          'used' % tile_type)
+                self.note('no bonded tile of %s: its STEPDOWN features are '
+                          'not used' % group.name)
         while wanted:
             counts = {}
             for banks in wanted.values():
@@ -633,9 +657,11 @@ class Generator(object):
                     counts[bank] = counts.get(bank, 0) + 1
             bank = sorted(counts, key=lambda b: (-counts[b], b))[0]
             self.stepdown_banks.append(bank)
-            for tile_type in [t for t in wanted if bank in wanted[t]]:
-                self.stepdown_hosts[tile_type] = wanted[tile_type][bank][0]
-                del wanted[tile_type]
+            for index in sorted(i for i in wanted if bank in wanted[i]):
+                group = self.groups[index]
+                group.stepdown_host = wanted[index][bank][0]
+                self.stepdown_hosts[group.name] = group.stepdown_host
+                del wanted[index]
         reserved = set()
         for bank in self.stepdown_banks:
             reserved.update(self.db.bank_to_tiles.get(bank, []))
@@ -691,13 +717,6 @@ class Generator(object):
         tiles_by_type = {}
         for tile, info in self.db.grid.items():
             tiles_by_type.setdefault(info['type'], []).append(tile)
-        reserved = self.choose_stepdown(tiles_by_type)
-        self.new_pass()
-        for tile_type, host in sorted(self.stepdown_hosts.items()):
-            blocks = self.db.bits_blocks(host)
-            for unit in self.features_of(host).units:
-                if self.is_stepdown(host, unit):
-                    self.place(host, unit, blocks)
         for tile_type in sorted(tiles_by_type):
             tiles = tiles_by_type[tile_type]
             stat = self.stats.setdefault(tile_type, {
@@ -713,10 +732,23 @@ class Generator(object):
             for tile in tiles:
                 features = self.features_of(tile)
                 if id(features) not in by_features:
-                    group = Group(tile_type, [], features)
+                    group = Group(tile_type, [], features,
+                                  tile_alias(self.db, tile))
                     by_features[id(features)] = group
                     self.groups.append(group)
                 by_features[id(features)].tiles.append(tile)
+        reserved = self.choose_stepdown()
+        self.new_pass()
+        for group in self.groups:
+            host = group.stepdown_host
+            if host is not None:
+                blocks = self.db.bits_blocks(host)
+                for unit in group.features.units:
+                    if self.is_stepdown(host, unit):
+                        if not self.place(host, unit, blocks):
+                            self.uncovered.append(
+                                (group.tile_type, host, unit.label(),
+                                 'STEPDOWN feature conflicts on its host'))
         for group in self.groups:
             stat = self.stats[group.tile_type]
             stat['features'] += len(group.features.units)
@@ -732,11 +764,11 @@ class Generator(object):
             for tile in group.tiles:
                 for unit in self.cur.placed.get(tile, ()):
                     placed.add(unit.label())
-            group.leftover = self.cover(
+            group.leftover = group.leftover + self.cover(
                 group, [u for u in todo if u.label() not in placed])
             for unit in group.features.units:
                 if (self.is_stepdown(group.tiles[0], unit)
-                        and group.tile_type not in self.stepdown_hosts):
+                        and group.stepdown_host is None):
                     self.uncovered.append(
                         (group.tile_type, group.tiles[0], unit.label(),
                          'STEPDOWN feature, no bonded tile'))
@@ -763,9 +795,38 @@ class Generator(object):
                     reason = 'conflicts in every pass (--max-passes)'
                 self.uncovered.append(
                     (group.tile_type, group.tiles[0], unit.label(), reason))
+        self.check_coverage()
         for p in self.passes:
             for tile in p.placed:
                 self.stats[self.db.grid[tile]['type']]['tiles_used'] += 1
+
+    def check_coverage(self):
+        """Per group: its units, the distinct units placed on its tiles
+        (over all passes) and the units listed in `uncovered`; every unit
+        must be placed or listed (an assertion, so a unit dropped without
+        a reason is a generator bug, not a silently smaller corpus)."""
+        self.coverage = {}
+        listed = {}
+        for tile_type, tile, label, _ in self.uncovered:
+            listed.setdefault((tile_type, tile), set()).add(label)
+        for group in self.groups:
+            labels = set(u.label() for u in group.features.units)
+            placed = set()
+            for p in self.passes:
+                for tile in group.tiles:
+                    for unit in p.placed.get(tile, ()):
+                        placed.add(unit.label())
+            missing = set()
+            for tile in group.tiles:
+                missing |= listed.get((group.tile_type, tile), set())
+            missing -= placed
+            assert placed | missing == labels, (
+                group.name, sorted(labels - placed - missing)[:10])
+            self.coverage[group.name] = {
+                'units': len(labels),
+                'placed': len(placed),
+                'uncovered': len(missing),
+            }
 
     def used_iob_sites(self, extra=()):
         used = set(extra)
@@ -1289,8 +1350,11 @@ def main(argv=None):
         'lines': lines,
         'features_placed': placed,
         'features_total': sum(len(g.features.units) for g in gen.groups),
+        'features_distinct_placed': sum(
+            c['placed'] for c in gen.coverage.values()),
         'stepdown_banks': gen.stepdown_banks,
         'stepdown_hosts': gen.stepdown_hosts,
+        'coverage': gen.coverage,
         'pudc_b': db.pudc_b(),
         'errors': errors,
         'tile_types': gen.stats,
@@ -1303,10 +1367,11 @@ def main(argv=None):
     with open(os.path.join(args.out_dir, 'manifest.json'), 'w') as f:
         json.dump(manifest, f, indent=1, sort_keys=True)
         f.write('\n')
-    print('%s: %d files, %d lines, %d feature bits placed (%d distinct), '
+    distinct = sum(c['placed'] for c in gen.coverage.values())
+    print('%s: %d files, %d lines, %d units placed (%d distinct of %d), '
           '%d not placed, %d error files' %
-          (args.part, len(files), lines, placed, manifest['features_total'],
-           len(gen.uncovered), len(errors)))
+          (args.part, len(files), lines, placed, distinct,
+           manifest['features_total'], len(gen.uncovered), len(errors)))
     return 0
 
 

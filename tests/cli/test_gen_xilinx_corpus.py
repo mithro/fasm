@@ -72,6 +72,19 @@ def fasm2frames(db, part, fasm, frm, tmp_path, flags=('--sparse', )):
     return subprocess.run(argv, env=env, capture_output=True)
 
 
+def check_coverage(manifest):
+    """Every unit of every group placed or listed as uncovered (counted
+    distinct per group, not per placement)."""
+    coverage = manifest['coverage']
+    assert coverage and manifest['features_total'] > 0
+    for name, c in coverage.items():
+        assert c['placed'] + c['uncovered'] == c['units'], (name, c)
+    assert sum(c['units'] for c in coverage.values()) == \
+        manifest['features_total']
+    assert manifest['features_distinct_placed'] + len(
+        manifest['uncovered']) == manifest['features_total']
+
+
 CASES = [
     (TESTDATA / 'mini-db', 'xc7', ['--tiles', 'sample', '2']),
     (TESTDATA / 'mini-db', 'xc7', ['--tiles', 'first']),
@@ -84,7 +97,7 @@ CASES = [
 @pytest.mark.parametrize('db,part,options', CASES)
 def test_model_matches_rust(db, part, options, tmp_path):
     manifest = generate(db, part, tmp_path / 'a', *options)
-    assert manifest['features_placed'] >= manifest['features_total'] > 0
+    check_coverage(manifest)
     assert not manifest['uncovered']
     for name in manifest['files']:
         fasm = tmp_path / 'a' / name
@@ -133,9 +146,11 @@ def test_model_matches_rust_real_part(tmp_path):
     part = 'xc7a35tcsg324-1'
     manifest = generate(db, part, tmp_path / 'a', '--tiles', 'first',
                         '--no-errors')
-    assert not [u for u in manifest['uncovered']
-                if u[3] != 'STEPDOWN feature, no bonded tile']
+    check_coverage(manifest)
+    assert not manifest['uncovered']
     assert not manifest['unreachable']
+    # Both alias groups of both _SING IOB types have a STEPDOWN host.
+    assert len(manifest['stepdown_hosts']) == 6
     for name in manifest['files']:
         fasm = tmp_path / 'a' / name
         result = fasm2frames(db, part, fasm, tmp_path / 'out.frm', tmp_path)

@@ -301,20 +301,55 @@ def test_golden_header(golden):
             '--update-header' % key)
 
 
+REGENERATE = ('regenerate it with the reference tools: FASM2FRAMES_ORACLE='
+              '<oracle>/fasm2frames-oracle FASM_DB_CACHE=<db cache> python3 '
+              'tests/cli/test_xilinx_corpus.py --write-goldens')
+
+
+def stale_golden(corpus, golden):
+    """Why the golden file does not describe this corpus, or None."""
+    _, _, files = corpus
+    if golden.get('prjxray_db_commit') != db_commit(DB):
+        return ('the golden file was made with prjxray-db %s, the fetched '
+                'database %s is at %s' %
+                (golden.get('prjxray_db_commit'), DB, db_commit(DB)))
+    if files != golden['files_sha256']:
+        changed = sorted(
+            set(k for k in set(files) | set(golden['files_sha256'])
+                if files.get(k) != golden['files_sha256'].get(k)))
+        return ('tools/gen-xilinx-corpus.py now generates another corpus '
+                'than the golden file was made from (changed: %s)' %
+                ', '.join(changed))
+    return None
+
+
 def test_generated_files_match_golden(corpus, golden):
     """The generator (and the database) made the files the goldens were
     made from; otherwise rewrite the goldens."""
-    _, _, files = corpus
-    assert files == golden['files_sha256'], (
-        'generated corpus differs from the golden one: regenerate with '
-        'python3 tests/cli/test_xilinx_corpus.py --write-goldens')
+    reason = stale_golden(corpus, golden)
+    if reason:
+        pytest.fail('stale golden %s: %s; %s' % (GOLDEN, reason, REGENERATE))
 
 
 def test_covers_every_feature(corpus):
+    """Every unit of every group (tile type and alias) is placed at least
+    once or listed in `uncovered` for a known reason (the generator also
+    asserts this)."""
     _, manifest, _ = corpus
-    assert manifest['features_placed'] >= manifest['features_total']
+    coverage = manifest['coverage']
+    assert coverage
+    for name, c in coverage.items():
+        assert c['placed'] + c['uncovered'] == c['units'], (name, c)
+    assert sum(c['units'] for c in coverage.values()) == \
+        manifest['features_total']
+    assert sum(c['uncovered'] for c in coverage.values()) == len(
+        manifest['uncovered'])
     reasons = set(u[3] for u in manifest['uncovered'])
     assert reasons <= {'STEPDOWN feature, no bonded tile'}, reasons
+    # xc7a35tcsg324-1 has bonded tiles in both alias groups of the _SING
+    # IOB tiles: every STEPDOWN unit is placed.
+    assert not manifest['uncovered']
+    assert len(manifest['stepdown_hosts']) == 6
     assert len(manifest['errors']) >= 4
 
 
@@ -325,6 +360,10 @@ def test_rust_matches_golden(corpus, golden, tmp_path, xdb):
     env = {'FASM_XDB_CACHE': '0'}
     if xdb == 'cache':
         env = {'FASM_XDB_CACHE': str(tmp_path / 'xdb')}
+    reason = stale_golden(corpus, golden)
+    if reason:
+        pytest.fail('stale golden %s, cannot compare: %s; %s' %
+                    (GOLDEN, reason, REGENERATE))
     names = [c[0] for c in cases(manifest)]
     assert sorted(names) == sorted(golden['runs'])
     problems = []
