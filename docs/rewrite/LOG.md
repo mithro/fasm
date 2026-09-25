@@ -585,3 +585,9 @@ what happened, branch/commit references, open issues.
   auto mode classifier refused) and is left in place. T6.2 relaunched
   fresh (Opus) with a brief pointing at the reference tools and warning
   about the hang.
+* T5.9 follow-ups done (1e83766 golden header records the reference
+  commits from tests/oracle/build/xilinx/status.json, 8713229 ETA +
+  --parts-sample + `make xilinx-difftest-quick`, 0a9852c docs with the
+  real numbers; the 125 explained runs are exactly errors/value_range.fasm
+  = COMPAT rule 4, the 588 traceback normalisations are exactly the error
+  files). Independent review (Opus) started; T6.2 running.
