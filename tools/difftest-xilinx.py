@@ -110,28 +110,38 @@ applied are counted as "explained".
 The reference gflags tools print their own path (`argv[0]`) in some
 messages; it is replaced by `PROG` on both sides.
 
-prjuray mode (`--prjuray`, T6.2; `make uray-difftest`), for every part
-of prjuray-db `zynqusp`:
+prjuray mode (`--prjuray`, T6.2, T6.3; `make uray-difftest-all`), for
+every part of every prjuray-db family found in `--db-cache` (the
+directories of `prjuray-db/` with a `tile_types/`; `zynqusp` is fetched
+with `tools/fetch-db.sh` when there is none), or of `--families` /
+`--parts GLOB`, parts in parallel with `--jobs`, a table per part and the
+totals (`--json-report`), the reference results cached in `--work-dir`
+like in the all-parts mode:
 
-* a corpus is generated from the part's tilegrid and segbits (seed
-  `--seed`): `--uray-files` designs of random features (plain, `= 1`,
+* the every-feature corpus of `tools/gen-xilinx-corpus.py` (same
+  options) goes through the reference prjuray `utils/fasm2frames.py`
+  (`tests/oracle/uray-fasm2frames-oracle`) and the Rust
+  `uray-fasm2frames`: the first features file with `URAY_VARIANTS`
+  (dense, `--sparse`, `--sparse --debug`, `--dump_bits`) and an ROI,
+  once more `--sparse` with `FASM_XDB_CACHE=0` for the Rust tool, the
+  other features files and the error files `--sparse`;
+* the random corpus of T6.2 (seed `--uray-seed` plus the index of the
+  part): `--uray-files` designs of random features (plain, `= 1`,
   `= 0`, annotated, multi-bit values in hex and binary; one or three per
   tile, the latter often conflicting) and error cases (unknown feature,
-  unknown tile, syntax error, value out of range, an empty file), plus an
-  ROI around a random tile for some designs;
-* the reference prjuray `utils/fasm2frames.py`
-  (`tests/oracle/uray-fasm2frames-oracle`) and the Rust
-  `uray-fasm2frames` run on each with `URAY_VARIANTS` (dense, `--sparse`,
-  `--sparse --debug`, `--dump_bits`, ROI): exit codes, `.frm` (16-bit
-  words), stdout and stderr (rules 1 to 4 above, with prjuray's
-  `utils.fasm_assembler.*` exceptions) must be identical;
-* for the successful dense, sparse and ROI runs, the oracle's `.frm` is
-  converted to 32-bit words (prjuray's `fasm2bit.py`), which must equal
-  the Rust `fasm2frames` output for the same arguments; the reference
-  (`tests/oracle/uray-xcframes2bit-oracle`) and the Rust `xcframes2bit`
-  turn it into a `.bit` (`--architecture=UltraScalePlus`, identical with
-  the reference time injected), and both `uray-bitread`s read that with
-  `URAY_BITREAD_FLAGS`;
+  unknown tile, syntax error, value out of range, an empty file), with
+  every `URAY_VARIANTS` flag set, the first ten designs also with the ROI;
+* exit codes, `.frm` (16-bit words), stdout and stderr (rules 1 to 4
+  above, with prjuray's `utils.fasm_assembler.*` exceptions) must be
+  identical;
+* for the successful dense, sparse and ROI runs (and the other features
+  files), the oracle's `.frm` is converted to 32-bit words (prjuray's
+  `fasm2bit.py`), which must equal the Rust `fasm2frames` output for the
+  same arguments; the reference (`tests/oracle/uray-xcframes2bit-oracle`)
+  and the Rust `xcframes2bit` turn it into a `.bit`
+  (`--architecture=UltraScalePlus`, identical with the reference time
+  injected), and both `uray-bitread`s read that with `URAY_BITREAD_FLAGS`
+  (the other features files: the first two sets);
 * both `uray-bitread`s read the Vivado bitstreams of prjuray-tools'
   `ToolsTestData.tar.gz` (Series7, UltraScale, UltraScale+) with every
   flag set, and each goes round trip: Rust `uray-bitread --frm_out`,
@@ -581,8 +591,10 @@ def run_bitread(tools,
                 flags,
                 tmpdir,
                 tag,
-                runner=PLAIN_RUNNER):
-    """Runs both bitreads with `flags` on `bit`; returns the problems."""
+                runner=PLAIN_RUNNER,
+                tool='bitread'):
+    """Runs both bitreads (`tool`: bitread or uray-bitread, the name the
+    reference prints) with `flags` on `bit`; returns the problems."""
     results = []
     for side in ('oracle', 'rust'):
         args = list(flags)
@@ -601,9 +613,9 @@ def run_bitread(tools,
         if not isinstance(out, Digest) and not isinstance(
                 results[0][1] if results else None, Digest):
             # (A cached large output has no path to normalise.)
-            out = normalise_gflags_paths(out, 'bitread')
+            out = normalise_gflags_paths(out, tool)
         results.append((code, out, err, outputs))
-    return compare_runs('bitread %s' % ' '.join(flags), *results)
+    return compare_runs('%s %s' % (tool, ' '.join(flags)), *results)
 
 
 def compare_bitstream(frm,
@@ -808,8 +820,8 @@ def find_family(db_dirs, family):
     return None
 
 
-def fetch_family(db_dirs, family):
-    """tools/fetch-db.sh prjxray FAMILY into the first database directory,
+def fetch_family(db_dirs, family, repo='prjxray'):
+    """tools/fetch-db.sh REPO FAMILY into the first database directory,
     if there is room; returns the family directory or None."""
     target = db_dirs[0]
     os.makedirs(target, exist_ok=True)
@@ -821,10 +833,12 @@ def fetch_family(db_dirs, family):
         return None
     env = dict(os.environ)
     env['FASM_DB_CACHE'] = target
-    result = subprocess.run([FETCH_DB, 'prjxray', family], env=env)
+    result = subprocess.run([FETCH_DB, repo, family], env=env)
     if result.returncode != 0:
         print('difftest-xilinx: fetching %s failed' % family)
         return None
+    if repo == 'prjuray':
+        return find_uray_families([target]).get(family)
     return find_family([target], family)
 
 
@@ -856,25 +870,28 @@ def db_commit(family_dir):
     return None
 
 
-def oracle_identity(paths):
+ORACLE_SUBDIRS = ('build/xilinx/bin', 'venv-xilinx/lib')
+ORACLE_PACKAGES = ('/prjxray', '/xc_fasm', '/fasm')
+
+
+def oracle_identity(paths,
+                    oracle_dirs=None,
+                    subdirs=ORACLE_SUBDIRS,
+                    packages=ORACLE_PACKAGES):
     """Identifies the reference tools: the wrappers' content, the size and
     modification time of the binaries they run and of the Python packages
-    of the oracle venv."""
+    of the oracle venv (`subdirs` of the directory of each wrapper, or of
+    `oracle_dirs`; of the venv only the `packages`)."""
     h = hashlib.sha256()
-    for path in paths:
-        if path is None:
-            continue
-        if os.path.isfile(path):
-            h.update(file_sha256(path).encode())
-        oracle_dir = os.path.dirname(os.path.abspath(path))
-        for sub in ('build/xilinx/bin', 'venv-xilinx/lib'):
+
+    def walk(oracle_dir):
+        for sub in subdirs:
             top = os.path.join(oracle_dir, sub)
             for dirpath, dirnames, files in os.walk(top):
                 dirnames[:] = sorted(d for d in dirnames
                                      if d not in ('__pycache__', 'tests'))
-                if sub.endswith('lib') and not any(
-                        p in dirpath for p in ('/prjxray', '/xc_fasm',
-                                               '/fasm')):
+                if sub.endswith('lib') and not any(p in dirpath
+                                                   for p in packages):
                     continue
                 for f in sorted(files):
                     if f.endswith('.pyc'):
@@ -883,7 +900,47 @@ def oracle_identity(paths):
                     h.update(('%s %d %d\n' % (os.path.join(dirpath, f),
                                               st.st_size,
                                               st.st_mtime_ns)).encode())
+
+    for path in paths:
+        if path is None:
+            continue
+        if os.path.isfile(path):
+            h.update(file_sha256(path).encode())
+        if oracle_dirs is None:
+            walk(os.path.dirname(os.path.abspath(path)))
+    for oracle_dir in oracle_dirs or ():
+        walk(oracle_dir)
     return h.hexdigest()
+
+
+def make_runner(args, commits, identity, prog='difftest-xilinx'):
+    """The Runner of an all-parts run: the oracle results cached in
+    <work-dir>/results unless --no-result-cache or a database commit is
+    unknown; `identity` (oracle_identity) and the commits are the salt."""
+    salt = json.dumps([identity, sorted(commits.items())])
+    cache_dir = None
+    unknown = sorted(db for db, commit in commits.items() if commit is None)
+    if unknown and not args.no_result_cache:
+        print('%s: not using the result cache: unknown database commit of '
+              '%s' % (prog, ', '.join(unknown)))
+    elif not args.no_result_cache:
+        cache_dir = os.path.join(args.work_dir, 'results')
+    return Runner(cache_dir, salt)
+
+
+def tally(row, counts, ok, rules):
+    """Counts a compared run in `counts` (runs, identical, explained,
+    different) and its normalisation rules in the row."""
+    counts[0] += 1
+    explained = any(rules.get(r) for r in EXPLAINED_RULES)
+    if not ok:
+        counts[3] += 1
+    elif explained:
+        counts[2] += 1
+    else:
+        counts[1] += 1
+    for k, v in rules.items():
+        row['rules'][k] += v
 
 
 def generator_options(args):
@@ -1000,18 +1057,6 @@ def run_part(family, db, part, args, tools, runner, commit):
         xdb = os.path.join(args.xdb_cache or run_dir, 'xdb')
         rust_env_base['FASM_XDB_CACHE'] = xdb
 
-    def tally(counts, ok, rules):
-        counts[0] += 1
-        explained = any(rules.get(r) for r in EXPLAINED_RULES)
-        if not ok:
-            counts[3] += 1
-        elif explained:
-            counts[2] += 1
-        else:
-            counts[1] += 1
-        for k, v in rules.items():
-            row['rules'][k] += v
-
     for case, opts in part_cases(corpus_dir, manifest, db, part):
         rust_env = dict(rust_env_base)
         rust_env.update(opts.get('rust_env', {}))
@@ -1025,7 +1070,7 @@ def run_part(family, db, part, args, tools, runner, commit):
             rust_env=rust_env,
             bitstream=opts.get('bitstream'),
             bitread_flags=opts.get('bitread_flags'))
-        tally(row['fasm2frames'], ok, rules)
+        tally(row, row['fasm2frames'], ok, rules)
         row['bitstream'] += runs
         if not ok:
             row['failures'].append('%s %s' % (part, message))
@@ -1036,7 +1081,7 @@ def run_part(family, db, part, args, tools, runner, commit):
                     part, vflags)
             ok, message, rules = compare_xcfasm(case, tools, run_dir, runner,
                                                 rust_env_base)
-            tally(row['xcfasm'], ok, rules)
+            tally(row, row['xcfasm'], ok, rules)
             if not ok:
                 row['failures'].append('%s %s' % (part, message))
     if not args.keep_run_dir:
@@ -1045,16 +1090,24 @@ def run_part(family, db, part, args, tools, runner, commit):
     return row
 
 
-def print_table(rows):
-    header = ('part', 'fabric', 'lines', 'files', 'fasm2frames i/e/d',
-              'bit+bitread', 'xcfasm i/e/d', 'seconds')
+PRJXRAY_COLUMNS = [
+    ('part', lambda r: r['part']),
+    ('fabric', lambda r: r['fabric']),
+    ('lines', lambda r: str(r['lines'])),
+    ('files', lambda r: str(r['files'])),
+    ('fasm2frames i/e/d', lambda r: '%d/%d/%d' % tuple(r['fasm2frames'][1:])),
+    ('bit+bitread', lambda r: str(r['bitstream'])),
+    ('xcfasm i/e/d', lambda r: '%d/%d/%d' % tuple(r['xcfasm'][1:])),
+    ('seconds', lambda r: '%.0f' % r['seconds']),
+]
+
+
+def print_table(rows, columns=PRJXRAY_COLUMNS):
+    """The per part table: (header, function of the row) columns."""
+    header = tuple(c[0] for c in columns)
     table = [header]
     for r in rows:
-        f, x = r['fasm2frames'], r['xcfasm']
-        table.append((r['part'], r['fabric'], str(r['lines']), str(r['files']),
-                      '%d/%d/%d' % (f[1], f[2], f[3]), str(r['bitstream']),
-                      '%d/%d/%d' % (x[1], x[2], x[3]),
-                      '%.0f' % r['seconds']))
+        table.append(tuple(c[1](r) for c in columns))
     widths = [max(len(row[i]) for row in table) for i in range(len(header))]
     for i, row in enumerate(table):
         print('  '.join(c.ljust(w) for c, w in zip(row, widths)).rstrip())
@@ -1170,58 +1223,24 @@ def families_main(args, tools):
             print('%s %s' % (family, part))
         return EXIT_OK
     commits = dict((db, db_commit(db)) for _, db, _ in selected)
-    salt = json.dumps([
+    runner = make_runner(
+        args, commits,
         oracle_identity([
             args.oracle, args.frames2bit_oracle, args.bitread_oracle,
             args.xcfasm_oracle
-        ]),
-        sorted(commits.items())
-    ])
-    cache_dir = None
-    unknown = sorted(db for db, commit in commits.items() if commit is None)
-    if unknown and not args.no_result_cache:
-        print('difftest-xilinx: not using the result cache: unknown '
-              'database commit of %s' % ', '.join(unknown))
-    elif not args.no_result_cache:
-        cache_dir = os.path.join(args.work_dir, 'results')
-    runner = Runner(cache_dir, salt)
-    start = time.time()
-    print('difftest-xilinx: %d parts of %s, corpus --tiles %s --seed %s, '
-          '%d jobs, work directory %s' %
-          (len(selected), ', '.join(families), ' '.join(
-              args.tiles), args.seed, args.jobs, args.work_dir))
-    estimate = len(selected) * SECONDS_PER_PART / max(
-        1, min(args.jobs, len(selected)))
-    print('difftest-xilinx: estimated wall time without cached results: '
-          '%s (about %d s of work per part, measured for the default '
-          'corpus: 46-271 s, mean 130 s)' %
-          (format_seconds(estimate), SECONDS_PER_PART),
-          flush=True)
-    rows = []
-    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-        futures = [
-            pool.submit(run_part, family, db, part, args, tools, runner,
-                        commits[db]) for family, db, part in selected
-        ]
-        for future in concurrent.futures.as_completed(futures):
-            row = future.result()
-            rows.append(row)
-            f = row['fasm2frames']
-            done = len(rows)
-            elapsed = time.time() - start
-            eta = elapsed / done * (len(selected) - done)
-            print('%-4s %-22s %6d lines %3d files  fasm2frames %d/%d/%d  '
-                  'xcfasm %d/%d/%d  %.0f s  [%d/%d, ETA %s]' %
-                  ('FAIL' if row['failures'] else 'ok', row['part'],
-                   row['lines'], row['files'], f[1], f[2], f[3],
-                   row['xcfasm'][1], row['xcfasm'][2], row['xcfasm'][3],
-                   row['seconds'], done, len(selected),
-                   format_seconds(eta)),
-                  flush=True)
-            for failure in row['failures']:
-                print('  FAIL %s' % failure)
-    order = dict(((f, p), i) for i, (f, _, p) in enumerate(selected))
-    rows.sort(key=lambda r: order[(r['family'], r['part'])])
+        ]))
+
+    def work(family, db, part):
+        return run_part(family, db, part, args, tools, runner, commits[db])
+
+    def progress(row):
+        f, x = row['fasm2frames'], row['xcfasm']
+        return 'fasm2frames %d/%d/%d  xcfasm %d/%d/%d' % (f[1], f[2], f[3],
+                                                          x[1], x[2], x[3])
+
+    rows, start = run_selected(args, selected, work, 'difftest-xilinx',
+                               families, SECONDS_PER_PART,
+                               '46-271 s, mean 130 s', progress)
     print()
     print_table(rows)
     totals = [0] * 4
@@ -1245,10 +1264,7 @@ def families_main(args, tools):
            xtotals[1], xtotals[2], xtotals[3]))
     for rule, count in sorted(rules.items()):
         print('  normalisation rule %s: applied %d time(s)' % (rule, count))
-    print('difftest-xilinx: oracle runs %d (%d from the result cache), Rust '
-          'runs %d, wall time %.0f s' %
-          (runner.counts['oracle'] + runner.counts['cached'],
-           runner.counts['cached'], runner.counts['rust'], wall))
+    print_runner_summary('difftest-xilinx', runner, wall)
     if args.json_report:
         with open(args.json_report, 'w') as f:
             json.dump({'rows': rows, 'wall_seconds': wall}, f, indent=1)
@@ -1256,13 +1272,75 @@ def families_main(args, tools):
     return EXIT_DIFFERENCES if failed else EXIT_OK
 
 
+def run_selected(args, selected, work, prog, families, seconds_per_part,
+                 measured, progress):
+    """Runs `work(family, db, part)` (a result row) for every selected
+    part, --jobs in parallel, and prints a line (`progress(row)`, the
+    ETA) after each; returns (the rows in the order of `selected`, the
+    start time)."""
+    start = time.time()
+    print('%s: %d parts of %s, corpus --tiles %s --seed %s, '
+          '%d jobs, work directory %s' %
+          (prog, len(selected), ', '.join(families), ' '.join(
+              args.tiles), args.seed, args.jobs, args.work_dir))
+    estimate = len(selected) * seconds_per_part / max(
+        1, min(args.jobs, len(selected)))
+    print('%s: estimated wall time without cached results: '
+          '%s (about %d s of work per part, measured for the default '
+          'corpus: %s)' %
+          (prog, format_seconds(estimate), seconds_per_part, measured),
+          flush=True)
+    rows = []
+    with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
+        futures = [
+            pool.submit(work, family, db, part)
+            for family, db, part in selected
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            row = future.result()
+            rows.append(row)
+            done = len(rows)
+            elapsed = time.time() - start
+            eta = elapsed / done * (len(selected) - done)
+            print('%-4s %-22s %6d lines %3d files  %s  %.0f s  [%d/%d, '
+                  'ETA %s]' % ('FAIL' if row['failures'] else 'ok',
+                               row['part'], row['lines'], row['files'],
+                               progress(row), row['seconds'], done,
+                               len(selected), format_seconds(eta)),
+                  flush=True)
+            for failure in row['failures']:
+                print('  FAIL %s' % failure)
+    order = dict(((f, p), i) for i, (f, _, p) in enumerate(selected))
+    rows.sort(key=lambda r: order[(r['family'], r['part'])])
+    return rows, start
+
+
+def print_runner_summary(prog, runner, wall):
+    print('%s: oracle runs %d (%d from the result cache), Rust '
+          'runs %d, wall time %.0f s' %
+          (prog, runner.counts['oracle'] + runner.counts['cached'],
+           runner.counts['cached'], runner.counts['rust'], wall))
+
+
 # ---------------------------------------------------------------------------
 # prjuray mode (T6.2): `--prjuray`
 # ---------------------------------------------------------------------------
 
-# The prjuray-db family and the Rust / reference tools of the mode.
-URAY_FAMILY = 'zynqusp'
 URAY_ARCH = 'UltraScalePlus'
+# The prjuray-db families fetched when none is found (tools/fetch-db.sh;
+# the upstream prjuray-db has only this one, with two parts, see
+# docs/rewrite/DESIGN-xilinx-db.md 8.12); every family directory found is
+# tested.
+URAY_FETCH_FAMILIES = ('zynqusp', )
+# Mean seconds per part of the default corpus (every feature, the random
+# designs; reference and Rust tools, generation), for the up front
+# estimate (docs/rewrite/DESIGN-xilinx-db.md 8.12).
+URAY_SECONDS_PER_PART = 400
+URAY_MEASURED = '393-394 s for the two zynqusp parts'
+# What identifies the reference prjuray tools (oracle_identity).
+URAY_ORACLE_SUBDIRS = ('build/xilinx/bin', 'build/xilinx/src/prjuray/utils',
+                       'venv-xilinx/lib')
+URAY_ORACLE_PACKAGES = ('/prjuray', '/fasm')
 
 URAY_VARIANTS = [
     ('dense', []),
@@ -1428,11 +1506,6 @@ class UrayCorpus(object):
         })
 
 
-def uray_parts(db):
-    return sorted(p for p in os.listdir(db)
-                  if os.path.exists(os.path.join(db, p, 'part.yaml')))
-
-
 def to_32bit_frm(data):
     """prjuray's fasm2frames .frm (16-bit words) as the .frm of prjuray's
     fasm2bit.py (32-bit words, what xcframes2bit reads)."""
@@ -1454,16 +1527,36 @@ def uray_normalise(stderr, rules):
     return normalise(stderr, rules)
 
 
-def compare_uray(case, tools, tmpdir):
+def compare_uray(case,
+                 tools,
+                 tmpdir,
+                 runner=PLAIN_RUNNER,
+                 rust_env=None,
+                 bitstream=None,
+                 bitread_flags=None):
     """uray-fasm2frames oracle vs Rust, then the bitstream tools; returns
-    (ok, message, rules, bitstream runs)."""
+    (ok, message, rules, bitstream runs). `bitstream`: whether the
+    oracle's .frm also goes through fasm2frames (32-bit words),
+    xcframes2bit and uray-bitread (default: the variants of
+    URAY_BITSTREAM_VARIANTS), with `bitread_flags` (default
+    URAY_BITREAD_FLAGS)."""
     name, fasm, db, part, flags = case
     tag = re.sub(r'[^\w.-]', '_', name)
     args = ['--db-root', db, '--part', part] + flags + [fasm]
-    o = run(PLAIN_RUNNER, tools['oracle_fasm2frames'], args,
-            os.path.join(tmpdir, tag + '.oracle.frm'), oracle=True)
-    r = run(PLAIN_RUNNER, tools['rust_fasm2frames'], args,
-            os.path.join(tmpdir, tag + '.rust.frm'))
+    if bitstream is None:
+        variant = name.rsplit('[', 1)[-1].rstrip(']')
+        bitstream = variant in URAY_BITSTREAM_VARIANTS
+    o = run(runner,
+            tools['oracle_fasm2frames'],
+            args,
+            os.path.join(tmpdir, tag + '.oracle.frm'),
+            oracle=True,
+            keep=bitstream)
+    r = run(runner,
+            tools['rust_fasm2frames'],
+            args,
+            os.path.join(tmpdir, tag + '.rust.frm'),
+            env=rust_env)
     rules = dict.fromkeys(RULES, 0)
     problems = []
     if o[0] != r[0]:
@@ -1477,7 +1570,7 @@ def compare_uray(case, tools, tmpdir):
     o_err = uray_normalise(o[2], rules)
     o_type, _ = exception_type(o_err)
     if (CTYPES_MARKER in o_err and o_err.rstrip('\n').endswith(NONE_TYPE)
-            and PARSE_ERROR_RE.match(r[2])):
+            and is_rust_value_range_error(r[2])):
         rules['4-value-range'] += 1
         if o[0] != 1 or r[0] != 1:
             problems.append('value range error: expected exit code 1')
@@ -1488,15 +1581,14 @@ def compare_uray(case, tools, tmpdir):
             problems.append('database error: expected exit code 1')
     elif o_err != normalise(r[2], dict.fromkeys(RULES, 0)):
         problems.append('stderr differs:\n--- oracle\n%s--- rust\n%s' %
-                        (o_err, r[2]))
+                        (o_err[:4000], r[2][:4000]))
     runs = 0
-    variant = name.rsplit('[', 1)[-1].rstrip(']')
-    if not problems and o[0] == 0 and variant in URAY_BITSTREAM_VARIANTS:
+    if not problems and o[0] == 0 and bitstream:
         frm32 = to_32bit_frm(o[3])
         # The Rust fasm2frames (xc_fasm's command line) writes the 32-bit
         # frames directly for a prjuray-db part.
         path = os.path.join(tmpdir, tag + '.fasm2frames.frm')
-        x = run(PLAIN_RUNNER, tools['rust_xc_fasm2frames'], args, path)
+        x = run(runner, tools['rust_xc_fasm2frames'], args, path, env=rust_env)
         runs += 1
         if x[0] != 0 or x[3] != frm32:
             problems.append('fasm2frames (32-bit words) differs from the '
@@ -1506,21 +1598,13 @@ def compare_uray(case, tools, tmpdir):
             f.write(frm32)
         more, n = compare_uray_bitstream(frm,
                                          os.path.join(db, part, 'part.yaml'),
-                                         part, tools, tmpdir, tag)
+                                         part, tools, tmpdir, tag, URAY_ARCH,
+                                         runner, bitread_flags)
         problems += more
         runs += n
         os.remove(frm)
     return (not problems, '%s: %s' % (name, '; '.join(problems)), rules,
             runs)
-
-
-def uray_frames2bit(tools, side, frm, bit, part, part_file, arch, env=None):
-    argv = [
-        tools[side + '_xcframes2bit'], '--architecture=' + arch,
-        '--frm_file=' + frm, '--output_file=' + bit, '--part_name=' + part,
-        '--part_file=' + part_file
-    ]
-    return run_tool(argv, env=env)
 
 
 def compare_uray_bitstream(frm,
@@ -1529,47 +1613,38 @@ def compare_uray_bitstream(frm,
                            tools,
                            tmpdir,
                            tag,
-                           arch=URAY_ARCH):
+                           arch=URAY_ARCH,
+                           runner=PLAIN_RUNNER,
+                           bitread_flags=None):
     """xcframes2bit (oracle, Rust) on `frm`, then uray-bitread (oracle,
-    Rust) on the reference .bit; returns (problems, runs)."""
+    Rust) on the reference .bit with `bitread_flags` (default
+    URAY_BITREAD_FLAGS); returns (problems, runs)."""
+    if bitread_flags is None:
+        bitread_flags = URAY_BITREAD_FLAGS
     bit = os.path.join(tmpdir, tag + '.bit')
-    o = uray_frames2bit(tools, 'oracle', frm, bit, part, part_file, arch)
-    o_files = read_and_remove([bit])
-    epoch = bit_time(o_files[os.path.basename(bit)])
+    base = [
+        '--architecture=' + arch, '--frm_file=' + frm, '--output_file=' + bit,
+        '--part_name=' + part, '--part_file=' + part_file
+    ]
+    o = runner.run([tools['oracle_xcframes2bit']] + base,
+                   outputs=[bit],
+                   oracle=True,
+                   keep=[bit])
+    data = o[3][tag + '.bit']
+    epoch = bit_time(data)
     env = {'SOURCE_DATE_EPOCH': str(epoch)} if epoch is not None else {}
-    r = uray_frames2bit(tools, 'rust', frm, bit, part, part_file, arch, env)
-    r_files = read_and_remove([bit])
-    problems = compare_runs('xcframes2bit', o + (o_files, ), r + (r_files, ))
-    data = o_files[tag + '.bit']
+    r = runner.run([tools['rust_xcframes2bit']] + base, env=env, outputs=[bit])
+    problems = compare_runs('xcframes2bit', o, r)
     if problems or o[0] != 0 or data is None:
         return problems, 1
     with open(bit, 'wb') as f:
         f.write(data)
-    for i, flags in enumerate(URAY_BITREAD_FLAGS):
-        problems += run_uray_bitread(tools, part_file, bit,
-                                     ['--architecture=' + arch] + flags,
-                                     tmpdir, '%s.%d' % (tag, i))
+    for i, flags in enumerate(bitread_flags):
+        problems += run_bitread(tools, part_file, bit,
+                                ['--architecture=' + arch] + flags, tmpdir,
+                                '%s.%d' % (tag, i), runner, 'uray-bitread')
     os.remove(bit)
-    return problems, 1 + len(URAY_BITREAD_FLAGS)
-
-
-def run_uray_bitread(tools, part_file, bit, flags, tmpdir, tag):
-    """Both uray-bitreads with `flags` on `bit`; returns the problems."""
-    results = []
-    for side in ('oracle', 'rust'):
-        args = list(flags)
-        files = []
-        for option in ('-o', '--aux'):
-            if option in args:
-                path = os.path.join(tmpdir,
-                                    '%s.%s.txt' % (tag, option.strip('-')))
-                args.insert(args.index(option) + 1, path)
-                files.append(path)
-        code, out, err = run_tool([tools[side + '_bitread'],
-                                   '--part_file=' + part_file] + args + [bit])
-        out = normalise_gflags_paths(out, 'uray-bitread')
-        results.append((code, out, err, read_and_remove(files)))
-    return compare_runs('uray-bitread %s' % ' '.join(flags), *results)
+    return problems, 1 + len(bitread_flags)
 
 
 def uray_reference_bitstreams(oracle_dir, tmpdir):
@@ -1598,7 +1673,7 @@ def uray_reference_bitstreams(oracle_dir, tmpdir):
     return out
 
 
-def compare_uray_reference_bit(item, tools, tmpdir):
+def compare_uray_reference_bit(item, tools, tmpdir, runner=PLAIN_RUNNER):
     """Every uray-bitread flag set on a reference bitstream, then the
     round trip: Rust uray-bitread --frm_out, both xcframes2bit (and the
     bitread flag sets on the result)."""
@@ -1606,9 +1681,9 @@ def compare_uray_reference_bit(item, tools, tmpdir):
     tag = re.sub(r'[^\w.-]', '_', name)
     problems = []
     for i, flags in enumerate(URAY_BITREAD_FLAGS):
-        problems += run_uray_bitread(tools, part_file, bit,
-                                     ['--architecture=' + arch] + flags,
-                                     tmpdir, '%s.%d' % (tag, i))
+        problems += run_bitread(tools, part_file, bit,
+                                ['--architecture=' + arch] + flags, tmpdir,
+                                '%s.%d' % (tag, i), runner, 'uray-bitread')
     frm = os.path.join(tmpdir, tag + '.frm')
     code, _, err = run_tool([
         tools['rust_bitread'], '--part_file=' + part_file,
@@ -1618,14 +1693,208 @@ def compare_uray_reference_bit(item, tools, tmpdir):
         problems.append('uray-bitread --frm_out failed: %r' % err)
     else:
         more, _ = compare_uray_bitstream(frm, part_file, 'part', tools,
-                                         tmpdir, tag + '.rt', arch)
+                                         tmpdir, tag + '.rt', arch, runner)
         problems += more
         os.remove(frm)
     return not problems, '%s: %s' % (name, '; '.join(problems))
 
 
+def find_uray_families(db_dirs):
+    """{family: directory} of the prjuray-db families (the directories
+    with a tile_types/ subdirectory) in the database directories (the
+    first directory with a family wins)."""
+    out = {}
+    for d in db_dirs:
+        root = os.path.join(d, 'prjuray-db')
+        if not os.path.isdir(root):
+            continue
+        for name in sorted(os.listdir(root)):
+            path = os.path.join(root, name)
+            if not name.startswith('.') and os.path.isdir(
+                    os.path.join(path, 'tile_types')):
+                out.setdefault(name, path)
+    return out
+
+
+def uray_part_cases(corpus_dir, manifest, random_dir, random_files, roi, db,
+                    part):
+    """[(case, options)] of a prjuray-db part: the first features file with
+    every URAY_VARIANTS flag set and the ROI (dense, sparse and ROI also
+    through fasm2frames, xcframes2bit and every URAY_BITREAD_FLAGS set),
+    once more sparse without the Rust database cache (FASM_XDB_CACHE=0),
+    the other features files sparse (through the bitstream tools with the
+    first two uray-bitread flag sets), the error files sparse, and the
+    random designs and error cases with every flag set (the first ten
+    designs also with the ROI)."""
+    out = []
+    name = manifest['files'][0]
+    first = os.path.join(corpus_dir, name)
+    for vname, flags in URAY_VARIANTS + [('roi',
+                                          ['--sparse', '--roi', roi])]:
+        case = ('%s[%s]' % (name, vname), first, db, part, flags)
+        out.append((case, {'bitstream': vname in URAY_BITSTREAM_VARIANTS}))
+    case = (name + '[sparse,FASM_XDB_CACHE=0]', first, db, part, ['--sparse'])
+    out.append((case, {
+        'bitstream': False,
+        'rust_env': {
+            'FASM_XDB_CACHE': '0'
+        }
+    }))
+    for name in manifest['files'][1:]:
+        case = (name + '[sparse]', os.path.join(corpus_dir, name), db, part,
+                ['--sparse'])
+        out.append((case, {
+            'bitstream': True,
+            'bitread_flags': URAY_BITREAD_FLAGS[:2]
+        }))
+    for name in manifest['errors']:
+        case = ('errors/%s[sparse]' % name,
+                os.path.join(corpus_dir, 'errors', name), db, part,
+                ['--sparse'])
+        out.append((case, {'bitstream': False}))
+    rel = os.path.basename(random_dir)
+    for name in random_files:
+        variants = list(URAY_VARIANTS)
+        if name.startswith('design_0'):
+            variants.append(('roi', ['--sparse', '--roi', roi]))
+        for vname, flags in variants:
+            case = ('%s/%s[%s]' % (rel, name, vname),
+                    os.path.join(random_dir, name), db, part, flags)
+            out.append((case, {}))
+    return out
+
+
+def uray_coverage(db, manifest):
+    """Coverage of a generated prjuray-db corpus: the tile types of the
+    part with a segbits file, those with a feature placed, and the
+    features (units) placed, of all, unreachable and uncovered."""
+    with_segbits = generator_module().family_tile_types(db)
+    present = [t for t in manifest['tile_types'] if t in with_segbits]
+    reached = set()
+    for group, c in manifest['coverage'].items():
+        if c['placed']:
+            reached.add(group.split(' ', 1)[0])
+    return {
+        'tile_types_with_segbits': len(present),
+        'tile_types_reached': len(reached & set(present)),
+        'tile_types_not_reached': sorted(set(present) - reached),
+        'features_total': manifest['features_total'],
+        'features_placed': manifest['features_distinct_placed'],
+        'features_placements': manifest['features_placed'],
+        'uncovered': len(manifest['uncovered']),
+        'unreachable': len(manifest['unreachable']),
+    }
+
+
+def run_uray_part(family, db, part, args, tools, runner, commit, seed):
+    """Generates the corpora of one prjuray-db part (every feature, random
+    designs) and compares every run; returns the part's result row."""
+    start = time.time()
+    options = generator_options(args)
+    slug = re.sub(r'[^\w.-]', '_',
+                  '-'.join(args.tiles) + '-s' + str(args.seed))
+    corpus_dir = os.path.join(args.work_dir, 'corpus', family, part, slug)
+    row = {
+        'family': family,
+        'part': part,
+        'fabric': family,
+        'lines': 0,
+        'files': 0,
+        # runs, identical, explained, different
+        'uray_fasm2frames': [0, 0, 0, 0],
+        'bitstream': 0,
+        'coverage': {},
+        'failures': [],
+        'rules': dict.fromkeys(RULES, 0),
+    }
+    try:
+        manifest = generate(db, part, options, corpus_dir, commit)
+    except RuntimeError as e:
+        row['failures'].append(str(e))
+        row['seconds'] = time.time() - start
+        return row
+    # The random designs of T6.2 (--uray-files, --uray-seed) and the ROI.
+    random_dir = os.path.join(args.work_dir, 'corpus', family, part,
+                              'random-%d-s%d' % (args.uray_files, seed))
+    os.makedirs(random_dir, exist_ok=True)
+    corpus = UrayCorpus(db, part, seed)
+    roi = os.path.join(random_dir, 'roi.json')
+    with open(roi, 'w') as f:
+        f.write(corpus.roi())
+    random_files = []
+    for name, text in corpus.files(args.uray_files):
+        with open(os.path.join(random_dir, name), 'w') as f:
+            f.write(text)
+        random_files.append(name)
+        row['lines'] += text.count('\n')
+    row['lines'] += manifest['lines']
+    row['files'] = len(manifest['files']) + len(manifest['errors'])
+    row['files'] += len(random_files)
+    row['coverage'] = uray_coverage(db, manifest)
+    run_dir = os.path.join(args.work_dir, 'run', family, part)
+    shutil.rmtree(run_dir, ignore_errors=True)
+    os.makedirs(run_dir)
+    rust_env_base = {}
+    if args.xdb_cache != '0':
+        rust_env_base['FASM_XDB_CACHE'] = os.path.join(
+            args.xdb_cache or run_dir, 'xdb')
+    for case, opts in uray_part_cases(corpus_dir, manifest, random_dir,
+                                      random_files, roi, db, part):
+        if args.filter and not fnmatch.fnmatch('%s/%s' % (part, case[0]),
+                                               args.filter):
+            continue
+        rust_env = dict(rust_env_base)
+        rust_env.update(opts.get('rust_env', {}))
+        ok, message, rules, runs = compare_uray(
+            case,
+            tools,
+            run_dir,
+            runner,
+            rust_env=rust_env,
+            bitstream=opts.get('bitstream'),
+            bitread_flags=opts.get('bitread_flags'))
+        tally(row, row['uray_fasm2frames'], ok, rules)
+        row['bitstream'] += runs
+        if not ok:
+            row['failures'].append('%s %s' % (part, message))
+    if not args.keep_run_dir:
+        shutil.rmtree(run_dir, ignore_errors=True)
+    row['seconds'] = time.time() - start
+    return row
+
+
+def uray_progress(row):
+    f, c = row['uray_fasm2frames'], row['coverage']
+    return ('uray-fasm2frames %d/%d/%d  bitstream %d  tile types %d/%d  '
+            'features %d/%d' %
+            (f[1], f[2], f[3], row['bitstream'],
+             c.get('tile_types_reached', 0),
+             c.get('tile_types_with_segbits', 0), c.get('features_placed', 0),
+             c.get('features_total', 0)))
+
+
+URAY_COLUMNS = [
+    ('part', lambda r: r['part']),
+    ('family', lambda r: r['family']),
+    ('lines', lambda r: str(r['lines'])),
+    ('files', lambda r: str(r['files'])),
+    ('uray-fasm2frames i/e/d',
+     lambda r: '%d/%d/%d' % tuple(r['uray_fasm2frames'][1:])),
+    ('f2f+bit+bitread', lambda r: str(r['bitstream'])),
+    ('tile types', lambda r: '%d/%d' %
+     (r['coverage'].get('tile_types_reached', 0), r['coverage'].get(
+         'tile_types_with_segbits', 0))),
+    ('features', lambda r: '%d/%d' % (r['coverage'].get(
+        'features_placed', 0), r['coverage'].get('features_total', 0))),
+    ('unreachable', lambda r: str(r['coverage'].get('unreachable', 0))),
+    ('seconds', lambda r: '%.0f' % r['seconds']),
+]
+
+
 def main_prjuray(args):
-    """The prjuray mode: returns the exit status."""
+    """The prjuray mode: every part of every prjuray-db family (or those
+    of --families / --parts); returns the exit status."""
+    prog = 'difftest-xilinx --prjuray'
     oracle_dir = args.uray_oracle_dir
     wrappers = os.path.join(REPO_ROOT, 'tests', 'oracle')
     tools = {
@@ -1649,59 +1918,77 @@ def main_prjuray(args):
         print('difftest-xilinx: %s not found' % ', '.join(missing),
               file=sys.stderr)
         return EXIT_NOT_SET_UP
-    db = os.path.join(args.db_cache, 'prjuray-db', URAY_FAMILY)
-    if not os.path.isdir(db):
-        print('difftest-xilinx: %s not found (tools/fetch-db.sh prjuray %s)' %
-              (db, URAY_FAMILY),
+    db_dirs = args.db_cache.split(os.pathsep)
+    found = find_uray_families(db_dirs)
+    wanted = []
+    for item in args.families:
+        wanted += [f for f in item.split(',') if f]
+    for family in wanted or ([] if found else URAY_FETCH_FAMILIES):
+        if family not in found and not args.no_fetch:
+            if fetch_family(db_dirs, family, 'prjuray') is not None:
+                found = find_uray_families(db_dirs)
+    families = wanted or sorted(found)
+    absent = [f for f in families if f not in found]
+    if absent or not families:
+        print('difftest-xilinx: prjuray-db %s not found in %s '
+              '(tools/fetch-db.sh prjuray %s)' %
+              (', '.join(absent) or 'families', args.db_cache, ' '.join(
+                  absent or URAY_FETCH_FAMILIES)),
               file=sys.stderr)
         return EXIT_NOT_SET_UP
-    totals = dict.fromkeys(RULES, 0)
-    failures = []
-    ref_failures = []
-    bitstream_runs = 0
-    with tempfile.TemporaryDirectory(prefix='difftest-uray-') as tmpdir:
-        cases = []
-        parts = uray_parts(db)
+    selected = []
+    seeds = {}
+    for family in families:
+        db = found[family]
+        parts = generator_module().family_parts(db)
         for i, part in enumerate(parts):
-            corpus = UrayCorpus(db, part, args.uray_seed + i)
-            part_dir = os.path.join(tmpdir, 'corpus', part)
-            os.makedirs(part_dir)
-            roi = os.path.join(part_dir, 'roi.json')
-            with open(roi, 'w') as f:
-                f.write(corpus.roi())
-            for name, text in corpus.files(args.uray_files):
-                fasm = os.path.join(part_dir, name)
-                with open(fasm, 'w') as f:
-                    f.write(text)
-                variants = list(URAY_VARIANTS)
-                if name.startswith('design_0'):
-                    variants.append(('roi', ['--sparse', '--roi', roi]))
-                for vname, flags in variants:
-                    case_name = '%s/%s[%s]' % (part, name, vname)
-                    if args.filter and not fnmatch.fnmatch(
-                            case_name, args.filter):
-                        continue
-                    cases.append((case_name, fasm, db, part, flags))
-        references = []
-        if not args.filter:
-            references = uray_reference_bitstreams(oracle_dir, tmpdir)
+            # The seed of the random designs: --uray-seed plus the index
+            # of the part in its family, as in T6.2.
+            seeds[(family, part)] = args.uray_seed + i
+        if args.parts:
+            globs = args.parts.split(',')
+            parts = [
+                p for p in parts if any(fnmatch.fnmatch(p, g) for g in globs)
+            ]
+        selected += [(family, db, p) for p in parts]
+    if not selected:
+        print('difftest-xilinx: no prjuray-db part selected (--parts %s)' %
+              args.parts,
+              file=sys.stderr)
+        return EXIT_NOT_SET_UP
+    if args.list:
+        for family, db, part in selected:
+            print('%s %s' % (family, part))
+        return EXIT_OK
+    commits = dict((db, db_commit(db)) for _, db, _ in selected)
+    identity = oracle_identity(
+        [tools[k] for k in sorted(tools) if k.startswith('oracle_')],
+        oracle_dirs=[oracle_dir],
+        subdirs=URAY_ORACLE_SUBDIRS,
+        packages=URAY_ORACLE_PACKAGES)
+    runner = make_runner(args, commits, identity)
+
+    def work(family, db, part):
+        return run_uray_part(family, db, part, args, tools, runner,
+                             commits[db], seeds[(family, part)])
+
+    rows, start = run_selected(args, selected, work, prog, families,
+                               URAY_SECONDS_PER_PART, URAY_MEASURED,
+                               uray_progress)
+    print()
+    print_table(rows, URAY_COLUMNS)
+    references = []
+    ref_failures = []
+    if not args.filter:
+        ref_dir = os.path.join(args.work_dir, 'run', 'uray-references')
+        shutil.rmtree(ref_dir, ignore_errors=True)
+        os.makedirs(ref_dir)
+        references = uray_reference_bitstreams(oracle_dir, ref_dir)
         with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
-            for (ok, message, rules, runs), case in zip(
-                    pool.map(lambda c: compare_uray(c, tools, tmpdir), cases),
-                    cases):
-                bitstream_runs += runs
-                for k, v in rules.items():
-                    totals[k] += v
-                if ok:
-                    if args.verbose:
-                        print('ok   %s' % case[0])
-                else:
-                    failures.append(message)
-                    print('FAIL %s' % message)
             for (ok, message), item in zip(
                     pool.map(
-                        lambda b: compare_uray_reference_bit(b, tools, tmpdir
-                                                             ), references),
+                        lambda b: compare_uray_reference_bit(
+                            b, tools, ref_dir, runner), references),
                     references):
                 if ok:
                     if args.verbose:
@@ -1709,21 +1996,45 @@ def main_prjuray(args):
                 else:
                     ref_failures.append(message)
                     print('FAIL uray-bitread %s' % message)
-    print('difftest-xilinx --prjuray: %d parts, %d FASM files, %d '
-          'uray-fasm2frames runs, %d identical, %d different' %
-          (len(parts), len(set(c[1] for c in cases)), len(cases),
-           len(cases) - len(failures), len(failures)))
-    for rule, count in sorted(totals.items()):
+        if not args.keep_run_dir:
+            shutil.rmtree(ref_dir, ignore_errors=True)
+    totals = [0] * 4
+    rules = dict.fromkeys(RULES, 0)
+    for r in rows:
+        for i in range(4):
+            totals[i] += r['uray_fasm2frames'][i]
+        for k, v in r['rules'].items():
+            rules[k] += v
+    wall = time.time() - start
+    print()
+    print('%s: %d parts, %d FASM files, %d lines; uray-fasm2frames %d '
+          'runs: %d identical, %d explained, %d different; fasm2frames + '
+          'xcframes2bit + uray-bitread %d runs' %
+          (prog, len(rows), sum(r['files'] for r in rows),
+           sum(r['lines'] for r in rows), totals[0], totals[1], totals[2],
+           totals[3], sum(r['bitstream'] for r in rows)))
+    for rule, count in sorted(rules.items()):
         print('  normalisation rule %s: applied %d time(s)' % (rule, count))
-    print('  fasm2frames + xcframes2bit + uray-bitread runs on the oracle '
-          '.frm files of these cases: %d (differences are counted in the '
-          'cases above)' % bitstream_runs)
-    print('difftest-xilinx --prjuray: uray-bitread on %d reference '
-          'bitstreams x %d flag sets, and their bit -> frm -> bit round '
-          'trip: %d identical, %d different' %
-          (len(references), len(URAY_BITREAD_FLAGS),
+    print('%s: uray-bitread on %d reference bitstreams x %d flag sets, and '
+          'their bit -> frm -> bit round trip: %d identical, %d different' %
+          (prog, len(references), len(URAY_BITREAD_FLAGS),
            len(references) - len(ref_failures), len(ref_failures)))
-    return EXIT_DIFFERENCES if failures or ref_failures else EXIT_OK
+    print_runner_summary(prog, runner, wall)
+    if args.json_report:
+        with open(args.json_report, 'w') as f:
+            json.dump(
+                {
+                    'rows': rows,
+                    'wall_seconds': wall,
+                    'references': {
+                        'runs': len(references),
+                        'failures': ref_failures
+                    }
+                },
+                f,
+                indent=1)
+    failed = any(r['failures'] for r in rows) or ref_failures
+    return EXIT_DIFFERENCES if failed else EXIT_OK
 
 
 def main():
@@ -1770,10 +2081,11 @@ def main():
     parser.add_argument('--filter', help='only FASM files matching GLOB')
     parser.add_argument('--prjuray',
                         action='store_true',
-                        help='the prjuray mode (UltraScale+, prjuray-db %s): '
-                        'uray-fasm2frames, fasm2frames, xcframes2bit and '
-                        'uray-bitread on a generated corpus and on the '
-                        'ToolsTestData bitstreams' % URAY_FAMILY)
+                        help='the prjuray mode (UltraScale+, every part of '
+                        'every prjuray-db family, or of --families / '
+                        '--parts): uray-fasm2frames, fasm2frames, '
+                        'xcframes2bit and uray-bitread on the generated '
+                        'corpora and on the ToolsTestData bitstreams')
     parser.add_argument('--uray-oracle-dir',
                         default=os.environ.get('URAY_ORACLE_DIR',
                                                oracle_dir),
@@ -1800,7 +2112,8 @@ def main():
                        default=[],
                        metavar='F[,F...]',
                        help='prjxray-db families (%s); a family not found '
-                       'in --db-cache is fetched with tools/fetch-db.sh' %
+                       'in --db-cache is fetched with tools/fetch-db.sh '
+                       '(with --prjuray: prjuray-db families, default all)' %
                        ', '.join(PRJXRAY_FAMILIES))
     group.add_argument('--all-parts',
                        action='store_true',
