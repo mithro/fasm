@@ -896,3 +896,6 @@ what happened, branch/commit references, open issues.
   merged tree: cargo doc -D warnings, capi-header-check, flake8, yapf
   0.24 clean, Rust tests pass, Python stub/simple/xilinx suites pass.
   Worktree removed.
+* T8.4 (packaging: crates.io metadata, wheels workflow, CMake install,
+  RELEASING.md/CHANGELOG; no publishing) started (Sonnet); T7.4 under
+  review.
