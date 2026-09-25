@@ -697,3 +697,16 @@ what happened, branch/commit references, open issues.
   xilinx-difftest 227/150/6 with the new corpus, 107 old cases unchanged.
   REQUEST CHANGES: the genfasm failure check misses SIGBUS/SIGTERM/plain
   non-zero exits; setup-f4pga.sh --help truncated. Fixes requested.
+* T5.10 implemented on branch `worktree-agent-a9a77b4dc9608e6b7` (6
+  commits): `fasm.xilinx` as a default-on `xilinx` feature of
+  rust/fasm-python (Database.open with cache control, FasmAssembler,
+  Frames mapping, write/read_bitstream with format strings,
+  fasm2frames/fasm2bit mirroring xc_fasm, exception hierarchy with
+  reference_exception, GIL released), `fasm_xilinx_*` C API (status codes
+  7-12, fasm_bytes, options struct) + fasm::xilinx C++ wrappers, C/C++
+  tests under valgrind, 48 Python tests, docs/CI. counter_test
+  fasm2frames 60 ms (13 ms cached) vs 289 ms xc_fasm; 2.3 ms with the
+  database open. Noted: parse-error precedence differs from the CLI
+  (documented), synthetic-db Series7 read-back oddity to investigate, the
+  agent's classifier once denied a heredoc creating a file (it used the
+  Write tool). Independent review (Opus) started.

@@ -135,7 +135,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       feature of every tile type in a database; `tools/difftest-xilinx.py`
       comparing frames and bitstreams against the reference tools for every
       artix7/kintex7/spartan7/zynq7 part in prjxray-db (after T5.6, T5.8).
-- [~] T5.10 Python bindings for `fasm-xilinx` (`fasm.xilinx`) and C API
+- [r] T5.10 Python bindings for `fasm-xilinx` (`fasm.xilinx`) and C API
       entry points (after T5.6, T3.1, T4.1).
 
 ## Phase 6: UltraScale and UltraScale+
