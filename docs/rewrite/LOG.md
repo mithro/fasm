@@ -899,3 +899,11 @@ what happened, branch/commit references, open issues.
 * T8.4 (packaging: crates.io metadata, wheels workflow, CMake install,
   RELEASING.md/CHANGELOG; no publishing) started (Sonnet); T7.4 under
   review.
+* T7.4 review (Opus): corpus hashes, reruns and difftest counts confirmed
+  (xilinx-difftest grows to 93 files / 375 runs / 261 xcfasm identical;
+  difftest.py 201 files, the 151 pre-existing classifications unchanged).
+  REQUEST CHANGES: benchmark licences misrecorded (VTR benchmarks and the
+  symbiflow SoCs have their own terms), genfasm value format / duplicate
+  count misstated, all_three_reject checks only the line, and
+  run-vtr-genfasm.sh could rm -rf a user supplied VTR_ROOT. Fixes
+  requested.
