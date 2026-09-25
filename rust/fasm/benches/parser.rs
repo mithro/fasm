@@ -16,14 +16,31 @@
 
 //! Throughput benchmark of `fasm::parser` (`cargo bench -p fasm --bench parser`).
 //!
-//! Generates two synthetic FASM files of feature lines (default 100 MB
-//! each, set `FASM_PARSER_BENCH_MB` to change it) shaped like real Xilinx
-//! 7 series output over a grid of tiles:
+//! Generates five synthetic FASM files of feature lines (default 100 MB
+//! each -- 500 MB total for a default run; set `FASM_PARSER_BENCH_MB` to
+//! change the per-class size) shaped like real Xilinx 7 series output over
+//! a grid of tiles:
 //!
 //! * `mixed`: routing pips, single bit features and multi bit LUT/BRAM
 //!   `INIT` values;
 //! * `pips`: mostly routing pips (`INT_L_X..Y...<dst>.<src>`, short lines
-//!   without values, the worst case per byte).
+//!   without values, the worst case per byte);
+//! * `lut`: mostly wide `INIT[...]` value assignments (64 bit LUT and
+//!   256 bit BRAM `INIT`s), the worst case for value parsing;
+//! * `annotated`: one third feature lines followed by a `{ .. }`
+//!   annotation, one third `#` comments and one third blank lines,
+//!   exercising the annotation/comment scanning path;
+//! * `stress`: a synthetic "every feature" shape in the spirit of
+//!   `tools/gen-corpus.py` (many distinct short feature name components
+//!   cycled per tile, a multi-bit value on every fifth line and a
+//!   duplicate/overwritten feature on every seventh), self contained here
+//!   (no database or Python needed) so it stays a deterministic `cargo
+//!   bench` input. Unlike `tools/gen-corpus.py`'s database-driven
+//!   generator, this does not combine components exhaustively per tile
+//!   and has no `!`-cleared bits to generate: `!` is a segbits *database*
+//!   convention (prjxray-db's "must be 0" marker, see
+//!   `docs/rewrite/DESIGN-xilinx-db.md`), not FASM text syntax, so it has
+//!   no place in a plain-text parser benchmark.
 //!
 //! Alternatively set `FASM_PARSER_BENCH_FILE` to parse an existing file.
 //!
@@ -100,6 +117,121 @@ fn generate(target_bytes: usize) -> String {
     out
 }
 
+/// Builds about `target_bytes` of LUT/BRAM `INIT` heavy FASM: mostly wide
+/// value assignments (64 bit LUTs, 256 bit BRAM contents), the worst case
+/// for the value parser rather than the name interner.
+fn generate_lut(target_bytes: usize) -> String {
+    const LUT64: [&str; 4] = [
+        "1111000011110000111100001111000011110000111100001111000011110000",
+        "0000111100001111000011110000111100001111000011110000111100001111",
+        "1010101010101010101010101010101010101010101010101010101010101010",
+        "0101010101010101010101010101010101010101010101010101010101010101",
+    ];
+    let mut out = String::with_capacity(target_bytes + 256);
+    let mut x = 0u32;
+    'outer: loop {
+        for y in 0..200u32 {
+            let lut = &LUT64[(x as usize + y as usize) % LUT64.len()][..64];
+            let _ = writeln!(
+                out,
+                "CLBLM_R_X{x}Y{y}.SLICEM_X0.ALUT.INIT[63:0] = 64'b{lut}\n\
+                 CLBLM_R_X{x}Y{y}.SLICEM_X0.BLUT.INIT[63:0] = 64'b{lut}\n\
+                 BRAM_L_X{x}Y{y}.RAMB18_Y0.INIT_00[255:0] = 256'h\
+                 0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF\n\
+                 BRAM_L_X{x}Y{y}.RAMB18_Y0.INITP_00[255:0] = 256'h\
+                 FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210FEDCBA9876543210"
+            );
+            if out.len() >= target_bytes {
+                break 'outer;
+            }
+        }
+        x += 1;
+    }
+    out
+}
+
+/// Builds about `target_bytes` of lines split one third each between a
+/// feature line followed by an annotation, a `#` comment, and a blank
+/// line, to exercise the `{ .. }` / `#` scanning path rather than value
+/// parsing.
+fn generate_annotated(target_bytes: usize) -> String {
+    let mut out = String::with_capacity(target_bytes + 256);
+    let mut x = 0u32;
+    let mut i = 0u32;
+    'outer: loop {
+        for y in 0..200u32 {
+            if i.is_multiple_of(3) {
+                let _ = writeln!(out, "# generated line {i} for tile X{x}Y{y}");
+            } else if i % 3 == 1 {
+                out.push('\n');
+            } else {
+                let _ = writeln!(
+                    out,
+                    "CLBLL_L_X{x}Y{y}.SLICEL_X0.CARRY4.ACY0 {{ .id = \"{i}\", \
+                     .file = \"synthetic.v\", .line = \"{i}\" }}"
+                );
+            }
+            i += 1;
+            if out.len() >= target_bytes {
+                break 'outer;
+            }
+        }
+        x += 1;
+    }
+    out
+}
+
+/// Builds about `target_bytes` of a synthetic "every feature" stress shape:
+/// many short distinct component names cycled per tile, a multi-bit value
+/// on every fifth line and an immediately overwritten (duplicate) feature
+/// on every seventh, in the spirit of `tools/gen-corpus.py`'s output (but
+/// not, unlike that generator, an exhaustive per-tile combination of
+/// components, and with no `!`-cleared bits: that is segbits database
+/// syntax, not FASM text -- see the module doc comment above).
+fn generate_stress(target_bytes: usize) -> String {
+    const COMPONENTS: [&str; 12] = [
+        "OPTA",
+        "OPTB",
+        "OPTC",
+        "OPTD",
+        "MODE",
+        "ZINI",
+        "ZRST",
+        "FFSYNC",
+        "PRECYINIT",
+        "CYINIT",
+        "DINMUX",
+        "D6MUX",
+    ];
+    let mut out = String::with_capacity(target_bytes + 256);
+    let mut x = 0u32;
+    let mut i = 0usize;
+    'outer: loop {
+        for y in 0..200u32 {
+            let comp = COMPONENTS[i % COMPONENTS.len()];
+            let _ = writeln!(out, "TILE_X{x}Y{y}.SITE_X0.{comp}");
+            if i.is_multiple_of(5) {
+                // A multi-bit value with a mix of set and cleared bits.
+                let _ = writeln!(
+                    out,
+                    "TILE_X{x}Y{y}.SITE_X0.{comp}.INIT[15:0] = 16'b1010010110100101"
+                );
+            }
+            if i.is_multiple_of(7) {
+                // Overwrite the same feature (duplicate, worst case for
+                // the merge/de-dup path when printed with `--canonical`).
+                let _ = writeln!(out, "TILE_X{x}Y{y}.SITE_X0.{comp}");
+            }
+            i += 1;
+            if out.len() >= target_bytes {
+                break 'outer;
+            }
+        }
+        x += 1;
+    }
+    out
+}
+
 fn run(name: &str, data: &[u8]) {
     let start = Instant::now();
     let mut lines = 0usize;
@@ -131,6 +263,9 @@ fn main() {
         vec![
             ("mixed", generate(mb * 1_000_000).into_bytes()),
             ("pips", generate_pips(mb * 1_000_000).into_bytes()),
+            ("lut", generate_lut(mb * 1_000_000).into_bytes()),
+            ("annotated", generate_annotated(mb * 1_000_000).into_bytes()),
+            ("stress", generate_stress(mb * 1_000_000).into_bytes()),
         ]
     };
     for (name, data) in &inputs {

@@ -114,6 +114,12 @@ of the reference tools):
 * `FASM_XDB_CACHE_VERBOSE=1`: report cache hits, rebuilds and their
   reason on stderr.
 
+See [`docs/rewrite/BENCHMARKS.md`](docs/rewrite/BENCHMARKS.md) for the
+full benchmark suite and numbers: parser throughput vs. the Python/ANTLR
+oracle (double digit to 300x+ speed-ups depending on file size and
+parser), database open with/without the cache, assembly and bitstream
+timings, and Python binding overheads.
+
 `fasm-db-cache build DB_ROOT PART...` (or `build --all DB_ROOT`) fills
 the cache ahead of time; `verify` re-hashes every source file, `info`,
 `list` and `clear` do what they say (`fasm-db-cache --help`). See
