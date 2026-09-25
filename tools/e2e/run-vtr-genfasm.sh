@@ -228,9 +228,10 @@ run_timed() {
   echo "$rc $(python3 -c "print(round($end - $start, 2))")"
 }
 
-# The last "Message:" of VPR's "Error N:" block.
+# The "Message:" of VPR's first "Error N:" block (which can start in the
+# middle of a line of other output).
 vpr_error() {
-  grep -A6 '^Error [0-9]*:' "$1" | grep -m1 '^Message:' | sed 's/^Message: *//' | cut -c1-300 || true
+  grep -A6 'Error [0-9]*: *$' "$1" | grep -m1 '^Message:' | sed 's/^Message: *//' | cut -c1-300 || true
 }
 
 write_info() {

@@ -20,7 +20,8 @@
 on a package pin, in the pin map's order (T7.4): the VTR Verilog
 benchmarks come without pin constraints, and the f4pga flow's placer
 needs a PCF. Clock ports (a name containing `clk` or `clock`, any case)
-get clock capable pins first.
+get clock capable pins first. Only IOB sites are used (not the
+XADC's analog input pads, which the pin map lists too).
 
   make-pcf.py EBLIF PINMAP.csv OUT.pcf
 
@@ -46,7 +47,9 @@ def ports(eblif):
 def main(eblif, pinmap, out):
     names = ports(eblif)
     with open(pinmap) as f:
-        pins = [r for r in csv.DictReader(f)]
+        # Only the IOB sites: the XADC's analog inputs (VP/VN, site
+        # IPAD_*) are in the pin map too, but cannot take a port.
+        pins = [r for r in csv.DictReader(f) if r['iob'].startswith('IOB_')]
     clocks = [n for n in names if re.search('clk|clock', n, re.I)]
     others = [n for n in names if n not in clocks]
     if len(names) > len(pins):
