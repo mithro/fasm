@@ -344,7 +344,13 @@ pub fn run_tool(
 ) -> u8 {
     let mut out = BufWriter::with_capacity(1 << 16, stdout);
     let code = run_streamed(flavor, argv0, args, env, stdin, &mut out, stderr);
-    let _ = out.flush();
+    if code == ABORT {
+        // An abort loses what the reference's stdout buffer holds: every
+        // line written with `std::endl` has been flushed already.
+        let _ = out.into_parts();
+    } else {
+        let _ = out.flush();
+    }
     code
 }
 
@@ -536,6 +542,7 @@ fn run_streamed(
     // nothing else is written to stdout until `DONE`.
     let mut stdout_warnings: Vec<u8> = Vec::new();
     let mut write_failed = false;
+    let mut aborted = false;
     {
         let f: &mut dyn Write = match file.as_mut() {
             Some(file) => file,
@@ -570,9 +577,8 @@ fn run_streamed(
                         }
                     }
                     None => {
-                        let _ = f.flush();
-                        let _ = stderr.write_all(SPAN_AT_TERMINATE.as_bytes());
-                        return ABORT;
+                        aborted = true;
+                        break;
                     }
                 }
             }
@@ -586,10 +592,21 @@ fn run_streamed(
             }
             write_failed |= f.write_all(&chunk).is_err();
         }
-        if p {
+        if p && !aborted {
             write_failed |= write_pgm(f, &pgmdata, &pgmsep, wpf).is_err();
         }
-        write_failed |= f.flush().is_err();
+        if !aborted {
+            write_failed |= f.flush().is_err();
+        }
+    }
+    if aborted {
+        // `std::terminate` -> `abort()`: the output still in the stdio
+        // buffers (stdout's and the -o file's) is lost.
+        if let Some(file) = file.take() {
+            let _ = file.into_parts();
+        }
+        let _ = stderr.write_all(SPAN_AT_TERMINATE.as_bytes());
+        return ABORT;
     }
     let _ = stdout.write_all(&stdout_warnings);
     if file.is_some() && write_failed {
