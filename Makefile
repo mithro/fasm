@@ -200,6 +200,13 @@ xilinx-difftest-all:
 
 .PHONY: xilinx-difftest-all
 
+# Quick version: one part per family (4 parts, a different fabric each,
+# about 2-3 minutes with 4 jobs instead of about 70).
+xilinx-difftest-quick:
+	$(MAKE) xilinx-difftest-all XILINX_DIFFTEST_ALL_ARGS="--parts-sample 1 $(XILINX_DIFFTEST_ALL_ARGS)"
+
+.PHONY: xilinx-difftest-quick
+
 # Fuzzing (T1.6, rust/fasm/fuzz/; see its README.md). Needs `cargo-fuzz`
 # (`cargo install cargo-fuzz`) and a nightly toolchain (`rustup toolchain
 # install nightly`); rust/fasm/fuzz is excluded from the main workspace

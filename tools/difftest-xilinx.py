@@ -120,6 +120,7 @@ import calendar
 import concurrent.futures
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -741,6 +742,10 @@ PRJXRAY_FAMILIES = ('artix7', 'kintex7', 'spartan7', 'zynq7')
 # Free space wanted before fetching a family (each is 180-250 MiB checked
 # out, plus the git objects).
 FETCH_MIN_FREE = 1 << 30
+# Mean seconds (reference and Rust tools, generation) per part of the
+# default corpus, from the first full run (docs/rewrite/DESIGN-xilinx-db.md
+# 8.9): for the up front estimate.
+SECONDS_PER_PART = 130
 EXPLAINED_RULES = ('3-db-error', '4-value-range')
 
 
@@ -995,6 +1000,63 @@ def print_table(rows):
             print('  '.join('-' * w for w in widths))
 
 
+def sample_parts(db, parts, count):
+    """`count` parts of a family, as many fabrics as possible: the first
+    part of each fabric (in mapping/parts.yaml order), then the second,
+    ...; within a fabric, parts of a new (device, package) first (a speed
+    grade does not change the corpus)."""
+    info = generator_module().read_simple_yaml(
+        os.path.join(db, 'mapping', 'parts.yaml'))
+    by_fabric = {}
+    for part in parts:
+        by_fabric.setdefault(fabric_of(db, part), []).append(part)
+    for fabric, members in by_fabric.items():
+        seen = set()
+        first, rest = [], []
+        for part in members:
+            key = (info[part].get('device'), info[part].get('package'))
+            (rest if key in seen else first).append(part)
+            seen.add(key)
+        by_fabric[fabric] = first + rest
+    out = []
+    depth = 0
+    while len(out) < min(count, len(parts)):
+        for fabric in sorted(by_fabric):
+            if depth < len(by_fabric[fabric]) and len(out) < count:
+                out.append(by_fabric[fabric][depth])
+        depth += 1
+    return [p for p in parts if p in out]
+
+
+def fabric_of(db, part):
+    """The fabric of a part (mapping/parts.yaml and devices.yaml), with the
+    generator's reader."""
+    return generator_module().fabric_of(db, part)
+
+
+def generator_module():
+    """tools/gen-xilinx-corpus.py as a module."""
+    global _GENERATOR_MODULE
+    if _GENERATOR_MODULE is None:
+        spec = importlib.util.spec_from_file_location('gen_xilinx_corpus',
+                                                      GENERATOR)
+        _GENERATOR_MODULE = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_GENERATOR_MODULE)
+    return _GENERATOR_MODULE
+
+
+_GENERATOR_MODULE = None
+
+
+def format_seconds(seconds):
+    seconds = int(seconds + 0.5)
+    if seconds < 60:
+        return '%d s' % seconds
+    if seconds < 3600:
+        return '%d min %02d s' % (seconds // 60, seconds % 60)
+    return '%d h %02d min' % (seconds // 3600, seconds % 3600 // 60)
+
+
 def families_main(args, tools):
     """--family/--families: every (or --parts GLOB) part of the families,
     generated corpus; per part table and totals."""
@@ -1027,6 +1089,8 @@ def families_main(args, tools):
             parts = [
                 p for p in parts if any(fnmatch.fnmatch(p, g) for g in globs)
             ]
+        elif args.parts_sample:
+            parts = sample_parts(db, parts, args.parts_sample)
         elif not args.all_parts:
             parts = parts[:1]
         selected += [(family, db, p) for p in parts]
@@ -1051,6 +1115,13 @@ def families_main(args, tools):
           '%d jobs, work directory %s' %
           (len(selected), ', '.join(families), ' '.join(
               args.tiles), args.seed, args.jobs, args.work_dir))
+    estimate = len(selected) * SECONDS_PER_PART / max(
+        1, min(args.jobs, len(selected)))
+    print('difftest-xilinx: estimated wall time without cached results: '
+          '%s (about %d s of work per part, measured for the default '
+          'corpus: 46-271 s, mean 130 s)' %
+          (format_seconds(estimate), SECONDS_PER_PART),
+          flush=True)
     rows = []
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = [
@@ -1061,12 +1132,16 @@ def families_main(args, tools):
             row = future.result()
             rows.append(row)
             f = row['fasm2frames']
+            done = len(rows)
+            elapsed = time.time() - start
+            eta = elapsed / done * (len(selected) - done)
             print('%-4s %-22s %6d lines %3d files  fasm2frames %d/%d/%d  '
-                  'xcfasm %d/%d/%d  %.0f s' %
+                  'xcfasm %d/%d/%d  %.0f s  [%d/%d, ETA %s]' %
                   ('FAIL' if row['failures'] else 'ok', row['part'],
                    row['lines'], row['files'], f[1], f[2], f[3],
                    row['xcfasm'][1], row['xcfasm'][2], row['xcfasm'][3],
-                   row['seconds']),
+                   row['seconds'], done, len(selected),
+                   format_seconds(eta)),
                   flush=True)
             for failure in row['failures']:
                 print('  FAIL %s' % failure)
@@ -1168,6 +1243,12 @@ def main():
     group.add_argument('--parts',
                        metavar='GLOB[,GLOB...]',
                        help='the parts matching these globs')
+    group.add_argument('--parts-sample',
+                       type=int,
+                       metavar='N',
+                       help='N parts per family, covering as many fabrics '
+                       'as possible (a quick run: --parts-sample 1 is 4 '
+                       'parts, a few minutes with --jobs 4)')
     group.add_argument('--list',
                        action='store_true',
                        help='print the selected parts and exit')
