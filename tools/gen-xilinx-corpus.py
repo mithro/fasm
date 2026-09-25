@@ -1362,19 +1362,7 @@ def write_errors(gen, out_dir, family_types):
     # 7. prjuray: a feature that sets a bit past the frame end (IndexError
     # in get_frames, after every line is read).
     if db.prjuray:
-        found = None
-        for group in groups:
-            for tile in group.tiles:
-                blocks = db.bits_blocks(tile)
-                for unit in group.features.units:
-                    positions = unit_positions(unit, blocks, db)
-                    if positions and sets_past_frame_end(positions, db):
-                        found = (tile, unit)
-                        break
-                if found:
-                    break
-            if found:
-                break
+        found = past_end_example(db, groups)
         if found:
             tile, unit = found
             written.append(('past_frame_end.fasm', [
@@ -1389,6 +1377,35 @@ def write_errors(gen, out_dir, family_types):
             f.write('\n'.join(lines) + '\n')
         names.append(name)
     return names
+
+
+def past_end_example(db, groups):
+    """(tile, unit) of the first unit that sets a bit past the frame end
+    on a tile of its group, or None (tiles whose bits cannot reach the
+    end are skipped)."""
+    limit = db.frame_words * db.word_bits
+    for group in groups:
+        top = {}
+        for unit in group.features.units:
+            for block_type, _, word_bit, isset in unit.bits or ():
+                if isset:
+                    top[block_type] = max(top.get(block_type, 0), word_bit)
+        for tile in group.tiles:
+            blocks = db.bits_blocks(tile)
+            reach = False
+            for block_type, block in blocks.items():
+                if block[3] is not None:
+                    reach = True  # an alias: negative words too
+                elif block_type in top:
+                    last = block[1] * db.word_bits + top[block_type]
+                    reach = reach or last >= limit
+            if not reach:
+                continue
+            for unit in group.features.units:
+                positions = unit_positions(unit, blocks, db)
+                if positions and sets_past_frame_end(positions, db):
+                    return tile, unit
+    return None
 
 
 def family_tile_types(db_root):
