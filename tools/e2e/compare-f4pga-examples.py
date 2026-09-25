@@ -39,7 +39,7 @@ For every `<out>/<design>/<board>/` with a built `top.fasm`:
 * `fasm`: the Rust `fasm` CLI and the flow's (the `fasm` PyPI package
   the flow installs) must print the same, with and without
   `--canonical`, and so must the oracle's (`tests/oracle/fasm-oracle`,
-  when set up);
+  when its venv is set up, tests/oracle/setup.sh);
 * timings: the flow's `xcfasm`, `fasm2frames`, `xc7frames2bit`,
   `bitread` and `fasm` against the Rust tools (the Rust tools with a warm
   binary database cache, FASM_XDB_CACHE).
@@ -286,9 +286,11 @@ class Design:
 
         # The fasm CLI.
         refs = [('flow', self.flow('fasm'))]
-        if self.args.fasm_oracle and os.access(self.args.fasm_oracle,
-                                               os.X_OK):
-            refs.append(('oracle', self.args.fasm_oracle))
+        oracle = self.args.fasm_oracle
+        if oracle and os.access(oracle, os.X_OK) and os.path.exists(
+                os.path.join(os.path.dirname(oracle), 'venv', 'bin',
+                             'python')):
+            refs.append(('oracle', oracle))
         for flags in ([], ['--canonical']):
             r = timed([self.rust_tool('fasm')] + flags + [self.fasm])
             if flags:
