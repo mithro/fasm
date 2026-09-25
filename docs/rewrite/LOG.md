@@ -805,3 +805,15 @@ what happened, branch/commit references, open issues.
   nextpnr.log for the cases check.sh scripts (verdict reasons wrong in
   two READMEs); primitive-tests bscane2 and the non Artix directories are
   not listed as attempted/skipped. Fixes requested.
+* T7.6 done: review fixes d8d8c00 (regression check.sh gets CHIPDB and
+  nextpnr.log, no_route cases never counted as built, bscane2 entry, 15
+  non Artix skip entries, depth 1 fetch, usage errors), acd04ac (bscane2
+  corpus entry: 2371 lines, identical vs the snap tools, same
+  FasmLookupError as the oracle on the pinned db; README regeneration
+  with check.log verdicts), b1f75b6 (docs incl. tests/corpus/README.md
+  size table). Merged with --no-ff (no conflicts). Merged tree:
+  fmt/clippy clean, xilinx-difftest 77 files 311/311 + 213/213 xcfasm +
+  6/6 identical, uray-difftest 268 runs 0 different, tests/cli + tests/e2e
+  2400 passed / 15 skipped. Worktree removed. 21 nextpnr-xilinx /
+  openXC7 designs in the corpus. Disk pressure: stale review scratch and
+  the debug target removed.
