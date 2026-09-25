@@ -175,7 +175,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       (after T1.5).
 - [ ] T7.5 RapidWright: determine FASM/bitstream export capability, generate
       reference data for the corpus designs, compare (after T5.6).
-- [ ] T7.6 nextpnr-xilinx (openXC7) test designs beyond the two repos:
+- [~] T7.6 nextpnr-xilinx (openXC7) test designs beyond the two repos:
       `nextpnr-xilinx/xilinx/examples` designs (after T7.1).
 
 ## Phase 8: Performance, docs, packaging

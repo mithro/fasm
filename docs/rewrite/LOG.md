@@ -725,3 +725,5 @@ what happened, branch/commit references, open issues.
   the worktree directory is kept for that reason (7.8 GB free, a fresh
   `tools/e2e/setup-f4pga.sh` needs ~5 GB) and can be removed when disk is
   needed. The two nexys_video (xc7a200t) pairs remain unbuilt here.
+* T7.6 (nextpnr-xilinx example designs via the installed openXC7
+  toolchain) started (Opus); T5.10 under review.
