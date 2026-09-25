@@ -180,7 +180,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 ## Phase 8: Performance, docs, packaging
 
-- [ ] T8.1 Benchmarks (`cargo bench`) and `docs/rewrite/BENCHMARKS.md` with
+- [~] T8.1 Benchmarks (`cargo bench`) and `docs/rewrite/BENCHMARKS.md` with
       comparison against Python textX/ANTLR and fasm2frames.py.
 - [ ] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
       cache, frame assembly). Known: on pip heavy FASM the parser runs at

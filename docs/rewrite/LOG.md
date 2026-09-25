@@ -746,3 +746,5 @@ what happened, branch/commit references, open issues.
   develop had to be rebuilt) 1638 passed / 37 skipped incl. 51/51
   test_xilinx_python.py, xilinx-difftest 227/227, uray-difftest 268 runs 0
   different. Worktree removed. Phase 5 is complete except T5.3b/T5.8b.
+* T8.1 (benchmark suite + docs/rewrite/BENCHMARKS.md) started (Sonnet);
+  T7.6 running.
