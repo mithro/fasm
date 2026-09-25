@@ -45,7 +45,8 @@ jobs:
       # tests/test_xilinx_python.py compares fasm.xilinx with the Rust
       # command line tools (found through FASM_CLI_DIR below); the tests
       # that need a downloaded database (FASM_DB_CACHE) or the reference
-      # tools' venv are skipped.
+      # tools' venv are skipped. tests/test_stubs.py audits
+      # fasm/xilinx/__init__.pyi against the installed fasm.xilinx.
       - name: Build the Rust command line tools
         run: cargo build --release -p fasm-cli
       - name: Run the Python test suite against the installed package
@@ -59,7 +60,8 @@ jobs:
           pytest --import-mode=importlib \
             "${GITHUB_WORKSPACE}/tests/test_simple.py" \
             "${GITHUB_WORKSPACE}/tests/test_rust_parser.py" \
-            "${GITHUB_WORKSPACE}/tests/test_xilinx_python.py"
+            "${GITHUB_WORKSPACE}/tests/test_xilinx_python.py" \
+            "${GITHUB_WORKSPACE}/tests/test_stubs.py"
 
   wheels:
     name: wheels (${{ matrix.target }})

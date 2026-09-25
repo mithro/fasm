@@ -18,14 +18,21 @@
 # SPDX-License-Identifier: Apache-2.0
 """ Audits fasm/xilinx/__init__.pyi against the runtime API (T8.3).
 
-Introspects the public names of fasm, fasm.xilinx and fasm._fasm_rs (the
-compiled extension module) and compares them, and the signatures of the
-plain Python fasm.xilinx functions and the parameter *names* of the
-extension's classes' methods (via ``inspect.signature``, which pyo3
-supports through each function's ``text_signature``), against what
-fasm/xilinx/__init__.pyi declares. This is the only .pyi in the
-repository (fasm's other modules have no separate stub); it exists to
-keep it from silently drifting from the extension it describes.
+Compares fasm.xilinx's runtime API against what fasm/xilinx/__init__.pyi
+declares (parsed as an AST, not imported, since a .pyi is never valid to
+exec): its module ``__all__``, the Database/Frames/FasmAssembler classes'
+method sets, and every checked function/method's parameters -- name,
+*kind* (positional-only / positional-or-keyword / keyword-only, i.e.
+whether a stub parameter comes after a bare ``*`` and a runtime one is
+``inspect.Parameter.KEYWORD_ONLY``) and *whether it has a default*
+(``= ...`` in the stub, ``Parameter.default is not Parameter.empty`` at
+runtime) -- via ``inspect.signature``, which pyo3 exposes for compiled
+functions and methods through each one's ``text_signature``. This is the
+only .pyi in the repository; fasm and fasm._fasm_rs (the compiled
+extension module) have no separate stub of their own to compare against
+either the stub or each other, so this module covers fasm.xilinx's
+stub only, not those two modules' overall API shape. It exists to keep
+the stub from silently drifting from the extension it describes.
 
 Skipped when the fasm._fasm_rs extension (or its "xilinx" feature) is
 not built, since there is then nothing to compare the stub against
@@ -73,14 +80,15 @@ def _public_names(module):
     }
 
 
-# Names collections.abc.Mapping provides for free from __getitem__/
-# __iter__/__len__ alone (`get`, `__contains__`, `__eq__`, `__ne__`).
+# collections.abc.Mapping provides `get` (plus `__contains__`, `__eq__`,
+# `__ne__`, `keys`/`values`/`items` -- but those four are already either
+# dunders, already filtered out of _public_names, or explicitly declared
+# in the stub) for free from __getitem__/__iter__/__len__ alone.
 # fasm.xilinx.Frames's stub declares it as a Mapping[int, List[int]]
-# subclass, so these are present at runtime (the extension implements
-# some of them directly rather than relying on the mixin, which is an
-# implementation detail) without needing their own stub entry; comparing
-# them directly against the stub's explicit method list would be a false
-# mismatch.
+# subclass, so `get` is present at runtime (the extension implements it
+# directly rather than relying on the mixin, which is an implementation
+# detail) without needing its own stub entry; comparing it directly
+# against the stub's explicit method list would be a false mismatch.
 _MAPPING_MIXIN_NAMES = frozenset({'get'})
 
 
@@ -136,9 +144,31 @@ def _stub_class_methods(tree, class_name):
         'class {!r} not found in {}'.format(class_name, _STUB_PATH))
 
 
+# A parameter is (name, kind, has_default); kind is one of these three
+# (stub parameters never use *args/**kwargs in this file, so VAR_POSITIONAL
+# and VAR_KEYWORD are not modelled).
+_POS_ONLY = 'POS_ONLY'
+_POS_OR_KW = 'POS_OR_KW'
+_KW_ONLY = 'KW_ONLY'
+
+_RUNTIME_KIND = {
+    inspect.Parameter.POSITIONAL_ONLY: _POS_ONLY,
+    inspect.Parameter.POSITIONAL_OR_KEYWORD: _POS_OR_KW,
+    inspect.Parameter.KEYWORD_ONLY: _KW_ONLY,
+}
+
+
+def _drop_self(params):
+    if params and params[0][0] in ('self', 'cls'):
+        return params[1:]
+    return params
+
+
 def _stub_function_params(tree, name, in_class=None):
-    """ Positional/keyword parameter names of a function/method in the
-    stub, in declaration order (self/cls dropped). """
+    """ (name, kind, has_default) for a function/method's parameters in
+    the stub, in declaration order (self/cls dropped). ``kind`` reflects
+    a bare ``*`` in the stub (keyword-only after it); ``has_default``
+    reflects a ``= ...`` default. """
     body = tree.body
     if in_class is not None:
         for node in body:
@@ -152,23 +182,35 @@ def _stub_function_params(tree, name, in_class=None):
     for node in body:
         if isinstance(node, ast.FunctionDef) and node.name == name:
             args = node.args
-            params = [a.arg for a in args.posonlyargs]
-            params += [a.arg for a in args.args]
-            params += [a.arg for a in args.kwonlyargs]
-            if params and params[0] in ('self', 'cls'):
-                params = params[1:]
-            return params
+            params = []
+            for a in args.posonlyargs:
+                params.append([a.arg, _POS_ONLY, False])
+            for a in args.args:
+                params.append([a.arg, _POS_OR_KW, False])
+            # Defaults line up with the *end* of posonlyargs + args.
+            positional = params  # same list, in order
+            for i, d in enumerate(reversed(args.defaults)):
+                positional[len(positional) - 1 - i][2] = True
+            for a, d in zip(args.kwonlyargs, args.kw_defaults):
+                params.append([a.arg, _KW_ONLY, d is not None])
+            return _drop_self([tuple(p) for p in params])
     raise AssertionError(
         'function {!r} not found in {} (class {!r})'.format(
             name, _STUB_PATH, in_class))
 
 
 def _runtime_params(func):
-    """ Parameter names of a runtime callable, self/cls dropped. """
-    params = list(inspect.signature(func).parameters)
-    if params and params[0] in ('self', 'cls'):
-        params = params[1:]
-    return params
+    """ (name, kind, has_default) for a runtime callable's parameters,
+    self/cls dropped, in the same shape as _stub_function_params. """
+    params = []
+    for p in inspect.signature(func).parameters.values():
+        if p.kind not in _RUNTIME_KIND:
+            raise AssertionError(
+                'unexpected parameter kind {!r} for {!r}'.format(
+                    p.kind, p.name))
+        params.append(
+            (p.name, _RUNTIME_KIND[p.kind], p.default is not p.empty))
+    return _drop_self(params)
 
 
 @pytest.fixture(scope='module')
@@ -221,7 +263,9 @@ def test_class_methods_match_stub(stub_tree, cls_name, runtime_cls):
         'fasm2bit',
     ])
 def test_module_function_params_match_stub(stub_tree, name):
-    """ Parameter names/order of each fasm.xilinx function == the stub's. """
+    """ Parameters (name, kind, has-default) of each fasm.xilinx function
+    == the stub's -- including which are keyword-only (after a stub's
+    bare ``*``) and which have a default (``= ...``). """
     stub_params = _stub_function_params(stub_tree, name)
     runtime_params = _runtime_params(getattr(xilinx, name))
     assert stub_params == runtime_params, (
@@ -246,7 +290,8 @@ def test_module_function_params_match_stub(stub_tree, name):
         ('Frames', 'read_frm', xilinx.Frames),
     ])
 def test_method_params_match_stub(stub_tree, cls_name, method, runtime_cls):
-    """ Parameter names/order of a sample of extension methods == stub's.
+    """ Parameters (name, kind, has-default) of a sample of extension
+    methods == the stub's (see test_module_function_params_match_stub).
 
     (Covers every method whose stub signature has more than a bare
     ``self``; property/no-argument methods are already covered by
