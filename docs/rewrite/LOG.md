@@ -887,3 +887,12 @@ what happened, branch/commit references, open issues.
   env var table incomplete, comment group rule), test_stubs.py ignores
   parameter kind/defaults and is not wired into CI. 14 fixes requested.
   The __dir__ TypeError is inherited from the original package: T8.3b.
+* T8.3 done: 8 fix commits (every code example in README/PYTHON.md/CAPI.md
+  now executed by the implementer: Python against a maturin build, C/C++
+  compiled with -Wall -Wformat and run, capi-install + pkg-config link;
+  docstring corrections; env var table incl. XRAY_*; PLAN status matches
+  TASKS; test_stubs.py compares parameter kind and defaults and runs in
+  make test/CI; README cargo run needs --bin fasm). Merged with --no-ff;
+  merged tree: cargo doc -D warnings, capi-header-check, flake8, yapf
+  0.24 clean, Rust tests pass, Python stub/simple/xilinx suites pass.
+  Worktree removed.

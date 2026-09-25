@@ -196,7 +196,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `find_pieces` instead of the duplicated `find_levels` body; cheaper
       hasher for `CanonicalLines::index`; library `fasm_tuple_to_string`
       canonical path still sorts formatted Strings (after T8.2).
-- [r] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
+- [x] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
 - [ ] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
       (inherited from the original package, `dir(fasm)` raises TypeError);
