@@ -48,6 +48,7 @@ import java.util.TreeMap;
  * tools.
  *
  * <pre>
+ * batch FILE                    the commands below, one per line, tab separated
  * layout PART OUT.json          configuration array of PART
  * read BIT OUT.frm OUT.json     every frame of the walk (.frm, ECC kept)
  *                               and the header / packet list
@@ -58,6 +59,33 @@ import java.util.TreeMap;
 public class RwCheck {
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 2 && args[0].equals("batch")) {
+            // One command per line, arguments separated by tabs; a failing
+            // command prints "FAIL <line number> <exception>" and the batch
+            // goes on (one JVM and one device load for many commands).
+            List<String> lines = Files.readAllLines(Paths.get(args[1]), StandardCharsets.UTF_8);
+            int n = 0;
+            for (String line : lines) {
+                n++;
+                if (line.isBlank()) {
+                    continue;
+                }
+                try {
+                    run(line.split("\t"));
+                    System.out.println("OK " + n);
+                } catch (Throwable t) {
+                    System.out.println("FAIL " + n + " " + String.valueOf(t).replace('\n', ' '));
+                }
+                System.out.flush();
+            }
+        } else if (!run(args)) {
+            System.err.println("usage: RwCheck batch FILE | layout PART OUT.json"
+                    + " | read BIT OUT.frm OUT.json | write PART FRM OUT.bit | rewrite BIT OUT.bit");
+            System.exit(2);
+        }
+    }
+
+    static boolean run(String[] args) throws Exception {
         if (args.length == 3 && args[0].equals("layout")) {
             layout(args[1], Paths.get(args[2]));
         } else if (args.length == 4 && args[0].equals("read")) {
@@ -70,10 +98,9 @@ public class RwCheck {
                 throw new IOException("writeBitstream failed");
             }
         } else {
-            System.err.println("usage: RwCheck layout PART OUT.json | read BIT OUT.frm OUT.json"
-                    + " | write PART FRM OUT.bit | rewrite BIT OUT.bit");
-            System.exit(2);
+            return false;
         }
+        return true;
     }
 
     static String hex(int v) {
@@ -146,7 +173,7 @@ public class RwCheck {
                         .append(", \"row\": ").append(FAR.getRowAddress(a, series))
                         .append(", \"column\": ").append(FAR.getColumnAddress(a, series))
                         .append(", \"frames\": ").append(b.getFrameCount())
-                        .append(", \"subtype\": ").append(q(String.valueOf(b.getSubType())))
+                        .append(", \"subtype\": ").append(q(subtype(b)))
                         .append(", \"tile_column\": ").append(b.getTileColumn())
                         .append(", \"config_row\": ").append(r.getRowIndex())
                         .append("}");
@@ -158,6 +185,15 @@ public class RwCheck {
         j.append("  \"walk_sha256\": ").append(q(sha256Walk(w))).append("\n");
         j.append("}\n");
         Files.write(out, j.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** The block's sub type name ("?" where RapidWright has no tile type). */
+    static String subtype(Block b) {
+        try {
+            return String.valueOf(b.getSubType());
+        } catch (RuntimeException e) {
+            return "?";
+        }
     }
 
     /** SHA-256 of the walk as lines "0x%08X\n" (what rwcheck.py hashes too). */
@@ -179,10 +215,9 @@ public class RwCheck {
 
     static void read(Path bit, Path frm, Path json) throws IOException {
         Bitstream b = Bitstream.readBitstream(bit);
-        ConfigArray ca = b.getConfigArray();
-        if (ca == null) {
-            ca = b.configureArray();
-        }
+        // getConfigArray() alone gives an array without the FDRI data:
+        // configureArray() fills it from the packets.
+        ConfigArray ca = b.configureArray();
         List<Integer> w = walk(ca);
         try (BufferedWriter out = Files.newBufferedWriter(frm, StandardCharsets.US_ASCII)) {
             for (int a : w) {
@@ -204,6 +239,7 @@ public class RwCheck {
         BitstreamHeader h = b.getHeader();
         StringBuilder j = new StringBuilder("{\n");
         j.append("  \"design_name\": ").append(q(h == null ? null : h.getDesignName())).append(",\n");
+        j.append("  \"options\": ").append(q(h == null ? null : h.getOptions())).append(",\n");
         j.append("  \"part_name\": ").append(q(h == null ? null : h.getPartName())).append(",\n");
         j.append("  \"date\": ").append(q(h == null ? null : h.getDate())).append(",\n");
         j.append("  \"time\": ").append(q(h == null ? null : h.getTime())).append(",\n");
