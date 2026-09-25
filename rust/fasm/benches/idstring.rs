@@ -160,6 +160,20 @@ fn main() {
         sorted.clone_from(&ids);
         sorted.sort_unstable_by(|&a, &b| interner.cmp(a, b));
     });
+    // Each handle resolved once into one buffer, then sorted
+    // (`fasm::idstring::sort_by_string`, as `merge_and_sort` does since
+    // T8.2; it works on `GLOBAL` handles).
+    let global_ids: Vec<IdString> = names.iter().map(|s| IdString::new(s)).collect();
+    let mut sorted_by_string = global_ids.clone();
+    let sort_by_string = best_of(3, n, || {
+        sorted_by_string.clone_from(&global_ids);
+        fasm::idstring::sort_by_string(&mut sorted_by_string, |&id| id);
+    });
+    let equal = sorted_by_string
+        .iter()
+        .zip(&sorted)
+        .all(|(&a, &b)| a == interner.resolve(b).as_str());
+    assert!(equal, "sort_by_string order differs from Ord");
     let mut sorted_strings = names.clone();
     let sort_strings = best_of(3, n, || {
         sorted_strings.clone_from(&names);
@@ -211,6 +225,7 @@ fn main() {
     println!("  with_str                 {with_str:8.1} ns/op");
     println!("  resolve (to String)      {resolve:8.1} ns/op");
     println!("  sort IdString            {sort_ids:8.1} ns/element");
+    println!("  sort_by_string IdString  {sort_by_string:8.1} ns/element");
     println!("  sort String              {sort_strings:8.1} ns/element");
     println!("  HashMap<String,u32> get  {map_hit:8.1} ns/op (baseline)");
     println!(

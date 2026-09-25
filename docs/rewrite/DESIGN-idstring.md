@@ -1,7 +1,9 @@
 # Design: `fasm::idstring`
 
 Status: implemented in task T1.1 (`rust/fasm/src/idstring/`); intern hit
-path sped up, `get` renamed to `lookup` and `intern_bytes` added in T1.1b.
+path sped up, `get` renamed to `lookup` and `intern_bytes` added in T1.1b;
+crate internal `intern_split` for the parser, `sort_by_string` and the
+hit path alternatives measured in T8.2 (see *T8.2* below).
 
 ## Purpose
 
@@ -251,6 +253,14 @@ structures on drop but leaks its text; private interners are meant for tests
 and short lived tools. The process wide interner is `static GLOBAL:
 Interner`.
 
+**Pre-split names (T8.2).** `Interner::intern_split(bytes, dots)` (crate
+internal; `IdString::from_split` for `GLOBAL`) is `intern_bytes` for a
+name whose first two `.` positions the caller already knows: the parser's
+feature name scan finds them while it classifies the name eight bytes at
+a time, so the interner does not search the name for them again. The
+result is the same handle (a debug assertion compares the pieces with
+`split_levels`, and a property test compares it with `intern_bytes`).
+
 ## Overflow / fallback
 
 When a component is missing from a level table and that table is full, the
@@ -311,6 +321,24 @@ requires table lookups:
 
 `Ord` for private interners is `Interner::cmp`.
 
+Each comparison of two names that differ in a level reads the two texts of
+that level from the tables (two slot reads and, on a large level 0 table,
+cache misses), which is why sorting handles costs about 2.7 times sorting
+`String`s (table in *Benchmarks*). Code that sorts many handles should
+resolve each once: `sort_by_string(items, key)` (T8.2, public) is a
+stable `sort_by_key` by the string of a `GLOBAL` handle that writes every
+key's text once into one buffer and sorts 12 byte `(start, end, index)`
+entries by those bytes (the index breaks ties), then permutes the items:
+97 ns per element for the 67,500 benchmark names against 173 ns with
+`Ord` and 65 ns for sorting `String`s (above 4 GiB of text it falls back
+to `sort_by_key`). Sorting by `Resolved` values (no table access either,
+but three scattered pieces per compare and 56 byte keys) was measured
+too and is slower than `Ord` (272 ns). `merge_and_sort` (and the Python
+binding's copy of `output_sorted_lines`) use `sort_by_string`. A property
+test and a test over every feature name in `examples/` and
+`tests/corpus/` check that `Ord`, `Resolved`, `sort_by_string` and
+sorting the strings agree, and that `sort_by_string` is stable.
+
 ## Public API
 
 ```rust
@@ -347,6 +375,7 @@ impl Interner {
     pub fn stats(&self) -> InternerStats;
 }
 pub static GLOBAL: Interner;
+pub fn sort_by_string<T>(items: &mut Vec<T>, key: impl Fn(&T) -> IdString);
 
 #[non_exhaustive]
 pub struct InternerStats {
@@ -496,3 +525,31 @@ from 38.5 % to 26 % of the parser's instructions (callgrind, all passes).
 parser branch, so switching it to `IdString::from_bytes` changes little
 (within noise). The rest of the `pips` gap to 200 MB/s is in the parser
 itself (about 1,300 instructions per line besides interning).
+
+## T8.2: hit path alternatives measured and rejected
+
+`cargo bench -p fasm --bench idstring` puts an intern hit at about 52 ns
+against 38 ns for a `HashMap<String, u32>` get on the same 67,500 names.
+Breaking the hit down (temporary probes in the bench, default input, best
+of 5): splitting the name into its levels 12 ns (5.7 ns with the helpers
+forced inline: the out of line `split_levels` returns its pieces through
+memory), hashing the three pieces a further 5 ns, the level 0 probe 24 ns
+(of which 14 ns is the bucket load alone: the 67,500 entry index does not
+stay in cache, and a hit then reads the slot and the text), the two small
+level 1 and 2 probes 13 ns together. The level 0 lookup is memory bound,
+like the `HashMap` baseline's, so the gap is mostly the extra slot and
+text reads and the per level overhead. These changes were implemented,
+measured against the unchanged binary in alternating runs, and not kept:
+
+| Change | Hit (ns) before -> after | Why rejected |
+|---|---:|---|
+| Whole name index in front of the levels (hash of the whole name -> handle, 16 byte buckets, lock free, candidates checked against the level texts) | 52.5 -> 51.9 | no gain (the check reads the three level texts anyway), miss 162 -> 268 ns, +21 to 43 bytes per indexed name |
+| 32 byte level buckets holding the text inline (up to 24 bytes), so a hit reads one cache line | 55.0 -> 51.6 | miss 191 -> 268 ns, interner heap 6.3 -> 12.6 MB (twice the index memory); a larger index misses cache more often |
+| Maximum index load 1/2 instead of 3/4 | 52.6 -> 54.7 | no gain, more memory |
+| Custom seeded folded multiply hash instead of `foldhash` | 52.7 -> 54.0 | hashing is 2 to 4 ns per piece either way |
+| `#[inline(always)]` on `split_levels`, `find_dot`, `Table::find`/`probe` | 53.4 -> 55.7 | split + hash 17.5 -> 10.2 ns, but no gain overall, and the parser bench got slower (lut 420 -> 367 MB/s, code layout) |
+| Reusing the levels found by the lock free probe on the miss path, and skipping the redundant lock free probe in `Table::intern` | miss 170 -> 166 (best of 7) | within noise (miss cost is the lock, `OnceLock::set`, the reservation CAS and allocation) |
+
+What did help the parser is not probing faster but doing less around the
+probe: the scan hands the dot positions to `intern_split` and nothing
+validates the names as UTF-8 (see `BENCHMARKS.md`, "After T8.2").

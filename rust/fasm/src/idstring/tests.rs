@@ -546,6 +546,83 @@ fn concurrent_global_interning() {
     }
 }
 
+/// Sorting handles with `Ord`, by their [`Resolved`] and with
+/// [`sort_by_string`] (as `merge_and_sort` does) gives the order of
+/// sorting the strings (stable for `sort_by_string`), and `Resolved`
+/// compares like the strings.
+fn check_sort_orders(strings: &[String]) {
+    let ids: Vec<IdString> = strings.iter().map(|s| IdString::new(s)).collect();
+    let mut expected = strings.to_vec();
+    expected.sort();
+    let mut by_ord = ids.clone();
+    by_ord.sort();
+    let mut by_resolved = ids.clone();
+    by_resolved.sort_by_cached_key(|id| id.resolved());
+    let mut by_string = ids.clone();
+    sort_by_string(&mut by_string, |&id| id);
+    let texts = |ids: &[IdString]| ids.iter().map(|id| id.resolve()).collect::<Vec<_>>();
+    assert_eq!(texts(&by_ord), expected);
+    assert_eq!(texts(&by_resolved), expected);
+    assert_eq!(texts(&by_string), expected);
+    // Stable: equal keys keep their order.
+    let mut tagged: Vec<(IdString, usize)> = ids.iter().copied().zip(0..).collect();
+    let mut expected_tagged = tagged.clone();
+    expected_tagged.sort_by(|a, b| a.0.cmp(&b.0));
+    sort_by_string(&mut tagged, |&(id, _)| id);
+    assert_eq!(tagged, expected_tagged);
+    for (a, &x) in strings.iter().zip(&ids).take(20) {
+        for (b, &y) in strings.iter().zip(&ids).take(20) {
+            assert_eq!(x.resolved().cmp(&y.resolved()), a.cmp(b), "{a:?} {b:?}");
+        }
+    }
+}
+
+#[test]
+fn sort_orders_match_str_on_corpus_names() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    for dir in ["examples", "tests/corpus"] {
+        let mut pending = vec![root.join(dir)];
+        while let Some(dir) = pending.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|e| e == "fasm") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    assert!(files.len() > 10, "{files:?}");
+    let mut names = Vec::new();
+    for file in files {
+        let text = String::from_utf8_lossy(&std::fs::read(&file).unwrap()).into_owned();
+        for line in text.lines() {
+            let name = line
+                .trim_start()
+                .split(|c: char| c.is_whitespace() || "=[{#".contains(c))
+                .next()
+                .unwrap_or("");
+            if !name.is_empty() {
+                names.push(name.to_owned());
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    assert!(names.len() > 1000, "{}", names.len());
+    // Shuffle deterministically so that the sorts have work to do.
+    let mut shuffled: Vec<String> = Vec::with_capacity(names.len());
+    let step = 7919 % names.len().max(1);
+    let mut i = 0;
+    for _ in 0..names.len() {
+        shuffled.push(names[i].clone());
+        i = (i + step.max(1)) % names.len();
+    }
+    check_sort_orders(&shuffled);
+}
+
 mod properties {
     use super::*;
     use proptest::prelude::*;
@@ -634,6 +711,16 @@ mod properties {
                     prop_assert_eq!(interner.cmp(x, y), a.cmp(b));
                 }
             }
+        }
+
+        #[test]
+        fn sorting_by_resolved_matches_str(
+            strings in proptest::collection::vec(
+                prop_oneof![dotted(), any::<String>(), "[A-Z_]{1,6}(\\.[A-Z0-9_]{0,5}){0,4}"],
+                0..60,
+            ),
+        ) {
+            check_sort_orders(&strings);
         }
 
         #[test]

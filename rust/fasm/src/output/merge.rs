@@ -19,7 +19,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::idstring::IdString;
+use crate::idstring::{sort_by_string, IdString};
 
 use super::super::model::{FasmLine, FeatureValue, SetFasmFeature, ValueFormat};
 use super::error::OutputError;
@@ -471,14 +471,18 @@ impl MergeModel {
             Some(sort_key) => {
                 group_ids.sort_by_key(|id| id.with_str(|s| sort_key(s)));
             }
-            None => group_ids.sort(),
+            // The order of `group_ids.sort()`, with each id resolved once
+            // instead of on every comparison.
+            None => sort_by_string(&mut group_ids, |&id| id),
         }
 
         let mut output_groups: Vec<Vec<FasmLine>> = Vec::new();
 
         for group_id in group_ids {
             let mut groups = feature_groups.remove(&group_id).unwrap_or_default();
-            groups.sort_by_key(|group| feature_group_key(group));
+            // Stable, like `sort_by_key` (and Python's `sorted`), with
+            // each name resolved once.
+            sort_by_string(&mut groups, |group| feature_group_key(group));
 
             let mut flattened: Vec<FasmLine> = Vec::new();
             for group in groups {
