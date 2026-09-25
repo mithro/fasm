@@ -529,6 +529,34 @@ error cases.
 | `.bit` header time | the current UTC time | the same, or `$SOURCE_DATE_EPOCH` (see `xc7frames2bit`) |
 | Database cache | none | as for `fasm2frames` (`$FASM_XDB_CACHE`) |
 
+## The f4pga flow's outputs (f4pga-examples, T7.3)
+
+### Rule
+
+For every f4pga-examples design built with the f4pga Yosys + VPR flow
+(`tools/e2e/run-f4pga-examples.sh`, `docs/rewrite/DESIGN-xilinx-db.md`
+§8.11), the Rust tools reproduce what the flow wrote: `xcfasm` with the
+flow's command line (`--sparse --emit_pudc_b_pullup`, the flow's
+prjxray-db) writes the flow's frames byte for byte and the flow's `.bit`
+byte for byte except for the `.frm` path in the header's design field;
+`fasm2frames` with the same options writes the same frames (with the
+flow's and with the pinned database, which are identical);
+`xc7frames2bit` on those frames writes the flow's `.bit` (same header
+rule); `bitread` prints what the flow's `bitread` prints; the `fasm` CLI
+prints what the flow's `fasm` (PyPI `fasm` 0.0.2.post88) prints. The
+dense, sparse and pudc variants also match the flow's tools (prjxray
+`ae546d6b`) and the oracle (prjxray `c9f02d85`) through
+`tools/difftest-xilinx.py --corpus-root`. No difference was found; no
+Rust change was needed.
+
+### Differences and quirks of the reference flow
+
+| Case | f4pga flow | Rust / this repository |
+|---|---|---|
+| `.bit` header of the flow | names the flow's temporary `.frm` file (`/tmp/tmpXXXXXXXX`, xcfasm without `--frm_out`) and the build time | the comparison skips the path (the configuration data and the other header fields must be identical) and injects the time with `SOURCE_DATE_EPOCH` (see `xcfasm` above) |
+| The environment's `bin/fasm2frames` | prjxray's console script, broken: `ModuleNotFoundError: No module named 'utils'` (prjxray's pip package does not install `utils/`) | the comparisons run the flow's `xc_fasm.fasm2frames` (`tools/e2e/f4pga/fasm2frames-flow`), which the flow's `xcfasm` uses |
+| `genfasm` killed or crashing | `symbiflow_write_fasm` ignores its exit status: a truncated `top.fasm` (`genfasm` of an Arty A7-100T design was killed by the OOM killer here, leaving 320 lines without any routing), then a bitstream of it, and `make` succeeds | `run-f4pga-examples.sh` marks such a build as failed; the truncated FASM is valid FASM and the Rust tools reproduce the flow's frames and bitstream of it too |
+
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);
