@@ -84,11 +84,12 @@ mod model;
 mod output;
 mod parse;
 mod string;
+mod xilinx;
 
 pub use builder::{fasm_file_new, fasm_file_push_line, fasm_set_feature_spec};
 pub use error::{
-    fasm_error, fasm_error_column, fasm_error_free, fasm_error_line, fasm_error_message,
-    fasm_error_status, fasm_status, fasm_status_string,
+    fasm_error, fasm_error_column, fasm_error_free, fasm_error_kind, fasm_error_line,
+    fasm_error_message, fasm_error_status, fasm_status, fasm_status_string,
 };
 pub use ffi::fasm_str;
 pub use file::{fasm_file, fasm_file_free, fasm_file_line, fasm_file_line_count, fasm_line};
@@ -111,6 +112,38 @@ pub use parse::{
     fasm_parse_string_cb,
 };
 pub use string::{fasm_string, fasm_string_data, fasm_string_free, fasm_string_len};
+pub use xilinx::assembler::{
+    fasm_xilinx_assembler, fasm_xilinx_assembler_add_file,
+    fasm_xilinx_assembler_add_required_features, fasm_xilinx_assembler_free,
+    fasm_xilinx_assembler_get_frames, fasm_xilinx_assembler_mark_roi, fasm_xilinx_assembler_new,
+    fasm_xilinx_assembler_parse_file, fasm_xilinx_assembler_parse_string,
+    fasm_xilinx_assembler_propagate_stepdown, fasm_xilinx_assembler_set_prjuray,
+    fasm_xilinx_assembler_warning, fasm_xilinx_assembler_warning_count,
+    fasm_xilinx_fasm2frames_file, fasm_xilinx_fasm2frames_options, fasm_xilinx_fasm2frames_string,
+};
+pub use xilinx::bitstream::{
+    fasm_xilinx_bitstream_format, fasm_xilinx_bitstream_options, fasm_xilinx_bitstream_read,
+    fasm_xilinx_bitstream_read_file, fasm_xilinx_bitstream_write, fasm_xilinx_bitstream_write_file,
+    fasm_xilinx_part, fasm_xilinx_part_architecture, fasm_xilinx_part_free,
+    fasm_xilinx_part_from_database, fasm_xilinx_part_read_yaml,
+};
+pub use xilinx::database::{
+    fasm_xilinx_bit, fasm_xilinx_database, fasm_xilinx_database_architecture,
+    fasm_xilinx_database_free, fasm_xilinx_database_lookup, fasm_xilinx_database_open,
+    fasm_xilinx_database_open_cached, fasm_xilinx_database_part,
+    fasm_xilinx_database_words_per_frame, fasm_xilinx_feature_info,
+};
+pub use xilinx::frames::{
+    fasm_xilinx_frames, fasm_xilinx_frames_address, fasm_xilinx_frames_count,
+    fasm_xilinx_frames_equal, fasm_xilinx_frames_find, fasm_xilinx_frames_free,
+    fasm_xilinx_frames_new, fasm_xilinx_frames_parse_frm, fasm_xilinx_frames_read_frm,
+    fasm_xilinx_frames_set, fasm_xilinx_frames_to_frm, fasm_xilinx_frames_words,
+    fasm_xilinx_frames_words_per_frame, fasm_xilinx_frames_write_frm,
+};
+pub use xilinx::{
+    fasm_bytes, fasm_bytes_data, fasm_bytes_free, fasm_bytes_len, fasm_xilinx_architecture,
+    fasm_xilinx_warning_fn,
+};
 
 /// Returns the library version as a static NUL terminated string (never
 /// `NULL`, never freed), e.g. `"0.1.0"`.

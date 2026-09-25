@@ -88,6 +88,40 @@ typedef enum fasm_status {
      * in `fasm_file_merge_and_sort`).
      */
     FASM_ERR_OUTPUT = 6,
+    /**
+     * A Xilinx database cannot be opened: a missing or malformed file, an
+     * unknown part, not a prjxray-db / prjuray-db family directory, a
+     * part file that cannot be used, a part without a frame tree
+     * (`fasm_xilinx_*`).
+     */
+    FASM_ERR_DB = 7,
+    /**
+     * FASM features that are not in the database
+     * (`prjxray.fasm_assembler.FasmLookupError`; the message has one line
+     * per missing feature bit).
+     */
+    FASM_ERR_LOOKUP = 8,
+    /**
+     * Two FASM lines want a different value for one bit
+     * (`prjxray.fasm_assembler.FasmInconsistentBits`).
+     */
+    FASM_ERR_INCONSISTENT_BITS = 9,
+    /**
+     * Any other error of the Xilinx assembler: an unknown tile or tile type
+     * (`KeyError`), a malformed ROI `design.json`, ... (`fasm_error_kind`
+     * names the exception of the reference tools).
+     */
+    FASM_ERR_ASSEMBLER = 10,
+    /**
+     * A bitstream cannot be written or read: a part of another
+     * architecture than the format's, frames of another size, data
+     * without a sync word, an IDCODE that is not the part's.
+     */
+    FASM_ERR_BITSTREAM = 11,
+    /**
+     * A number of a `.frm` file does not parse.
+     */
+    FASM_ERR_FRM = 12,
 } fasm_status;
 
 /**
@@ -122,6 +156,67 @@ typedef enum fasm_value_format {
      */
     FASM_VALUE_FORMAT_VERILOG_OCTAL = 4,
 } fasm_value_format;
+
+/**
+ * The architecture of a Xilinx database or part.
+ *
+ * Values are stable (part of the ABI).
+ */
+typedef enum fasm_xilinx_architecture {
+    /**
+     * 7 series (prjxray-db: artix7, kintex7, spartan7, zynq7).
+     */
+    FASM_XILINX_SERIES7 = 0,
+    /**
+     * UltraScale.
+     */
+    FASM_XILINX_ULTRASCALE = 1,
+    /**
+     * UltraScale+ (prjuray-db: zynqusp).
+     */
+    FASM_XILINX_ULTRASCALE_PLUS = 2,
+} fasm_xilinx_architecture;
+
+/**
+ * The layout of a bitstream (`fasm_xilinx_bitstream_options.format`).
+ *
+ * Values are stable (part of the ABI).
+ */
+typedef enum fasm_xilinx_bitstream_format {
+    /**
+     * The part's architecture (prjuray-tools' implementation, which is
+     * prjxray's for Series7).
+     */
+    FASM_XILINX_FORMAT_DEFAULT = 0,
+    /**
+     * Series7 (`xc7frames2bit`).
+     */
+    FASM_XILINX_FORMAT_SERIES7 = 1,
+    /**
+     * UltraScale (`xcframes2bit --architecture=UltraScale`).
+     */
+    FASM_XILINX_FORMAT_ULTRASCALE = 2,
+    /**
+     * UltraScale+ (`xcframes2bit --architecture=UltraScalePlus`).
+     */
+    FASM_XILINX_FORMAT_ULTRASCALE_PLUS = 3,
+    /**
+     * The plain prjxray `xc7frames2bit --architecture=UltraScale`: the
+     * Series7 part type, frame addresses and ECC with the UltraScale word
+     * count and packets.
+     */
+    FASM_XILINX_FORMAT_PRJXRAY_ULTRASCALE = 4,
+    /**
+     * The plain prjxray `xc7frames2bit --architecture=UltraScalePlus`.
+     */
+    FASM_XILINX_FORMAT_PRJXRAY_ULTRASCALE_PLUS = 5,
+} fasm_xilinx_bitstream_format;
+
+/**
+ * An owned, immutable byte buffer returned by the library (a bitstream).
+ * Released with `fasm_bytes_free`.
+ */
+typedef struct fasm_bytes fasm_bytes;
 
 /**
  * Details of a failed call: status, message and (for parse errors) the
@@ -173,6 +268,50 @@ typedef struct fasm_set_feature fasm_set_feature;
  * Owned by the caller and released with `fasm_string_free`.
  */
 typedef struct fasm_string fasm_string;
+
+/**
+ * A FASM -> frames assembler (Python: `fasm.xilinx.FasmAssembler`, a
+ * port of `prjxray.fasm_assembler.FasmAssembler`).
+ *
+ * Created by `fasm_xilinx_assembler_new` for a database opened with a
+ * part, released with `fasm_xilinx_assembler_free`. It shares the
+ * ownership of its database. A call that modifies it needs exclusive
+ * access (one thread at a time).
+ */
+typedef struct fasm_xilinx_assembler fasm_xilinx_assembler;
+
+/**
+ * A prjxray-db (Series7) or prjuray-db (UltraScale+) database family
+ * opened for one part (Python: `fasm.xilinx.Database`).
+ *
+ * Created by `fasm_xilinx_database_open` / `_open_cached`, released with
+ * `fasm_xilinx_database_free`. Immutable: any number of threads may use
+ * it at once. Assemblers and parts made from it share its ownership, so
+ * it may be freed before them.
+ */
+typedef struct fasm_xilinx_database fasm_xilinx_database;
+
+/**
+ * Configuration frames: frame address -> `words_per_frame` 32-bit
+ * words, in ascending address order (Python: `fasm.xilinx.Frames`).
+ *
+ * Created by `fasm_xilinx_frames_new`, `fasm_xilinx_assembler_get_frames`,
+ * `fasm_xilinx_fasm2frames_*`, `fasm_xilinx_frames_read_frm` /
+ * `_parse_frm` and `fasm_xilinx_bitstream_read*`; released with
+ * `fasm_xilinx_frames_free`. Reading from several threads at once is
+ * safe; `fasm_xilinx_frames_set` needs exclusive access.
+ */
+typedef struct fasm_xilinx_frames fasm_xilinx_frames;
+
+/**
+ * The frame tree and IDCODE of a part (`part.yaml`), which a bitstream is
+ * written for and read with.
+ *
+ * Created by `fasm_xilinx_part_from_database` or
+ * `fasm_xilinx_part_read_yaml`, released with `fasm_xilinx_part_free`.
+ * Immutable: any number of threads may use it at once.
+ */
+typedef struct fasm_xilinx_part fasm_xilinx_part;
 
 /**
  * A borrowed string view: `len` bytes of UTF-8 text starting at `ptr`.
@@ -300,6 +439,137 @@ typedef int64_t (*fasm_sort_key_fn)(const char *group_id, size_t len, void *user
  */
 typedef bool (*fasm_line_callback)(const struct fasm_line *line, size_t line_number, void *user);
 
+/**
+ * A callback receiving a warning of the reference tools (for example
+ * `frame_set: invalid word address ...`, which prjxray prints to stderr):
+ * `len` bytes of UTF-8 at `message` (also NUL terminated), valid during
+ * the call. It must not unwind (throw a C++ exception) or `longjmp` out.
+ */
+typedef void (*fasm_xilinx_warning_fn)(const char *message, size_t len, void *user);
+
+/**
+ * The options of `fasm_xilinx_fasm2frames_*` (the flags of the
+ * `fasm2frames` tool). A `NULL` options pointer is all defaults (zero).
+ */
+typedef struct fasm_xilinx_fasm2frames_options {
+    /**
+     * `--sparse`: only the frames of the buses that were written (and of
+     * the ROI tiles) instead of every frame of the part.
+     */
+    bool sparse;
+    /**
+     * `--emit_pudc_b_pullup`: make the PUDC_B pin an input with a pullup
+     * if the FASM does not use its IOB.
+     */
+    bool emit_pudc_b_pullup;
+    /**
+     * `--roi`: a ROI `design.json` (NUL terminated path), or `NULL`.
+     */
+    const char *roi;
+    /**
+     * Receives the warnings (bits beyond the end of a frame), or `NULL`.
+     */
+    fasm_xilinx_warning_fn warning;
+    /**
+     * Passed to `warning`.
+     */
+    void *user;
+} fasm_xilinx_fasm2frames_options;
+
+/**
+ * The options of the bitstream writer. A `NULL` options pointer is all
+ * defaults (zero).
+ */
+typedef struct fasm_xilinx_bitstream_options {
+    /**
+     * A `fasm_xilinx_bitstream_format` value.
+     */
+    int32_t format;
+    /**
+     * The header part name (field b), NUL terminated; `NULL`: the part of
+     * the database for a part from `fasm_xilinx_part_from_database`, else
+     * empty.
+     */
+    const char *part_name;
+    /**
+     * The header design name (field a, before `;Generator=`;
+     * `xc7frames2bit` writes its `--frm_file`), NUL terminated; `NULL`:
+     * empty.
+     */
+    const char *design_name;
+    /**
+     * The generator name after `;Generator=`, NUL terminated; `NULL`:
+     * `xc7frames2bit`.
+     */
+    const char *generator;
+    /**
+     * Use `source_date_epoch` for the header date and time.
+     */
+    bool has_source_date_epoch;
+    /**
+     * Seconds since the epoch of the header date and time (UTC). Without
+     * `has_source_date_epoch`, `$SOURCE_DATE_EPOCH` when it is set to an
+     * integer (like the command line tools), else the current time.
+     */
+    int64_t source_date_epoch;
+} fasm_xilinx_bitstream_options;
+
+/**
+ * What a feature bit is (`fasm_xilinx_database_lookup`).
+ */
+typedef struct fasm_xilinx_feature_info {
+    /**
+     * `true` for a pseudo PIP: valid, sets no bits (the other fields are
+     * 0, `block_type` is -1).
+     */
+    bool pseudo_pip;
+    /**
+     * The bus: 0 `CLB_IO_CLK`, 1 `BLOCK_RAM`, 2 `CFG_CLB`; -1 for a
+     * pseudo PIP.
+     */
+    int32_t block_type;
+    /**
+     * The first frame of the bus of the tile.
+     */
+    uint32_t base_address;
+    /**
+     * The number of frames of the bus of the tile.
+     */
+    uint32_t frame_count;
+    /**
+     * The effective word offset of the tile in its frames.
+     */
+    int64_t offset;
+    /**
+     * The number of bits (the ones that cannot be placed in a frame,
+     * which the assembler drops with a warning, are not counted).
+     */
+    size_t bit_count;
+} fasm_xilinx_feature_info;
+
+/**
+ * A bit a feature sets or clears (`fasm_xilinx_database_lookup`).
+ */
+typedef struct fasm_xilinx_bit {
+    /**
+     * Frame address.
+     */
+    uint32_t frame;
+    /**
+     * 32-bit word within the frame.
+     */
+    uint32_t word;
+    /**
+     * Bit within the word (0 to 31).
+     */
+    uint32_t bit;
+    /**
+     * `true` if the feature sets the bit, `false` if it clears it (a `!`
+     * segbit).
+     */
+    bool value;
+} fasm_xilinx_bit;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -391,6 +661,23 @@ FASM_API size_t fasm_error_line(const struct fasm_error *error);
  * `error` must be `NULL` or a live `fasm_error` from this library.
  */
 FASM_API size_t fasm_error_column(const struct fasm_error *error);
+
+/**
+ * Returns the kind of `error`: for the errors of the `fasm_xilinx_*`
+ * functions, the name of the exception the reference Python tools
+ * (prjxray, f4pga-xc-fasm) raise in the same situation, which the
+ * command line tools print before the message
+ * (`prjxray.fasm_assembler.FasmLookupError`, `KeyError`,
+ * `FileNotFoundError`, `Exception` for a parse error, ...); for other
+ * errors, `fasm_status_string` of its status. NUL terminated, owned by
+ * `error` (valid until `fasm_error_free`); an empty string for a `NULL`
+ * `error`.
+ *
+ * # Safety
+ *
+ * `error` must be `NULL` or a live `fasm_error` from this library.
+ */
+FASM_API const char *fasm_error_kind(const struct fasm_error *error);
 
 /**
  * Frees `error`. `NULL` is accepted (no-op).
@@ -916,6 +1203,666 @@ FASM_API size_t fasm_string_len(const struct fasm_string *s);
  * used afterwards (in particular not freed twice).
  */
 FASM_API void fasm_string_free(struct fasm_string *s);
+
+/**
+ * Returns the data of `b` (owned by `b`, valid until `fasm_bytes_free`;
+ * `NULL` for a `NULL` or empty `b`).
+ *
+ * # Safety
+ *
+ * `b` must be `NULL` or a live `fasm_bytes` from this library.
+ */
+FASM_API const uint8_t *fasm_bytes_data(const struct fasm_bytes *b);
+
+/**
+ * Returns the length of `b` in bytes (0 for a `NULL` `b`).
+ *
+ * # Safety
+ *
+ * `b` must be `NULL` or a live `fasm_bytes` from this library.
+ */
+FASM_API size_t fasm_bytes_len(const struct fasm_bytes *b);
+
+/**
+ * Frees `b`. `NULL` is accepted (no-op).
+ *
+ * # Safety
+ *
+ * `b` must be `NULL` or a live `fasm_bytes` from this library that is not
+ * used afterwards.
+ */
+FASM_API void fasm_bytes_free(struct fasm_bytes *b);
+
+/**
+ * Creates an assembler for the part `db` was opened for, stored in
+ * `*out` (free with `fasm_xilinx_assembler_free`). For an UltraScale or
+ * UltraScale+ database it uses prjuray's semantics (see
+ * `fasm_xilinx_assembler_set_prjuray`), like the `fasm2frames` tool.
+ *
+ * Errors: `FASM_ERR_DB` if `db` was opened without a part.
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live database; `out` and `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_new(const struct fasm_xilinx_database *db,
+                                           struct fasm_xilinx_assembler **out,
+                                           struct fasm_error **err);
+
+/**
+ * Frees `assembler`. `NULL` is accepted (no-op).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live, and not used afterwards.
+ */
+FASM_API void fasm_xilinx_assembler_free(struct fasm_xilinx_assembler *assembler);
+
+/**
+ * Selects prjuray's assembler semantics (`true`: bits beyond the end of a
+ * frame are kept, conflicts are reported in 16-bit words) or prjxray's
+ * (`false`: such bits are dropped with a warning).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and not used by anything else
+ * during the call.
+ */
+FASM_API
+void fasm_xilinx_assembler_set_prjuray(struct fasm_xilinx_assembler *assembler,
+                                       bool prjuray);
+
+/**
+ * `FasmAssembler.parse_fasm_filename`: parses the whole FASM file `path`
+ * (NUL terminated; a syntax error is reported before anything is
+ * assembled) and adds its lines.
+ *
+ * Errors: `FASM_ERR_IO`, `FASM_ERR_PARSE` (with a position),
+ * `FASM_ERR_LOOKUP` (every feature missing from the database, one per
+ * line of the message), `FASM_ERR_INCONSISTENT_BITS`,
+ * `FASM_ERR_ASSEMBLER` (kind `KeyError`: an unknown tile or tile type).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `path` `NULL` or NUL
+ * terminated; `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_parse_file(struct fasm_xilinx_assembler *assembler,
+                                                  const char *path,
+                                                  struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_assembler_parse_file` for the FASM text `text[0..len]`.
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `text` valid for
+ * `len` bytes; `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_parse_string(struct fasm_xilinx_assembler *assembler,
+                                                    const char *text,
+                                                    size_t len,
+                                                    struct fasm_error **err);
+
+/**
+ * Adds the lines of the parsed model `file` (`fasm_parse_*`,
+ * `fasm_file_push_line`, ...) like `FasmAssembler.add_fasm_line`; the
+ * features missing from the database are reported together at the end
+ * (`FASM_ERR_LOOKUP`).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `file` `NULL` or a
+ * live `fasm_file`; `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_add_file(struct fasm_xilinx_assembler *assembler,
+                                                const struct fasm_file *file,
+                                                struct fasm_error **err);
+
+/**
+ * Adds the lines of the part's `required_features.fasm`, like
+ * `fasm2frames` does after the FASM file.
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_add_required_features(struct fasm_xilinx_assembler *assembler,
+                                                             struct fasm_error **err);
+
+/**
+ * `FasmAssembler.mark_roi_frames`: marks every frame of every bus of the
+ * tiles with `x1 <= grid_x <= x2` and `y1 <= grid_y <= y2` in use, so
+ * that sparse frames include them.
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_mark_roi(struct fasm_xilinx_assembler *assembler,
+                                                double x1,
+                                                double x2,
+                                                double y1,
+                                                double y2,
+                                                struct fasm_error **err);
+
+/**
+ * The STEPDOWN propagation of `fasm2frames` (call it after all features
+ * have been added): if a used IOB of an IO bank sets a feature whose name
+ * contains `STEPDOWN`, every unused IOB site of the bank gets the same
+ * feature(s) and the bank's `HCLK_IOI3` tile gets `STEPDOWN`.
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live and exclusive; `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_propagate_stepdown(struct fasm_xilinx_assembler *assembler,
+                                                          struct fasm_error **err);
+
+/**
+ * Returns the number of warnings so far (bits beyond the end of a frame
+ * that prjxray drops with `frame_set: invalid word address ...`; 0 for
+ * `NULL`).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live.
+ */
+FASM_API size_t fasm_xilinx_assembler_warning_count(const struct fasm_xilinx_assembler *assembler);
+
+/**
+ * Returns warning `index` (borrowed, not NUL terminated: valid until the
+ * assembler is modified or freed; empty if out of range).
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live.
+ */
+FASM_API
+struct fasm_str fasm_xilinx_assembler_warning(const struct fasm_xilinx_assembler *assembler,
+                                              size_t index);
+
+/**
+ * `FasmAssembler.get_frames(sparse)`: every frame of the part (`sparse`
+ * false, zero filled) or only the frames of the buses that were written
+ * or marked, with the set bits applied, as new frames stored in `*out`.
+ *
+ * # Safety
+ *
+ * `assembler` must be `NULL` or live; `out` and `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_assembler_get_frames(const struct fasm_xilinx_assembler *assembler,
+                                                  bool sparse,
+                                                  struct fasm_xilinx_frames **out,
+                                                  struct fasm_error **err);
+
+/**
+ * The whole FASM -> frames flow of the `fasm2frames` tool
+ * (`xc_fasm.fasm2frames.fasm2frames`) for the part `db` was opened for,
+ * on the FASM file `path` (NUL terminated): the ROI, the part's required
+ * features, the PUDC_B pullup and the STEPDOWN propagation; on an
+ * UltraScale(+) database, prjuray's flow (like the tool). The frames are
+ * stored in `*out`; byte for byte the tool's `.frm` output through
+ * `fasm_xilinx_frames_to_frm`.
+ *
+ * Errors: as `fasm_xilinx_assembler_parse_file`, plus `FASM_ERR_IO` /
+ * `FASM_ERR_ASSEMBLER` for the ROI file and `FASM_ERR_DB`.
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live database; `path` `NULL` or NUL
+ * terminated; `options` `NULL` or valid (its `roi` `NULL` or NUL
+ * terminated, `warning` `NULL` or callable with `user`); `out` and `err`
+ * `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_fasm2frames_file(const struct fasm_xilinx_database *db,
+                                              const char *path,
+                                              const struct fasm_xilinx_fasm2frames_options *options,
+                                              struct fasm_xilinx_frames **out,
+                                              struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_fasm2frames_file` for the FASM text `text[0..len]`.
+ *
+ * # Safety
+ *
+ * As for `fasm_xilinx_fasm2frames_file`, with `text` valid for `len`
+ * bytes.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_fasm2frames_string(const struct fasm_xilinx_database *db,
+                                                const char *text,
+                                                size_t len,
+                                                const struct fasm_xilinx_fasm2frames_options *options,
+                                                struct fasm_xilinx_frames **out,
+                                                struct fasm_error **err);
+
+/**
+ * Stores the part of `db` (its `part.yaml`, else `part.json` frame tree)
+ * in `*out` (free with `fasm_xilinx_part_free`; it shares the ownership
+ * of `db`). `FASM_ERR_DB` if the part has no frame tree.
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or live; `out` and `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_part_from_database(const struct fasm_xilinx_database *db,
+                                                struct fasm_xilinx_part **out,
+                                                struct fasm_error **err);
+
+/**
+ * Reads the part file `path` (a `part.yaml`, NUL terminated) like the
+ * `--part_file` of `xc7frames2bit` / `xcframes2bit`: a file tagged with
+ * an architecture (`!<xilinx/xc7series/part>`, `xcuseries`,
+ * `xcupseries`) is of that architecture, an untagged one is read as
+ * `architecture` (a `fasm_xilinx_architecture` value). The part is
+ * stored in `*out`. `FASM_ERR_DB` if it cannot be read.
+ *
+ * # Safety
+ *
+ * `path` must be `NULL` or NUL terminated; `out` and `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_part_read_yaml(const char *path,
+                                            int32_t architecture,
+                                            struct fasm_xilinx_part **out,
+                                            struct fasm_error **err);
+
+/**
+ * Frees `part`. `NULL` is accepted (no-op).
+ *
+ * # Safety
+ *
+ * `part` must be `NULL` or live, and not used afterwards.
+ */
+FASM_API void fasm_xilinx_part_free(struct fasm_xilinx_part *part);
+
+/**
+ * Returns the architecture of `part` (`FASM_XILINX_SERIES7` for `NULL`).
+ *
+ * # Safety
+ *
+ * `part` must be `NULL` or live.
+ */
+FASM_API
+enum fasm_xilinx_architecture fasm_xilinx_part_architecture(const struct fasm_xilinx_part *part);
+
+/**
+ * Writes `frames` as a `.bit` bitstream for `part` into a new
+ * `fasm_bytes` stored in `*out`, byte for byte like `xc7frames2bit`
+ * (Series7) and prjuray-tools' `xcframes2bit` (UltraScale, UltraScale+):
+ * the `.bit` header, the configuration packets with the part's IDCODE and
+ * every frame of the part (missing frames zero filled) with its ECC.
+ *
+ * Errors: `FASM_ERR_BITSTREAM` (a part of another architecture than the
+ * format's, frames of another size), `FASM_ERR_INVALID_ARG`.
+ *
+ * # Safety
+ *
+ * `part` and `frames` must be `NULL` or live; `options` `NULL` or valid
+ * (its strings `NULL` or NUL terminated); `out` and `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_bitstream_write(const struct fasm_xilinx_part *part,
+                                             const struct fasm_xilinx_frames *frames,
+                                             const struct fasm_xilinx_bitstream_options *options,
+                                             struct fasm_bytes **out,
+                                             struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_bitstream_write` to the file `path` (NUL terminated;
+ * `FASM_ERR_IO` if it cannot be written).
+ *
+ * # Safety
+ *
+ * As for `fasm_xilinx_bitstream_write`; `path` `NULL` or NUL terminated.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_bitstream_write_file(const struct fasm_xilinx_part *part,
+                                                  const struct fasm_xilinx_frames *frames,
+                                                  const struct fasm_xilinx_bitstream_options *options,
+                                                  const char *path,
+                                                  struct fasm_error **err);
+
+/**
+ * Reads the frames of the bitstream `data[0..len]` (a `.bit` file, or
+ * raw configuration data: everything after the first sync word) for
+ * `part` in `format` (a `fasm_xilinx_bitstream_format` value), like
+ * `bitread`, into new frames stored in `*out`: every frame the bitstream
+ * writes, with the ECC bits cleared when `clear_ecc` (which gives back
+ * the frames `fasm2frames` wrote, `bitread --frm_out`) and without the
+ * all zero frames when `skip_zero`.
+ *
+ * Errors: `FASM_ERR_BITSTREAM` (no sync word, an IDCODE that is not the
+ * part's, a part of another architecture than the format's).
+ *
+ * # Safety
+ *
+ * `part` must be `NULL` or live; `data` valid for `len` bytes; `out` and
+ * `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_bitstream_read(const struct fasm_xilinx_part *part,
+                                            const uint8_t *data,
+                                            size_t len,
+                                            int32_t format,
+                                            bool clear_ecc,
+                                            bool skip_zero,
+                                            struct fasm_xilinx_frames **out,
+                                            struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_bitstream_read` for the file `path` (NUL terminated;
+ * `FASM_ERR_IO` if it cannot be read).
+ *
+ * # Safety
+ *
+ * As for `fasm_xilinx_bitstream_read`; `path` `NULL` or NUL terminated.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_bitstream_read_file(const struct fasm_xilinx_part *part,
+                                                 const char *path,
+                                                 int32_t format,
+                                                 bool clear_ecc,
+                                                 bool skip_zero,
+                                                 struct fasm_xilinx_frames **out,
+                                                 struct fasm_error **err);
+
+/**
+ * Opens the database family directory `db_root` (e.g.
+ * `prjxray-db/artix7`, `prjuray-db/zynqusp`; NUL terminated) for `part`
+ * (e.g. `xc7a35tcsg324-1`, NUL terminated UTF-8; `NULL` loads only the
+ * tile types, which cannot assemble) from its text files, and stores the
+ * new database in `*out` (free with `fasm_xilinx_database_free`).
+ *
+ * Errors: `FASM_ERR_DB` (a missing or malformed file, an unknown part,
+ * not a database directory), `FASM_ERR_INVALID_ARG`, `FASM_ERR_UTF8`.
+ *
+ * # Safety
+ *
+ * `db_root` and `part` must be `NULL` or NUL terminated; `out` and `err`
+ * must be `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_database_open(const char *db_root,
+                                           const char *part,
+                                           struct fasm_xilinx_database **out,
+                                           struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_database_open` through the binary database cache: the
+ * part is loaded from its cache file when none of its source files
+ * changed, else from the text files (and the cache file is rewritten);
+ * the result is the same. `cache_dir` (NUL terminated) is the cache
+ * directory; `NULL` uses the settings of the command line tools
+ * (`$FASM_XDB_CACHE`, else `$XDG_CACHE_HOME/fasm/db`, else
+ * `~/.cache/fasm/db`; `FASM_XDB_CACHE=0` disables the cache). Problems
+ * with the cache itself are never errors.
+ *
+ * # Safety
+ *
+ * As for `fasm_xilinx_database_open`; `cache_dir` must be `NULL` or NUL
+ * terminated.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_database_open_cached(const char *db_root,
+                                                  const char *part,
+                                                  const char *cache_dir,
+                                                  struct fasm_xilinx_database **out,
+                                                  struct fasm_error **err);
+
+/**
+ * Frees `db`. `NULL` is accepted (no-op). Assemblers and parts made from
+ * it stay valid.
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live `fasm_xilinx_database` that is not used
+ * afterwards.
+ */
+FASM_API void fasm_xilinx_database_free(struct fasm_xilinx_database *db);
+
+/**
+ * Returns the architecture of `db` (`FASM_XILINX_SERIES7` for `NULL`).
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live `fasm_xilinx_database`.
+ */
+FASM_API
+enum fasm_xilinx_architecture fasm_xilinx_database_architecture(const struct fasm_xilinx_database *db);
+
+/**
+ * Returns the number of 32-bit words per frame of the architecture of
+ * `db` (101, 123 or 93; 0 for `NULL`).
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live `fasm_xilinx_database`.
+ */
+FASM_API size_t fasm_xilinx_database_words_per_frame(const struct fasm_xilinx_database *db);
+
+/**
+ * Returns the part name of `db` (NUL terminated, owned by `db`), or
+ * `NULL` if it was opened without a part (or for a `NULL` `db`).
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live `fasm_xilinx_database`.
+ */
+FASM_API const char *fasm_xilinx_database_part(const struct fasm_xilinx_database *db);
+
+/**
+ * Looks up bit `address` of the FASM feature `feature[0..len]`
+ * (`TILE.SITE.FEATURE`, UTF-8; `address` is the `N` of `FEATURE[N]`, 0
+ * for a feature without one), like the assembler does. Fills `*info`
+ * and the first `bits_capacity` bits into `bits` (`info->bit_count` is
+ * the total, so a caller can size `bits` with a first call with
+ * `bits_capacity` 0; `bits` may be `NULL` then).
+ *
+ * Errors: `FASM_ERR_ASSEMBLER` (kind `KeyError`) for an unknown tile or
+ * tile type, `FASM_ERR_LOOKUP` for a feature that is not in the tile's
+ * segbits (`Segment DB <type>, key <type>.<feature> not found`),
+ * `FASM_ERR_DB` for a database opened without a part.
+ *
+ * # Safety
+ *
+ * `db` must be `NULL` or a live database; `feature` valid for `len`
+ * bytes; `info` `NULL` or writable; `bits` `NULL` or writable for
+ * `bits_capacity` elements; `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_database_lookup(const struct fasm_xilinx_database *db,
+                                             const char *feature,
+                                             size_t len,
+                                             uint32_t address,
+                                             struct fasm_xilinx_feature_info *info,
+                                             struct fasm_xilinx_bit *bits,
+                                             size_t bits_capacity,
+                                             struct fasm_error **err);
+
+/**
+ * Returns a new, empty set of frames of `words_per_frame` words (101 for
+ * Series7, 123 for UltraScale, 93 for UltraScale+), or `NULL` if
+ * `words_per_frame` is 0. Free with `fasm_xilinx_frames_free`.
+ */
+FASM_API struct fasm_xilinx_frames *fasm_xilinx_frames_new(size_t words_per_frame);
+
+/**
+ * Frees `frames`. `NULL` is accepted (no-op).
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live, and not used afterwards.
+ */
+FASM_API void fasm_xilinx_frames_free(struct fasm_xilinx_frames *frames);
+
+/**
+ * Returns the number of frames (0 for `NULL`).
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live.
+ */
+FASM_API size_t fasm_xilinx_frames_count(const struct fasm_xilinx_frames *frames);
+
+/**
+ * Returns the number of 32-bit words per frame (0 for `NULL`).
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live.
+ */
+FASM_API size_t fasm_xilinx_frames_words_per_frame(const struct fasm_xilinx_frames *frames);
+
+/**
+ * Returns the address of frame `index` (frames are in ascending address
+ * order; 0 if `index` is out of range or `frames` is `NULL`).
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live.
+ */
+FASM_API uint32_t fasm_xilinx_frames_address(const struct fasm_xilinx_frames *frames, size_t index);
+
+/**
+ * Returns the `words_per_frame` words of frame `index` (borrowed from
+ * `frames`: valid until it is freed or modified), or `NULL` if `index` is
+ * out of range or `frames` is `NULL`.
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live.
+ */
+FASM_API
+const uint32_t *fasm_xilinx_frames_words(const struct fasm_xilinx_frames *frames,
+                                         size_t index);
+
+/**
+ * Returns the words of the frame at `address` (borrowed, as
+ * `fasm_xilinx_frames_words`), or `NULL` if there is none.
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live.
+ */
+FASM_API
+const uint32_t *fasm_xilinx_frames_find(const struct fasm_xilinx_frames *frames,
+                                        uint32_t address);
+
+/**
+ * Sets the frame at `address` to `words[0..count]` (inserting it if it
+ * does not exist). `count` must be the number of words per frame
+ * (`FASM_ERR_INVALID_ARG` otherwise).
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live and not accessed by anything else
+ * during the call; `words` valid for `count` elements; `err` `NULL` or
+ * writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_frames_set(struct fasm_xilinx_frames *frames,
+                                        uint32_t address,
+                                        const uint32_t *words,
+                                        size_t count,
+                                        struct fasm_error **err);
+
+/**
+ * Returns `true` if `a` and `b` hold the same frames with the same words
+ * (two `NULL`s are equal).
+ *
+ * # Safety
+ *
+ * `a` and `b` must be `NULL` or live.
+ */
+FASM_API
+bool fasm_xilinx_frames_equal(const struct fasm_xilinx_frames *a,
+                              const struct fasm_xilinx_frames *b);
+
+/**
+ * Formats `frames` as `.frm` text (`0x%08X` address, a space, the words
+ * as comma separated `0x%08X`, one frame per line; byte for byte what
+ * `fasm2frames` writes) into a new `fasm_string` stored in `*out`.
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live; `out` and `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_frames_to_frm(const struct fasm_xilinx_frames *frames,
+                                           struct fasm_string **out,
+                                           struct fasm_error **err);
+
+/**
+ * Writes `frames` as a `.frm` file to `path` (NUL terminated).
+ * `FASM_ERR_IO` if it cannot be written.
+ *
+ * # Safety
+ *
+ * `frames` must be `NULL` or live; `path` `NULL` or NUL terminated; `err`
+ * `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_frames_write_frm(const struct fasm_xilinx_frames *frames,
+                                              const char *path,
+                                              struct fasm_error **err);
+
+/**
+ * Parses `.frm` text `text[0..len]` with `words_per_frame` words per
+ * frame, like `xc7frames2bit` reads its `--frm_file` (`#` lines are
+ * comments; a line with another number of words is skipped with a
+ * warning passed to `warning`, which may be `NULL`; the first of two
+ * frames with the same address wins), into new frames stored in `*out`.
+ * `FASM_ERR_FRM` (with `fasm_error_line`) for a number that does not
+ * parse.
+ *
+ * # Safety
+ *
+ * `text` valid for `len` bytes; `warning` `NULL` or callable with
+ * `user`; `out` and `err` `NULL` or writable.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_frames_parse_frm(const char *text,
+                                              size_t len,
+                                              size_t words_per_frame,
+                                              fasm_xilinx_warning_fn warning,
+                                              void *user,
+                                              struct fasm_xilinx_frames **out,
+                                              struct fasm_error **err);
+
+/**
+ * `fasm_xilinx_frames_parse_frm` for the file `path` (NUL terminated;
+ * `FASM_ERR_IO` if it cannot be read).
+ *
+ * # Safety
+ *
+ * `path` `NULL` or NUL terminated; otherwise as
+ * `fasm_xilinx_frames_parse_frm`.
+ */
+FASM_API
+enum fasm_status fasm_xilinx_frames_read_frm(const char *path,
+                                             size_t words_per_frame,
+                                             fasm_xilinx_warning_fn warning,
+                                             void *user,
+                                             struct fasm_xilinx_frames **out,
+                                             struct fasm_error **err);
 
 #ifdef __cplusplus
 }  // extern "C"

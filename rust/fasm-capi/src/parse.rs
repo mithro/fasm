@@ -67,14 +67,14 @@ unsafe fn read_file(path: *const c_char) -> Result<Vec<u8>, CapiError> {
 
 /// Converts a C path: arbitrary bytes on Unix, UTF-8 elsewhere.
 #[cfg(unix)]
-fn path_buf(path: &CStr) -> Result<PathBuf, CapiError> {
+pub(crate) fn path_buf(path: &CStr) -> Result<PathBuf, CapiError> {
     use std::os::unix::ffi::OsStrExt;
     Ok(PathBuf::from(std::ffi::OsStr::from_bytes(path.to_bytes())))
 }
 
 /// Converts a C path: arbitrary bytes on Unix, UTF-8 elsewhere.
 #[cfg(not(unix))]
-fn path_buf(path: &CStr) -> Result<PathBuf, CapiError> {
+pub(crate) fn path_buf(path: &CStr) -> Result<PathBuf, CapiError> {
     path.to_str().map(PathBuf::from).map_err(|e| {
         CapiError::new(
             fasm_status::FASM_ERR_UTF8,

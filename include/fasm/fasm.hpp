@@ -55,6 +55,9 @@
  *    being invoked for the rest of the model after one has thrown — only
  *    the first exception raised is kept and rethrown.
  *
+ *  - fasm::xilinx wraps the `fasm_xilinx_*` functions (Xilinx databases,
+ *    FASM -> frames, .frm files, bitstreams) the same way.
+ *
  * Thread safety follows fasm.h: a `fasm::File` may be read (including
  * iterated, and have views taken from it) from any number of threads at
  * once; `push_line` needs exclusive access to that `File`. `fasm::String`
@@ -104,6 +107,12 @@ enum class Status : int {
     Utf8 = FASM_ERR_UTF8,
     Panic = FASM_ERR_PANIC,
     Output = FASM_ERR_OUTPUT,
+    Db = FASM_ERR_DB,
+    Lookup = FASM_ERR_LOOKUP,
+    InconsistentBits = FASM_ERR_INCONSISTENT_BITS,
+    Assembler = FASM_ERR_ASSEMBLER,
+    Bitstream = FASM_ERR_BITSTREAM,
+    Frm = FASM_ERR_FRM,
 };
 
 // Each enumerator is defined directly in terms of its fasm_status macro
@@ -123,6 +132,16 @@ static_assert(static_cast<int>(Status::Panic) == FASM_ERR_PANIC,
               "Status::Panic must equal FASM_ERR_PANIC");
 static_assert(static_cast<int>(Status::Output) == FASM_ERR_OUTPUT,
               "Status::Output must equal FASM_ERR_OUTPUT");
+static_assert(static_cast<int>(Status::Db) == FASM_ERR_DB, "Status::Db must equal FASM_ERR_DB");
+static_assert(static_cast<int>(Status::Lookup) == FASM_ERR_LOOKUP,
+              "Status::Lookup must equal FASM_ERR_LOOKUP");
+static_assert(static_cast<int>(Status::InconsistentBits) == FASM_ERR_INCONSISTENT_BITS,
+              "Status::InconsistentBits must equal FASM_ERR_INCONSISTENT_BITS");
+static_assert(static_cast<int>(Status::Assembler) == FASM_ERR_ASSEMBLER,
+              "Status::Assembler must equal FASM_ERR_ASSEMBLER");
+static_assert(static_cast<int>(Status::Bitstream) == FASM_ERR_BITSTREAM,
+              "Status::Bitstream must equal FASM_ERR_BITSTREAM");
+static_assert(static_cast<int>(Status::Frm) == FASM_ERR_FRM, "Status::Frm must equal FASM_ERR_FRM");
 
 /** @brief Converts a `fasm_status` to `Status`. */
 constexpr Status from_c(fasm_status status) noexcept { return static_cast<Status>(status); }
@@ -231,12 +250,22 @@ public:
     /** @brief 0 based, code point column of the error, or 0 if `!has_position()`. */
     std::size_t column() const noexcept { return column_; }
 
+    /**
+     * @brief `fasm_error_kind`: for the errors of the `fasm::xilinx`
+     * functions, the name of the exception the reference Python tools
+     * raise (e.g. `"prjxray.fasm_assembler.FasmLookupError"`, `"KeyError"`),
+     * which their command line tools print before `what()`; the status
+     * description otherwise.
+     */
+    const std::string &kind() const noexcept { return kind_; }
+
 private:
     struct Fields {
         std::string message;
         Status status;
         std::size_t line;
         std::size_t column;
+        std::string kind;
     };
 
     // Reads every field out of `err` and frees it before the base class
@@ -250,11 +279,14 @@ private:
             fields.status = from_c(fasm_error_status(err));
             fields.line = fasm_error_line(err);
             fields.column = fasm_error_column(err);
+            const char *kind = fasm_error_kind(err);
+            fields.kind = kind != nullptr ? std::string(kind) : std::string();
         } else {
             fields.message = "fasm: invalid argument (no error details available)";
             fields.status = Status::InvalidArg;
             fields.line = 0;
             fields.column = 0;
+            fields.kind = fasm_status_string(FASM_ERR_INVALID_ARG);
         }
         fasm_error_free(err);
         return fields;
@@ -264,11 +296,13 @@ private:
         : std::runtime_error(std::move(fields.message)),
           status_(fields.status),
           line_(fields.line),
-          column_(fields.column) {}
+          column_(fields.column),
+          kind_(std::move(fields.kind)) {}
 
     Status status_;
     std::size_t line_;
     std::size_t column_;
+    std::string kind_;
 };
 
 namespace detail {
@@ -1141,5 +1175,596 @@ private:
 };
 
 } // namespace fasm
+
+/**
+ * @brief C++ wrappers of the `fasm_xilinx_*` functions: prjxray-db /
+ * prjuray-db databases, FASM -> frames, `.frm` files and `.bit`
+ * bitstreams for Xilinx Series7, UltraScale and UltraScale+ parts
+ * (docs/rewrite/DESIGN-capi.md, "Xilinx").
+ *
+ * `Database`, `Assembler`, `Frames` and `Part` own their C object (move
+ * only). Failures throw `fasm::Error` (see `Error::kind()`). Warning
+ * callbacks (`Fasm2FramesOptions::warning`, `Frames::parse_frm`) go
+ * through the same exception trampoline as the core wrapper: an
+ * exception they throw is rethrown after the C call returns.
+ */
+namespace fasm::xilinx {
+
+/** @brief Mirrors `fasm_xilinx_architecture`. */
+enum class Architecture : int {
+    Series7 = FASM_XILINX_SERIES7,
+    UltraScale = FASM_XILINX_ULTRASCALE,
+    UltraScalePlus = FASM_XILINX_ULTRASCALE_PLUS,
+};
+
+/** @brief Mirrors `fasm_xilinx_bitstream_format`. */
+enum class BitstreamFormat : std::int32_t {
+    Default = FASM_XILINX_FORMAT_DEFAULT,
+    Series7 = FASM_XILINX_FORMAT_SERIES7,
+    UltraScale = FASM_XILINX_FORMAT_ULTRASCALE,
+    UltraScalePlus = FASM_XILINX_FORMAT_ULTRASCALE_PLUS,
+    PrjxrayUltraScale = FASM_XILINX_FORMAT_PRJXRAY_ULTRASCALE,
+    PrjxrayUltraScalePlus = FASM_XILINX_FORMAT_PRJXRAY_ULTRASCALE_PLUS,
+};
+
+/** @brief A warning of the reference tools (e.g. a bit beyond its frame). */
+using WarningFn = std::function<void(std::string_view)>;
+
+namespace detail {
+
+/** @brief The context of the warning trampoline. */
+struct WarningContext {
+    const WarningFn *fn;
+    std::exception_ptr pending;
+};
+
+/**
+ * @brief A `fasm_xilinx_warning_fn` calling a `WarningFn`; never unwinds
+ * (the first exception is stored in the context, later warnings are
+ * dropped).
+ */
+inline void warning_trampoline(const char *message, std::size_t len, void *user) noexcept {
+    auto *ctx = static_cast<WarningContext *>(user);
+    if (ctx->pending) {
+        return;
+    }
+    try {
+        (*ctx->fn)(std::string_view(message, len));
+    } catch (...) {
+        ctx->pending = std::current_exception();
+    }
+}
+
+/** @brief Rethrows the callback's exception, else throws `Error(err)` for a failure. */
+inline void finish(const WarningContext &ctx, fasm_status status, fasm_error *err) {
+    if (ctx.pending) {
+        fasm_error_free(err);
+        std::rethrow_exception(ctx.pending);
+    }
+    ::fasm::detail::check_status(status, err);
+}
+
+/** @brief Owns a C object, freed with `Free` (move only). */
+template <class T, void (*Free)(T *)>
+class Handle {
+public:
+    Handle() noexcept = default;
+    explicit Handle(T *ptr) noexcept : ptr_(ptr) {}
+    Handle(const Handle &) = delete;
+    Handle &operator=(const Handle &) = delete;
+    Handle(Handle &&other) noexcept : ptr_(other.ptr_) { other.ptr_ = nullptr; }
+    Handle &operator=(Handle &&other) noexcept {
+        if (this != &other) {
+            Free(ptr_);
+            ptr_ = other.ptr_;
+            other.ptr_ = nullptr;
+        }
+        return *this;
+    }
+    ~Handle() { Free(ptr_); }
+    T *get() const noexcept { return ptr_; }
+
+private:
+    T *ptr_ = nullptr;
+};
+
+/** @brief A C path string for `path` (exact on POSIX, see `File::parse_file`). */
+inline std::string path_string(const std::filesystem::path &path) { return path.string(); }
+
+} // namespace detail
+
+/** @brief A bit a feature sets (`value`) or clears (`fasm_xilinx_bit`). */
+using Bit = fasm_xilinx_bit;
+
+/** @brief The result of `Database::lookup` (`fasm_xilinx_feature_info` and its bits). */
+struct FeatureInfo {
+    /** @brief A pseudo PIP: valid, sets no bits. */
+    bool pseudo_pip = false;
+    /** @brief The bus: 0 `CLB_IO_CLK`, 1 `BLOCK_RAM`, 2 `CFG_CLB`, -1 for a pseudo PIP. */
+    std::int32_t block_type = -1;
+    /** @brief The first frame of the bus of the tile. */
+    std::uint32_t base_address = 0;
+    /** @brief The number of frames of the bus of the tile. */
+    std::uint32_t frame_count = 0;
+    /** @brief The effective word offset. */
+    std::int64_t offset = 0;
+    /** @brief The bits (placeable ones only). */
+    std::vector<Bit> bits;
+};
+
+/**
+ * @brief A prjxray-db / prjuray-db database family opened for one part
+ * (`fasm_xilinx_database`; immutable, shareable between threads).
+ */
+class Database {
+public:
+    /** @brief `fasm_xilinx_database_open`: loads the text files. */
+    static Database open(const std::filesystem::path &db_root,
+                         const std::optional<std::string> &part = std::nullopt) {
+        fasm_xilinx_database *out = nullptr;
+        fasm_error *err = nullptr;
+        std::string root = detail::path_string(db_root);
+        fasm_status status = fasm_xilinx_database_open(
+            root.c_str(), part ? part->c_str() : nullptr, &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return Database(out);
+    }
+
+    /**
+     * @brief `fasm_xilinx_database_open_cached`: through the binary cache in
+     * `cache_dir`, or with the settings of the command line tools
+     * (`$FASM_XDB_CACHE`, ...) when `cache_dir` is `std::nullopt`.
+     */
+    static Database open_cached(const std::filesystem::path &db_root,
+                                const std::optional<std::string> &part,
+                                const std::optional<std::filesystem::path> &cache_dir =
+                                    std::nullopt) {
+        fasm_xilinx_database *out = nullptr;
+        fasm_error *err = nullptr;
+        std::string root = detail::path_string(db_root);
+        std::string dir = cache_dir ? detail::path_string(*cache_dir) : std::string();
+        fasm_status status = fasm_xilinx_database_open_cached(
+            root.c_str(), part ? part->c_str() : nullptr, cache_dir ? dir.c_str() : nullptr,
+            &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return Database(out);
+    }
+
+    /** @brief The architecture. */
+    Architecture architecture() const noexcept {
+        return static_cast<Architecture>(fasm_xilinx_database_architecture(get()));
+    }
+
+    /** @brief 32-bit words per frame (101, 123 or 93). */
+    std::size_t words_per_frame() const noexcept {
+        return fasm_xilinx_database_words_per_frame(get());
+    }
+
+    /** @brief The part, or `std::nullopt` for a database opened without one. */
+    std::optional<std::string_view> part() const noexcept {
+        const char *p = fasm_xilinx_database_part(get());
+        return p != nullptr ? std::optional<std::string_view>(p) : std::nullopt;
+    }
+
+    /** @brief `fasm_xilinx_database_lookup`: bit `address` of the feature `feature`. */
+    FeatureInfo lookup(std::string_view feature, std::uint32_t address = 0) const {
+        fasm_xilinx_feature_info info{};
+        fasm_error *err = nullptr;
+        fasm_status status = fasm_xilinx_database_lookup(get(), feature.data(), feature.size(),
+                                                         address, &info, nullptr, 0, &err);
+        ::fasm::detail::check_status(status, err);
+        FeatureInfo result;
+        result.bits.resize(info.bit_count);
+        status = fasm_xilinx_database_lookup(get(), feature.data(), feature.size(), address,
+                                             &info, result.bits.data(), result.bits.size(), &err);
+        ::fasm::detail::check_status(status, err);
+        result.pseudo_pip = info.pseudo_pip;
+        result.block_type = info.block_type;
+        result.base_address = info.base_address;
+        result.frame_count = info.frame_count;
+        result.offset = info.offset;
+        return result;
+    }
+
+    /** @brief The underlying `fasm_xilinx_database *`, still owned by this object. */
+    const fasm_xilinx_database *get() const noexcept { return handle_.get(); }
+
+private:
+    explicit Database(fasm_xilinx_database *ptr) noexcept : handle_(ptr) {}
+
+    detail::Handle<fasm_xilinx_database, fasm_xilinx_database_free> handle_;
+};
+
+/** @brief One frame of `Frames`: its address and `words_per_frame` words (borrowed). */
+struct FrameView {
+    std::uint32_t address;
+    ::fasm::Span<std::uint32_t> words;
+};
+
+/**
+ * @brief Configuration frames: address -> words, in ascending address
+ * order (`fasm_xilinx_frames`).
+ */
+class Frames {
+public:
+    /** @brief No frames, of `words_per_frame` words each (101, 123 or 93). */
+    explicit Frames(std::size_t words_per_frame)
+        : handle_(fasm_xilinx_frames_new(words_per_frame)) {
+        if (handle_.get() == nullptr) {
+            throw std::invalid_argument("fasm::xilinx::Frames: words_per_frame must not be 0");
+        }
+    }
+
+    /** @brief Takes ownership of `ptr` (not `NULL`). */
+    static Frames from_raw(fasm_xilinx_frames *ptr) noexcept { return Frames(Adopt{}, ptr); }
+
+    /** @brief The number of frames. */
+    std::size_t size() const noexcept { return fasm_xilinx_frames_count(get()); }
+
+    /** @brief 32-bit words per frame. */
+    std::size_t words_per_frame() const noexcept {
+        return fasm_xilinx_frames_words_per_frame(get());
+    }
+
+    /** @brief Frame `index` (in address order); valid until this object is modified. */
+    FrameView operator[](std::size_t index) const noexcept {
+        return FrameView{fasm_xilinx_frames_address(get(), index),
+                         ::fasm::Span<std::uint32_t>(fasm_xilinx_frames_words(get(), index),
+                                                     words_per_frame())};
+    }
+
+    /** @brief The words of the frame at `address`, or `std::nullopt`. */
+    std::optional<::fasm::Span<std::uint32_t>> find(std::uint32_t address) const noexcept {
+        const std::uint32_t *words = fasm_xilinx_frames_find(get(), address);
+        if (words == nullptr) {
+            return std::nullopt;
+        }
+        return ::fasm::Span<std::uint32_t>(words, words_per_frame());
+    }
+
+    /** @brief Sets (or inserts) the frame at `address`; `words` must have `words_per_frame()` words. */
+    void set(std::uint32_t address, const std::vector<std::uint32_t> &words) {
+        fasm_error *err = nullptr;
+        fasm_status status =
+            fasm_xilinx_frames_set(handle_.get(), address, words.data(), words.size(), &err);
+        ::fasm::detail::check_status(status, err);
+    }
+
+    /** @brief The `.frm` text (byte for byte `fasm2frames`'s output). */
+    std::string to_frm() const {
+        fasm_string *out = nullptr;
+        fasm_error *err = nullptr;
+        fasm_status status = fasm_xilinx_frames_to_frm(get(), &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return ::fasm::String(out).str();
+    }
+
+    /** @brief Writes the `.frm` file `path`. */
+    void write_frm(const std::filesystem::path &path) const {
+        fasm_error *err = nullptr;
+        std::string p = detail::path_string(path);
+        fasm_status status = fasm_xilinx_frames_write_frm(get(), p.c_str(), &err);
+        ::fasm::detail::check_status(status, err);
+    }
+
+    /** @brief `fasm_xilinx_frames_parse_frm`. */
+    static Frames parse_frm(std::string_view text, std::size_t words_per_frame,
+                            const WarningFn &warning = {}) {
+        fasm_xilinx_frames *out = nullptr;
+        fasm_error *err = nullptr;
+        detail::WarningContext ctx{&warning, nullptr};
+        fasm_status status = fasm_xilinx_frames_parse_frm(
+            text.data(), text.size(), words_per_frame,
+            warning ? detail::warning_trampoline : nullptr, &ctx, &out, &err);
+        if (ctx.pending) {
+            fasm_xilinx_frames_free(out);
+        }
+        detail::finish(ctx, status, err);
+        return Frames::from_raw(out);
+    }
+
+    /** @brief `fasm_xilinx_frames_read_frm`. */
+    static Frames read_frm(const std::filesystem::path &path, std::size_t words_per_frame,
+                           const WarningFn &warning = {}) {
+        fasm_xilinx_frames *out = nullptr;
+        fasm_error *err = nullptr;
+        detail::WarningContext ctx{&warning, nullptr};
+        std::string p = detail::path_string(path);
+        fasm_status status = fasm_xilinx_frames_read_frm(
+            p.c_str(), words_per_frame, warning ? detail::warning_trampoline : nullptr, &ctx,
+            &out, &err);
+        if (ctx.pending) {
+            fasm_xilinx_frames_free(out);
+        }
+        detail::finish(ctx, status, err);
+        return Frames::from_raw(out);
+    }
+
+    friend bool operator==(const Frames &a, const Frames &b) noexcept {
+        return fasm_xilinx_frames_equal(a.get(), b.get());
+    }
+    friend bool operator!=(const Frames &a, const Frames &b) noexcept { return !(a == b); }
+
+    /** @brief The underlying `fasm_xilinx_frames *`, still owned by this object. */
+    const fasm_xilinx_frames *get() const noexcept { return handle_.get(); }
+
+private:
+    struct Adopt {};
+    Frames(Adopt, fasm_xilinx_frames *ptr) noexcept : handle_(ptr) {}
+
+    detail::Handle<fasm_xilinx_frames, fasm_xilinx_frames_free> handle_;
+};
+
+/** @brief The flags of the `fasm2frames` tool (`fasm_xilinx_fasm2frames_options`). */
+struct Fasm2FramesOptions {
+    bool sparse = false;
+    bool emit_pudc_b_pullup = false;
+    /** @brief A ROI `design.json`. */
+    std::optional<std::filesystem::path> roi;
+    /** @brief Receives the warnings (bits beyond the end of a frame). */
+    WarningFn warning;
+};
+
+namespace detail {
+
+template <class Call>
+inline Frames fasm2frames_with(const Fasm2FramesOptions &options, Call call) {
+    fasm_xilinx_frames *out = nullptr;
+    fasm_error *err = nullptr;
+    WarningContext ctx{&options.warning, nullptr};
+    std::string roi = options.roi ? path_string(*options.roi) : std::string();
+    fasm_xilinx_fasm2frames_options c_options{};
+    c_options.sparse = options.sparse;
+    c_options.emit_pudc_b_pullup = options.emit_pudc_b_pullup;
+    c_options.roi = options.roi ? roi.c_str() : nullptr;
+    c_options.warning = options.warning ? warning_trampoline : nullptr;
+    c_options.user = &ctx;
+    fasm_status status = call(&c_options, &out, &err);
+    if (ctx.pending) {
+        fasm_xilinx_frames_free(out);
+    }
+    finish(ctx, status, err);
+    return Frames::from_raw(out);
+}
+
+} // namespace detail
+
+/** @brief `fasm_xilinx_fasm2frames_file`: the whole `fasm2frames` flow on a FASM file. */
+inline Frames fasm2frames(const Database &db, const std::filesystem::path &fasm,
+                          const Fasm2FramesOptions &options = {}) {
+    std::string p = detail::path_string(fasm);
+    return detail::fasm2frames_with(options, [&](const fasm_xilinx_fasm2frames_options *o,
+                                                 fasm_xilinx_frames **out, fasm_error **err) {
+        return fasm_xilinx_fasm2frames_file(db.get(), p.c_str(), o, out, err);
+    });
+}
+
+/** @brief `fasm_xilinx_fasm2frames_string`: the whole `fasm2frames` flow on FASM text. */
+inline Frames fasm2frames_string(const Database &db, std::string_view text,
+                                 const Fasm2FramesOptions &options = {}) {
+    return detail::fasm2frames_with(options, [&](const fasm_xilinx_fasm2frames_options *o,
+                                                 fasm_xilinx_frames **out, fasm_error **err) {
+        return fasm_xilinx_fasm2frames_string(db.get(), text.data(), text.size(), o, out, err);
+    });
+}
+
+/**
+ * @brief The FASM -> frames assembler (`fasm_xilinx_assembler`; shares
+ * the ownership of its database; one thread at a time).
+ */
+class Assembler {
+public:
+    /** @brief `fasm_xilinx_assembler_new`. */
+    explicit Assembler(const Database &db) {
+        fasm_xilinx_assembler *out = nullptr;
+        fasm_error *err = nullptr;
+        fasm_status status = fasm_xilinx_assembler_new(db.get(), &out, &err);
+        ::fasm::detail::check_status(status, err);
+        handle_ = Handle(out);
+    }
+
+    /** @brief prjuray's (`true`) or prjxray's (`false`) semantics. */
+    void set_prjuray(bool prjuray) noexcept { fasm_xilinx_assembler_set_prjuray(get(), prjuray); }
+
+    /** @brief `fasm_xilinx_assembler_parse_file`. */
+    void parse_file(const std::filesystem::path &path) {
+        std::string p = detail::path_string(path);
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_parse_file(get(), p.c_str(), err);
+        });
+    }
+
+    /** @brief `fasm_xilinx_assembler_parse_string`. */
+    void parse_string(std::string_view text) {
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_parse_string(get(), text.data(), text.size(), err);
+        });
+    }
+
+    /** @brief `fasm_xilinx_assembler_add_file`: the lines of a parsed model. */
+    void add_file(const ::fasm::File &file) {
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_add_file(get(), file.raw(), err);
+        });
+    }
+
+    /** @brief `fasm_xilinx_assembler_add_required_features`. */
+    void add_required_features() {
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_add_required_features(get(), err);
+        });
+    }
+
+    /** @brief `fasm_xilinx_assembler_mark_roi`. */
+    void mark_roi(double x1, double x2, double y1, double y2) {
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_mark_roi(get(), x1, x2, y1, y2, err);
+        });
+    }
+
+    /** @brief `fasm_xilinx_assembler_propagate_stepdown`. */
+    void propagate_stepdown() {
+        call([&](fasm_error **err) {
+            return fasm_xilinx_assembler_propagate_stepdown(get(), err);
+        });
+    }
+
+    /** @brief The warnings so far (views valid until this object is modified). */
+    std::vector<std::string_view> warnings() const {
+        std::vector<std::string_view> result;
+        std::size_t n = fasm_xilinx_assembler_warning_count(handle_.get());
+        for (std::size_t i = 0; i < n; ++i) {
+            result.push_back(
+                ::fasm::detail::to_sv(fasm_xilinx_assembler_warning(handle_.get(), i)));
+        }
+        return result;
+    }
+
+    /** @brief `fasm_xilinx_assembler_get_frames`. */
+    Frames get_frames(bool sparse = false) const {
+        fasm_xilinx_frames *out = nullptr;
+        fasm_error *err = nullptr;
+        fasm_status status = fasm_xilinx_assembler_get_frames(handle_.get(), sparse, &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return Frames::from_raw(out);
+    }
+
+    /** @brief The underlying `fasm_xilinx_assembler *`, still owned by this object. */
+    fasm_xilinx_assembler *get() noexcept { return handle_.get(); }
+
+private:
+    using Handle = detail::Handle<fasm_xilinx_assembler, fasm_xilinx_assembler_free>;
+
+    template <class F>
+    static void call(F f) {
+        fasm_error *err = nullptr;
+        fasm_status status = f(&err);
+        ::fasm::detail::check_status(status, err);
+    }
+
+    Handle handle_;
+};
+
+/** @brief The frame tree and IDCODE a bitstream is written for (`fasm_xilinx_part`). */
+class Part {
+public:
+    /** @brief `fasm_xilinx_part_from_database`. */
+    static Part from_database(const Database &db) {
+        fasm_xilinx_part *out = nullptr;
+        fasm_error *err = nullptr;
+        fasm_status status = fasm_xilinx_part_from_database(db.get(), &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return Part(out);
+    }
+
+    /** @brief `fasm_xilinx_part_read_yaml` (an untagged file is read as `architecture`). */
+    static Part read_yaml(const std::filesystem::path &path,
+                          Architecture architecture = Architecture::Series7) {
+        fasm_xilinx_part *out = nullptr;
+        fasm_error *err = nullptr;
+        std::string p = detail::path_string(path);
+        fasm_status status = fasm_xilinx_part_read_yaml(
+            p.c_str(), static_cast<std::int32_t>(architecture), &out, &err);
+        ::fasm::detail::check_status(status, err);
+        return Part(out);
+    }
+
+    /** @brief The architecture. */
+    Architecture architecture() const noexcept {
+        return static_cast<Architecture>(fasm_xilinx_part_architecture(get()));
+    }
+
+    /** @brief The underlying `fasm_xilinx_part *`, still owned by this object. */
+    const fasm_xilinx_part *get() const noexcept { return handle_.get(); }
+
+private:
+    explicit Part(fasm_xilinx_part *ptr) noexcept : handle_(ptr) {}
+
+    detail::Handle<fasm_xilinx_part, fasm_xilinx_part_free> handle_;
+};
+
+/** @brief The options of the bitstream writer (`fasm_xilinx_bitstream_options`). */
+struct BitstreamOptions {
+    BitstreamFormat format = BitstreamFormat::Default;
+    /** @brief Header part name (default: the database's part). */
+    std::optional<std::string> part_name;
+    /** @brief Header design name (`xc7frames2bit` writes its `--frm_file`). */
+    std::optional<std::string> design_name;
+    /** @brief Generator (default `xc7frames2bit`). */
+    std::optional<std::string> generator;
+    /** @brief Header date and time (default `$SOURCE_DATE_EPOCH`, else now). */
+    std::optional<std::int64_t> source_date_epoch;
+};
+
+namespace detail {
+
+inline fasm_xilinx_bitstream_options to_c(const BitstreamOptions &o) {
+    fasm_xilinx_bitstream_options c{};
+    c.format = static_cast<std::int32_t>(o.format);
+    c.part_name = o.part_name ? o.part_name->c_str() : nullptr;
+    c.design_name = o.design_name ? o.design_name->c_str() : nullptr;
+    c.generator = o.generator ? o.generator->c_str() : nullptr;
+    c.has_source_date_epoch = o.source_date_epoch.has_value();
+    c.source_date_epoch = o.source_date_epoch.value_or(0);
+    return c;
+}
+
+} // namespace detail
+
+/** @brief `fasm_xilinx_bitstream_write`: the `.bit` file for `frames`. */
+inline std::vector<std::uint8_t> write_bitstream(const Part &part, const Frames &frames,
+                                                 const BitstreamOptions &options = {}) {
+    fasm_bytes *out = nullptr;
+    fasm_error *err = nullptr;
+    fasm_xilinx_bitstream_options c = detail::to_c(options);
+    fasm_status status = fasm_xilinx_bitstream_write(part.get(), frames.get(), &c, &out, &err);
+    ::fasm::detail::check_status(status, err);
+    const std::uint8_t *data = fasm_bytes_data(out);
+    std::size_t len = fasm_bytes_len(out);
+    std::vector<std::uint8_t> result(data, data + len);
+    fasm_bytes_free(out);
+    return result;
+}
+
+/** @brief `fasm_xilinx_bitstream_write_file`. */
+inline void write_bitstream_file(const Part &part, const Frames &frames,
+                                 const std::filesystem::path &path,
+                                 const BitstreamOptions &options = {}) {
+    fasm_error *err = nullptr;
+    fasm_xilinx_bitstream_options c = detail::to_c(options);
+    std::string p = detail::path_string(path);
+    fasm_status status =
+        fasm_xilinx_bitstream_write_file(part.get(), frames.get(), &c, p.c_str(), &err);
+    ::fasm::detail::check_status(status, err);
+}
+
+/** @brief `fasm_xilinx_bitstream_read`: the frames of a bitstream. */
+inline Frames read_bitstream(const Part &part, const std::vector<std::uint8_t> &data,
+                             BitstreamFormat format = BitstreamFormat::Default,
+                             bool clear_ecc = true, bool skip_zero = false) {
+    fasm_xilinx_frames *out = nullptr;
+    fasm_error *err = nullptr;
+    fasm_status status = fasm_xilinx_bitstream_read(part.get(), data.data(), data.size(),
+                                                    static_cast<std::int32_t>(format), clear_ecc,
+                                                    skip_zero, &out, &err);
+    ::fasm::detail::check_status(status, err);
+    return Frames::from_raw(out);
+}
+
+/** @brief `fasm_xilinx_bitstream_read_file`. */
+inline Frames read_bitstream_file(const Part &part, const std::filesystem::path &path,
+                                  BitstreamFormat format = BitstreamFormat::Default,
+                                  bool clear_ecc = true, bool skip_zero = false) {
+    fasm_xilinx_frames *out = nullptr;
+    fasm_error *err = nullptr;
+    std::string p = detail::path_string(path);
+    fasm_status status =
+        fasm_xilinx_bitstream_read_file(part.get(), p.c_str(), static_cast<std::int32_t>(format),
+                                        clear_ecc, skip_zero, &out, &err);
+    ::fasm::detail::check_status(status, err);
+    return Frames::from_raw(out);
+}
+
+} // namespace fasm::xilinx
 
 #endif // FASM_HPP_INCLUDED

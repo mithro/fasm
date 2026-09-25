@@ -17,7 +17,8 @@
 # C and C++ test programs of the fasm C API and C++ wrapper (rust/fasm-capi,
 # include/fasm/fasm.h, include/fasm/fasm.hpp).
 #
-# Builds tests/c/test_capi.c and tests/cpp/test_capi.cpp twice each: linked
+# Builds tests/c/test_capi.c and tests/cpp/test_capi.cpp (and the Xilinx
+# tests tests/c/test_xilinx.c and tests/cpp/test_xilinx.cpp) twice each: linked
 # against the shared library (test_capi_shared / test_capi_cpp_shared) and
 # against the static library (test_capi_static / test_capi_cpp_static), both
 # taken from the Cargo target directory, which must have been built first
@@ -104,15 +105,46 @@ foreach(variant shared static)
     target_link_libraries(${exe} PRIVATE fasm_capi_${variant})
 endforeach()
 
+# The Xilinx functions (fasm_xilinx_*, fasm::xilinx): tests/c/test_xilinx.c
+# and tests/cpp/test_xilinx.cpp, which also compare their .frm/.bit output
+# with the Rust command line tools of the same Cargo profile directory
+# (`cargo build -p fasm-cli`; skipped when they are not built), run in a
+# work directory of their own under the build directory.
+foreach(variant shared static)
+    set(exe "test_xilinx_${variant}")
+    add_executable(${exe} test_xilinx.c)
+    set_target_properties(${exe} PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        # system() is POSIX: -std=c99 alone hides nothing it needs.
+        target_compile_options(${exe} PRIVATE -Wall -Wextra -Werror -std=c99)
+    endif()
+    target_link_libraries(${exe} PRIVATE fasm_capi_${variant})
+
+    set(exe "test_xilinx_cpp_${variant}")
+    add_executable(${exe} ../cpp/test_xilinx.cpp)
+    set_target_properties(${exe} PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${exe} PRIVATE -Wall -Wextra -Wpedantic -Werror -std=c++17)
+    endif()
+    target_link_libraries(${exe} PRIVATE fasm_capi_${variant})
+endforeach()
+
 set(FASM_TEST_EXES test_capi_shared test_capi_static test_capi_cpp_shared test_capi_cpp_static)
+set(FASM_XILINX_TEST_EXES
+    test_xilinx_shared test_xilinx_static test_xilinx_cpp_shared test_xilinx_cpp_static)
 
 enable_testing()
 foreach(exe ${FASM_TEST_EXES})
     add_test(NAME capi_${exe} COMMAND ${exe} "${FASM_REPO_ROOT}")
 endforeach()
+foreach(exe ${FASM_XILINX_TEST_EXES})
+    set(work "${CMAKE_CURRENT_BINARY_DIR}/work-${exe}")
+    file(MAKE_DIRECTORY "${work}")
+    add_test(NAME capi_${exe} COMMAND ${exe} "${FASM_REPO_ROOT}" "${FASM_LIB_DIR}" "${work}")
+endforeach()
 if(WIN32)
     # There is no RPATH on Windows: find the DLL through PATH.
-    foreach(exe test_capi_shared test_capi_cpp_shared)
+    foreach(exe test_capi_shared test_capi_cpp_shared test_xilinx_shared test_xilinx_cpp_shared)
         set_tests_properties(capi_${exe} PROPERTIES ENVIRONMENT "PATH=${FASM_LIB_DIR};$ENV{PATH}")
     endforeach()
 endif()
@@ -132,7 +164,23 @@ if(FASM_VALGRIND AND VALGRIND_EXECUTABLE)
                 --show-leak-kinds=definite,indirect,possible
                 --errors-for-leak-kinds=definite,indirect,possible
                 --track-origins=yes
+                "--suppressions=${CMAKE_CURRENT_SOURCE_DIR}/valgrind.supp"
                 $<TARGET_FILE:${exe}> "${FASM_REPO_ROOT}")
+    endforeach()
+    # The command line tools the Xilinx tests run are not checked (only
+    # the test program: --trace-children is off).
+    foreach(exe ${FASM_XILINX_TEST_EXES})
+        set(work "${CMAKE_CURRENT_BINARY_DIR}/work-${exe}-valgrind")
+        file(MAKE_DIRECTORY "${work}")
+        add_test(NAME capi_${exe}_valgrind
+            COMMAND "${VALGRIND_EXECUTABLE}"
+                --error-exitcode=1
+                --leak-check=full
+                --show-leak-kinds=definite,indirect,possible
+                --errors-for-leak-kinds=definite,indirect,possible
+                --track-origins=yes
+                "--suppressions=${CMAKE_CURRENT_SOURCE_DIR}/valgrind.supp"
+                $<TARGET_FILE:${exe}> "${FASM_REPO_ROOT}" "${FASM_LIB_DIR}" "${work}")
     endforeach()
 elseif(FASM_VALGRIND)
     message(STATUS "valgrind not found: the valgrind tests are skipped")

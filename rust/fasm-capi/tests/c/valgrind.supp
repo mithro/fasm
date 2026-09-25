@@ -1,0 +1,19 @@
+# Copyright 2017-2022 F4PGA Authors
+# SPDX-License-Identifier: Apache-2.0
+#
+# valgrind suppressions of the C API tests (CMakeLists.txt).
+#
+# The Rust standard library allocates the `Thread` handle of the calling
+# (C) thread the first time it is asked for it (`std::thread::current`,
+# here by the scoped threads the database cache builder uses) and keeps
+# it in thread local storage through a pointer to the inside of its Arc
+# allocation, which valgrind reports as "possibly lost" at exit. It is
+# one small block per thread, owned by the standard library, not a leak
+# of the C API.
+{
+   rust-std-current-thread-handle
+   Memcheck:Leak
+   match-leak-kinds: possible
+   ...
+   fun:*init_current*
+}

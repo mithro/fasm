@@ -82,6 +82,7 @@ Status codes (`fasm_status`, values fixed):
 | `FASM_ERR_UTF8` (4) | text that must be UTF-8 is not: an argument, or a comment/annotation value in parsed text (`ParseErrorKind::InvalidUtf8`, which still has a position) |
 | `FASM_ERR_PANIC` (5) | a Rust panic was caught at the boundary (a bug) |
 | `FASM_ERR_OUTPUT` (6) | formatting or merging failed (`OutputError`; for example a non canonical feature with `check_if_canonical`, or conflicting bits when merging) |
+| `FASM_ERR_DB` (7) to `FASM_ERR_FRM` (12) | errors of the `fasm_xilinx_*` functions (T5.10, see "Xilinx" below) |
 
 `FASM_ERR_OUTPUT` is an addition to the codes listed in the task brief:
 `OutputError`s are neither argument errors nor parse errors, and a caller
@@ -223,7 +224,12 @@ The C test runs under valgrind (`--leak-check=full
 The global feature name interner (`fasm::idstring::GLOBAL`) never frees
 its tables by design (interned names are `'static`); they stay reachable
 from the static, so valgrind classifies them as "still reachable", which
-is not counted as an error. No suppression file is needed. Everything the
+is not counted as an error. One suppression is needed since the Xilinx
+functions (T5.10), in `tests/c/valgrind.supp`: the Rust standard
+library's handle of the calling thread (`std::thread::current`, first
+needed by the scoped threads of the database cache builder) is kept in
+thread local storage through an interior pointer, which valgrind reports
+as "possibly lost". Everything the
 C API allocates for the caller is freed by the matching `*_free`, and the
 test frees everything, so any "definitely/indirectly/possibly lost" block
 fails the test (checked by removing a `fasm_file_free` call).
@@ -520,3 +526,96 @@ g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
 ldd example_static   # no libfasm_capi.so
 ./example_static
 ```
+
+## Xilinx (`fasm_xilinx_*`, T5.10)
+
+`rust/fasm-capi/src/xilinx/` exposes the `fasm-xilinx` crate: the same
+rules as above (opaque handles, owned objects freed with their `*_free`,
+which accepts `NULL`; every fallible function returns a `fasm_status`,
+takes a last `fasm_error **err` and stores its results in `out`
+parameters, set to `NULL` on failure; `catch_unwind` at every entry
+point; `NULL` accepted everywhere). The functions are appended to
+`include/fasm/fasm.h` (the ABI grows at the end, see "ABI stability").
+
+| Area | Functions |
+|---|---|
+| Errors | `fasm_error_kind`; status codes `FASM_ERR_DB` (7), `FASM_ERR_LOOKUP` (8), `FASM_ERR_INCONSISTENT_BITS` (9), `FASM_ERR_ASSEMBLER` (10), `FASM_ERR_BITSTREAM` (11), `FASM_ERR_FRM` (12) |
+| Databases | `fasm_xilinx_database_open`, `_open_cached`, `_free`, `_architecture`, `_words_per_frame`, `_part`, `_lookup` (`fasm_xilinx_feature_info`, `fasm_xilinx_bit`) |
+| Assembler | `fasm_xilinx_assembler_new`, `_free`, `_set_prjuray`, `_parse_file`, `_parse_string`, `_add_file` (a `fasm_file` from the core API), `_add_required_features`, `_mark_roi`, `_propagate_stepdown`, `_warning_count`, `_warning`, `_get_frames` |
+| Whole flow | `fasm_xilinx_fasm2frames_file`, `fasm_xilinx_fasm2frames_string` (`fasm_xilinx_fasm2frames_options`: sparse, ROI, PUDC_B, a warning callback) |
+| Frames | `fasm_xilinx_frames_new`, `_free`, `_count`, `_words_per_frame`, `_address`, `_words`, `_find`, `_set`, `_equal`, `_to_frm`, `_write_frm`, `_read_frm`, `_parse_frm` |
+| Bitstreams | `fasm_xilinx_part_from_database`, `fasm_xilinx_part_read_yaml`, `_part_free`, `_part_architecture`; `fasm_xilinx_bitstream_write`, `_write_file`, `_read`, `_read_file` (`fasm_xilinx_bitstream_options`, `fasm_xilinx_bitstream_format`); the owned byte buffer `fasm_bytes` (`fasm_bytes_data`, `_len`, `_free`) |
+
+Design choices:
+
+* **Errors.** The messages are those of the command line tools, and
+  `fasm_error_kind` names the exception of the reference Python tools
+  (`prjxray.fasm_assembler.FasmLookupError`, `KeyError`,
+  `FileNotFoundError`, `fasm_xilinx.DbError`, ...), so that
+  `kind + ": " + message` is exactly the line `fasm2frames` prints (the
+  C test checks it against the tool). For errors of the core functions
+  `fasm_error_kind` is `fasm_status_string` of the status. The new status
+  codes follow the Python exceptions of `fasm.xilinx`; syntax errors are
+  `FASM_ERR_PARSE` with their position, unreadable files `FASM_ERR_IO`.
+* **Sharing.** A `fasm_xilinx_database` is immutable (an
+  `Arc<Database>`); assemblers and parts made from it hold a reference,
+  so the database may be freed first. The assembler is
+  `FasmAssembler::new_shared` (a `FasmAssembler<'static>`), which is why
+  `fasm-xilinx` gained that constructor instead of the binding keeping a
+  self-referential struct.
+* **Enumerations in structs and arguments are `int32_t`**
+  (`fasm_xilinx_bitstream_options.format`, the `format` and
+  `architecture` arguments), like `fasm_set_feature_spec.value_format`:
+  an out of range value is `FASM_ERR_INVALID_ARG` instead of undefined
+  behaviour. `fasm_xilinx_bitstream_format` is exported through
+  `[export] include` in `cbindgen.toml` since no signature names it.
+* **Bitstreams are bytes**, not text: `fasm_string` is UTF-8 by contract,
+  so a separate `fasm_bytes` owns them.
+* **Header date.** Without `has_source_date_epoch`, the writer uses
+  `$SOURCE_DATE_EPOCH` when it is an integer (like `xc7frames2bit`), else
+  the current time (an invalid value is ignored silently: there is no
+  warning channel there).
+* **Warnings** (bits beyond the end of a frame, short `.frm` lines) go to
+  an optional `fasm_xilinx_warning_fn` (NUL terminated text plus its
+  length), or are kept by the assembler (`fasm_xilinx_assembler_warning*`).
+* **Thread safety.** Databases, parts and frames may be read from any
+  number of threads; an assembler, and `fasm_xilinx_frames_set`, need
+  exclusive access.
+
+### C++ (`namespace fasm::xilinx`)
+
+`include/fasm/fasm.hpp` wraps them: `Database` (`open`, `open_cached`,
+`lookup` returning a `FeatureInfo` with a `std::vector<Bit>`), `Assembler`,
+`Frames` (`operator[]` gives a `FrameView` of the address and a `Span` of
+words, `find`, `set`, `to_frm`, `write_frm`, `read_frm`, `parse_frm`,
+`==`), `fasm2frames` / `fasm2frames_string` (`Fasm2FramesOptions`),
+`Part`, `write_bitstream` (a `std::vector<uint8_t>`), `write_bitstream_file`,
+`read_bitstream`, `read_bitstream_file` (`BitstreamOptions`, `enum class
+BitstreamFormat`, `enum class Architecture`). Every handle is move only
+(`detail::Handle<T, Free>`); failures throw `fasm::Error`, which gained
+`kind()` (`fasm_error_kind`) and the new `Status` values. Warning
+callbacks are `std::function<void(std::string_view)>` behind a `noexcept`
+trampoline that stores the first exception and rethrows it after the C
+call, as for the core callbacks. `Frames::from_raw` adopts a C handle
+(a constructor from a pointer would make `Frames(0)` ambiguous with the
+`words_per_frame` constructor).
+
+### Tests
+
+`rust/fasm-capi/tests/c/test_xilinx.c` and `tests/cpp/test_xilinx.cpp`
+(built against the shared and the static library and run under valgrind
+by `make capi-test`, like the core tests) take the repository root, the
+directory of the command line tools (the same Cargo profile directory;
+`make capi-test` builds `fasm-cli` too) and a work directory. They
+assemble the seven f4pga-xc-fasm fixtures on the mini database (dense and
+sparse; `fasm2frames_file` vs the assembler step by step, from a file and
+from a parsed `fasm_file`; `.frm` write/read/parse round trips) and a
+design on each synthetic database (Series7, UltraScale+), write their
+bitstreams (from the database's part and from `part.yaml`), read them
+back, and compare every `.frm` and `.bit` byte for byte with
+`fasm2frames`, `xc7frames2bit` / `xcframes2bit` and `bitread` /
+`uray-bitread --frm_out`, and the error lines with `fasm2frames`' stderr;
+with `FASM_DB_CACHE` set, the C test also runs counter_test on
+xc7a35tcsg324-1 against `xcfasm`. Without the tools the comparisons are
+skipped (with a message). `src/tests.rs` checks the Rust side (against the
+`fasm-xilinx` crate) and the layout of the new public structs.

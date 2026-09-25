@@ -18,6 +18,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 fasm = { path = "../fasm" }
+# The `fasm_xilinx_*` functions (src/xilinx/).
+fasm-xilinx = { path = "../fasm-xilinx" }
 
 [lints]
 workspace = true

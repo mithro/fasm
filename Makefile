@@ -288,11 +288,12 @@ capi-header-check:
 
 .PHONY: capi-header-check
 
-# Build libfasm_capi, build the C test program against the shared and the
-# static library with CMake, and run both (and under valgrind, when
-# installed, failing on memory errors and leaks).
+# Build libfasm_capi, build the C and C++ test programs against the shared
+# and the static library with CMake, and run them (and under valgrind, when
+# installed, failing on memory errors and leaks). The Xilinx tests compare
+# their output with the command line tools of fasm-cli, built here too.
 capi-test:
-	cargo build -p fasm-capi
+	cargo build -p fasm-capi -p fasm-cli
 	cmake -S $(TOP_DIR)/rust/fasm-capi/tests/c -B $(CAPI_BUILD_DIR) -DFASM_CARGO_PROFILE=debug -DFASM_CARGO_TARGET_DIR=$(CAPI_CARGO_TARGET_DIR)
 	cmake --build $(CAPI_BUILD_DIR)
 	cd $(CAPI_BUILD_DIR) && ctest --output-on-failure
