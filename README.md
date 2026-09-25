@@ -295,10 +295,8 @@ file for the run that produced each number):
   installed openXC7 toolchain (T7.6).
 * **VTR `genfasm`**: 447 designs produce FASM (428 generic VTR benchmarks +
   19 Xilinx designs through the f4pga flow), identical to the Python
-  oracle parser and, for the Xilinx subset, to the flow's own tools.
-  T7.4 is implemented but **still in review** and not yet merged into
-  this tree at the time of writing (see TASKS.md) — `tools/e2e/` does
-  not yet have the VTR setup/run scripts described below.
+  oracle parser and, for the Xilinx subset, to the flow's own tools
+  (T7.4, `tools/e2e/run-vtr-genfasm.sh`, DESIGN-xilinx-db.md §8.14).
 
 ## Running the test suites
 
@@ -311,8 +309,8 @@ file for the run that produced each number):
   pre-rewrite history; then `tools/difftest.py` and
   `tools/difftest-xilinx.py` compare Rust output against it over
   `tests/corpus/` (see `tests/oracle/README.md`, `tests/corpus/README.md`).
-* `tools/e2e/` sets up real toolchains (openXC7, f4pga/VPR; VTR once T7.4
-  merges, see "Verification" above) and runs `pytest tests/e2e` to
+* `tools/e2e/` sets up real toolchains (openXC7, f4pga/VPR, VTR genfasm)
+  and runs `pytest tests/e2e` to
   reproduce the Verification numbers above; see `tools/e2e/README.md`
   for prerequisites (these download multi-GB toolchains and are not run
   by default CI).

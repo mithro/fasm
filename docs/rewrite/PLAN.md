@@ -14,8 +14,7 @@ four small, deferred follow-up tasks logged from their task's review
 (not blockers): T0.4b (ANTLR oracle build flakiness), T5.3b (database
 cache follow-ups), T5.8b (`fetch-db.sh openxc7`'s bundled prjxray-db),
 T6.3b (small T6.3 review follow-ups). Phase 7 (toolchain end-to-end
-compatibility) is complete except T7.4 (VTR: implemented, `[r]` in
-review, not yet merged into this tree) and T7.5 (RapidWright, `[ ]` not
+compatibility) is complete except T7.5 (RapidWright, `[ ]` not
 started). Phase 8 (performance/docs/packaging): T8.1 and T8.2 are done,
 T8.2b (T8.2 performance follow-ups) is `[ ]` not started, T8.3 (this
 documentation pass) is `[~]` in progress, and T8.4 (packaging: crates.io

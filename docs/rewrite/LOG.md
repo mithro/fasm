@@ -920,3 +920,13 @@ what happened, branch/commit references, open issues.
   (zk2u/fasm); publishing needs a rename or another decision by the
   user (documented in RELEASING.md). cargo audit: 0 vulnerabilities.
   Independent review (Opus) started.
+* T7.4 done: review fixes (per design source and licence sections, VTR
+  benchmark clause quoted; genfasm value form and repeat counts
+  corrected; all_three_reject checks the exact Rust position and
+  message and the loader rejects missing files; ensure_vtr only clones
+  into the default or an empty directory and refuses anything else;
+  optional cleanups). Merged with --no-ff (no conflicts); README/PLAN
+  "pending T7.4" notes cleared. Verification of the merged tree follows
+  in the background (difftest.py, tests/cli, tests/e2e, xilinx-difftest,
+  uray-difftest). Worktree removed. 447 VTR genfasm designs in the
+  corpus/index.
