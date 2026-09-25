@@ -30,11 +30,16 @@
 //! prints only its `Error: ...` line (on stdout, exit code 0), like the
 //! original. The FASM text is rendered while it is parsed (in one pass,
 //! without keeping the parsed lines) into an output buffer that is written
-//! to stdout once the parse has succeeded.
+//! to stdout once the parse has succeeded. With `--canonical`, the parse
+//! collects 8 bytes per canonical line instead (see `tool/canonical.rs`); once
+//! it has succeeded nothing but writing to stdout can fail, and the sorted
+//! lines are formatted and written in blocks of 64 KiB instead of being
+//! built as one string first.
+
+mod canonical;
 
 use std::fmt::Write as _;
 use std::io::{self, Write};
-use std::ops::Range;
 
 use fasm::output::{try_canonical_features, write_set_feature};
 use fasm::parser::{parse_lines, ParseError, ParseErrorKind};
@@ -77,16 +82,17 @@ pub fn run(
         }
     };
 
-    let output = match process(&namespace) {
-        Ok(output) => output,
+    let written = match process(&namespace) {
+        Ok(Rendered::Text(text)) => stdout.write_all(text.as_bytes()),
+        Ok(Rendered::Canonical(lines)) => lines.write_to(stdout),
         Err(message) => {
             let mut line = b"Error: ".to_vec();
             line.extend_from_slice(&message);
             line.push(b'\n');
-            line
+            stdout.write_all(&line)
         }
     };
-    match stdout.write_all(&output).and_then(|()| stdout.flush()) {
+    match written.and_then(|()| stdout.flush()) {
         Ok(()) => 0,
         // Python dies of a `BrokenPipeError` (exit code 1, with a
         // traceback on stderr) when the reader of its stdout has gone
@@ -99,9 +105,17 @@ pub fn run(
     }
 }
 
-/// The body of the `try` block: the complete stdout output on success, or
-/// the `str(e)` of the error (as bytes, encoded like Python's stdout).
-fn process(namespace: &argparse::Namespace) -> Result<Vec<u8>, Vec<u8>> {
+/// The stdout output of a successful run.
+enum Rendered {
+    /// The complete output.
+    Text(String),
+    /// The `--canonical` lines, sorted, to be formatted while writing.
+    Canonical(canonical::Sorted),
+}
+
+/// The body of the `try` block: the stdout output on success, or the
+/// `str(e)` of the error (as bytes, encoded like Python's stdout).
+fn process(namespace: &argparse::Namespace) -> Result<Rendered, Vec<u8>> {
     if let Some(parser) = &namespace.parser {
         if !PARSER_NAMES.iter().any(|name| parser.eq_str(name)) {
             let mut message = b"Parser '".to_vec();
@@ -121,9 +135,7 @@ fn process(namespace: &argparse::Namespace) -> Result<Vec<u8>, Vec<u8>> {
         );
         error.to_string().into_bytes()
     })?;
-    render(&data, namespace.canonical)
-        .map(String::into_bytes)
-        .map_err(String::into_bytes)
+    render_output(&data, namespace.canonical).map_err(String::into_bytes)
 }
 
 /// Renders the FASM file `data` like
@@ -136,10 +148,24 @@ fn process(namespace: &argparse::Namespace) -> Result<Vec<u8>, Vec<u8>> {
 /// [`ParseError`] to report (see [`error_to_report`]), or an
 /// [`OutputError`] (which the parser's output never triggers).
 pub fn render(data: &[u8], canonical: bool) -> Result<String, String> {
+    match render_output(data, canonical)? {
+        Rendered::Text(text) => Ok(text),
+        Rendered::Canonical(lines) => {
+            let mut out = Vec::new();
+            lines
+                .write_to(&mut out)
+                .expect("writing to a Vec does not fail");
+            Ok(String::from_utf8(out).expect("the canonical lines are UTF-8"))
+        }
+    }
+}
+
+/// [`render`], with the `--canonical` lines not formatted yet.
+fn render_output(data: &[u8], canonical: bool) -> Result<Rendered, String> {
     let result = if canonical {
-        render_canonical(data)
+        render_canonical(data).map(Rendered::Canonical)
     } else {
-        render_lines(data)
+        render_lines(data).map(Rendered::Text)
     };
     result.map_err(|failure| match failure {
         Failure::Parse(error) => error_to_report(data, error).to_string(),
@@ -214,34 +240,24 @@ fn write_line(out: &mut String, line: &FasmLine) -> Result<(), OutputError> {
 }
 
 /// `fasm_tuple_to_string(lines, canonical=True)` + `print`'s newline: the
-/// sorted, deduplicated canonical feature lines.
-fn render_canonical(data: &[u8]) -> Result<String, Failure> {
-    // All canonical lines, back to back, and the range of each.
-    let mut arena = String::new();
-    let mut ranges: Vec<Range<usize>> = Vec::new();
+/// sorted, deduplicated canonical feature lines (formatted by
+/// [`canonical::Sorted::write_to`]).
+///
+/// The canonical features of the parser's output are always valid
+/// canonical lines (`write_set_feature(.., true)` accepts them, and
+/// writes `FEATURE` or `FEATURE[address]`, which is what `write_to`
+/// writes), so the only errors are the parse errors and those of
+/// `try_canonical_features`, in file order, like before.
+fn render_canonical(data: &[u8]) -> Result<canonical::Sorted, Failure> {
+    let mut lines = canonical::CanonicalLines::new();
     for line in parse_lines(data) {
         if let Some(set_feature) = &line?.set_feature {
             for feature in try_canonical_features(set_feature)? {
-                let start = arena.len();
-                write_set_feature(&mut arena, &feature, true)?;
-                ranges.push(start..arena.len());
+                lines.push(&feature);
             }
         }
     }
-    // Python's `sorted(set(lines))` compares code points, which is the
-    // byte order of UTF-8.
-    ranges.sort_unstable_by(|a, b| arena[a.clone()].cmp(&arena[b.clone()]));
-    ranges.dedup_by(|a, b| arena[a.clone()] == arena[b.clone()]);
-    let mut out = String::with_capacity(arena.len() + ranges.len() + 2);
-    for range in &ranges {
-        out.push_str(&arena[range.clone()]);
-        out.push('\n');
-    }
-    if ranges.is_empty() {
-        out.push('\n');
-    }
-    out.push('\n');
-    Ok(out)
+    Ok(lines.finish())
 }
 
 /// `true` for the errors the original ANTLR based parser only detects

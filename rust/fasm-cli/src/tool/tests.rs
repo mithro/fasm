@@ -305,3 +305,62 @@ fn broken_pipe_exits_with_1_quietly() {
     let args = [PyStr::from_str("-h")];
     assert_eq!(run(&args, || 80, &mut BrokenPipe, &mut stderr), 0);
 }
+
+/// The `--canonical` output the previous way: every canonical line
+/// formatted with `write_set_feature`, then `sorted(set(lines))`.
+fn canonical_reference(data: &[u8]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    for line in parse_lines(data) {
+        if let Some(set_feature) = &line.unwrap().set_feature {
+            for feature in try_canonical_features(set_feature).unwrap() {
+                let mut text = String::new();
+                write_set_feature(&mut text, &feature, true).unwrap();
+                lines.push(text);
+            }
+        }
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    let mut out = lines.join("\n");
+    out.push_str("\n\n");
+    out
+}
+
+#[test]
+fn canonical_order_matches_sorted_lines() {
+    // Feature names that are prefixes of each other, continued by bytes
+    // below and above '[' ('.', digits, capitals / '_', lower case), with
+    // and without addresses, addresses whose text order differs from their
+    // numeric order, and duplicates.
+    let names = [
+        "A", "A.B", "A0", "AZ", "A_", "Aa", "A.B.C", "A.B0", "A.B_c", "B", "A.Bz", "Ab.C",
+    ];
+    let mut data = String::new();
+    for (i, name) in names.iter().enumerate() {
+        data.push_str(&format!("{name}\n{name}[0]\n{name}[{}]\n", i + 1));
+        data.push_str(&format!("{name}[12:0] = 13'b1000100000011\n"));
+        data.push_str(&format!("{name}[101:99] = 3'b101\n{name}[2]\n"));
+        data.push_str(&format!("{name}[1000:990] = 11'h7ff\n"));
+    }
+    data.push_str("W[4294967295:4294967290] = 6'b100101\nW[31:0] = 32'hffffffff\n");
+    data.push_str("A = 0\nZ.Z[3] = 0\n# comment\n{ a = \"b\" }\n");
+    let expected = canonical_reference(data.as_bytes());
+    assert_eq!(render_ok(data.as_bytes(), true), expected);
+    // The input order does not matter.
+    let reversed: String = data.lines().rev().map(|l| format!("{l}\n")).collect();
+    assert_eq!(render_ok(reversed.as_bytes(), true), expected);
+    assert_eq!(render_ok(MANY, true), canonical_reference(MANY));
+}
+
+#[test]
+fn canonical_output_is_written_by_run() {
+    let data = b"B[7:0] = 8'hA5\nA.X[300:0] = 301'h1\nA\n";
+    let file = TempFile::new("stream.fasm", data);
+    let out = run_tool(&["--canonical", file.path()]);
+    assert_eq!(out.code, 0);
+    assert!(out.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        canonical_reference(data)
+    );
+}
