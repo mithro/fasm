@@ -170,7 +170,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       bitstream and compare against the reference flow (after T7.1, T5.9).
 - [x] T7.3 f4pga-examples: set up the f4pga (VPR based) flow, build all xc7
       examples, collect FASM, compare frames/bitstreams (after T7.1, T5.9).
-- [ ] T7.4 VTR: build VTR `genfasm`, run the VTR regression designs that can
+- [~] T7.4 VTR: build VTR `genfasm`, run the VTR regression designs that can
       produce FASM (f4pga arch defs + VTR `utils/fasm/test`), add to corpus
       (after T1.5).
 - [ ] T7.5 RapidWright: determine FASM/bitstream export capability, generate

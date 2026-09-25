@@ -817,3 +817,5 @@ what happened, branch/commit references, open issues.
   2400 passed / 15 skipped. Worktree removed. 21 nextpnr-xilinx /
   openXC7 designs in the corpus. Disk pressure: stale review scratch and
   the debug target removed.
+* T7.4 (VTR genfasm designs via the vtr-optimized binaries in the f4pga
+  conda env and the upstream VTR checkout) started (Opus); T8.2 running.
