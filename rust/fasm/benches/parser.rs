@@ -16,9 +16,10 @@
 
 //! Throughput benchmark of `fasm::parser` (`cargo bench -p fasm --bench parser`).
 //!
-//! Generates several synthetic FASM files of feature lines (default 100 MB
-//! each, set `FASM_PARSER_BENCH_MB` to change it) shaped like real Xilinx
-//! 7 series output over a grid of tiles:
+//! Generates five synthetic FASM files of feature lines (default 100 MB
+//! each -- 500 MB total for a default run; set `FASM_PARSER_BENCH_MB` to
+//! change the per-class size) shaped like real Xilinx 7 series output over
+//! a grid of tiles:
 //!
 //! * `mixed`: routing pips, single bit features and multi bit LUT/BRAM
 //!   `INIT` values;
@@ -26,15 +27,20 @@
 //!   without values, the worst case per byte);
 //! * `lut`: mostly wide `INIT[...]` value assignments (64 bit LUT and
 //!   256 bit BRAM `INIT`s), the worst case for value parsing;
-//! * `annotated`: every feature line followed by a `{ .. }` annotation and
-//!   about a third of lines are `#` comments or blank, exercising the
-//!   annotation/comment scanning path;
+//! * `annotated`: one third feature lines followed by a `{ .. }`
+//!   annotation, one third `#` comments and one third blank lines,
+//!   exercising the annotation/comment scanning path;
 //! * `stress`: a synthetic "every feature" shape in the spirit of
 //!   `tools/gen-corpus.py` (many distinct short feature name components
-//!   combined exhaustively per tile, multi bit values, `!`-cleared bits
-//!   and duplicate/overwritten features), self contained here (no
-//!   database or Python needed) so it stays a deterministic `cargo bench`
-//!   input.
+//!   cycled per tile, a multi-bit value on every fifth line and a
+//!   duplicate/overwritten feature on every seventh), self contained here
+//!   (no database or Python needed) so it stays a deterministic `cargo
+//!   bench` input. Unlike `tools/gen-corpus.py`'s database-driven
+//!   generator, this does not combine components exhaustively per tile
+//!   and has no `!`-cleared bits to generate: `!` is a segbits *database*
+//!   convention (prjxray-db's "must be 0" marker, see
+//!   `docs/rewrite/DESIGN-xilinx-db.md`), not FASM text syntax, so it has
+//!   no place in a plain-text parser benchmark.
 //!
 //! Alternatively set `FASM_PARSER_BENCH_FILE` to parse an existing file.
 //!
@@ -144,9 +150,10 @@ fn generate_lut(target_bytes: usize) -> String {
     out
 }
 
-/// Builds about `target_bytes` of feature lines each followed by an
-/// annotation, with roughly a third of the lines comments or blank, to
-/// exercise the `{ .. }` / `#` scanning path rather than value parsing.
+/// Builds about `target_bytes` of lines split one third each between a
+/// feature line followed by an annotation, a `#` comment, and a blank
+/// line, to exercise the `{ .. }` / `#` scanning path rather than value
+/// parsing.
 fn generate_annotated(target_bytes: usize) -> String {
     let mut out = String::with_capacity(target_bytes + 256);
     let mut x = 0u32;
@@ -175,9 +182,12 @@ fn generate_annotated(target_bytes: usize) -> String {
 }
 
 /// Builds about `target_bytes` of a synthetic "every feature" stress shape:
-/// many short distinct component names combined per tile, multi bit
-/// values, `!`-cleared bits and immediately overwritten (duplicate)
-/// features, in the spirit of `tools/gen-corpus.py`'s output.
+/// many short distinct component names cycled per tile, a multi-bit value
+/// on every fifth line and an immediately overwritten (duplicate) feature
+/// on every seventh, in the spirit of `tools/gen-corpus.py`'s output (but
+/// not, unlike that generator, an exhaustive per-tile combination of
+/// components, and with no `!`-cleared bits: that is segbits database
+/// syntax, not FASM text -- see the module doc comment above).
 fn generate_stress(target_bytes: usize) -> String {
     const COMPONENTS: [&str; 12] = [
         "OPTA",

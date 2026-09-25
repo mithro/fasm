@@ -22,9 +22,12 @@ reference tools they replace (T8.1).
 stdlib only (no `pytest-benchmark`, no third party packages beyond what
 the reference venvs already have). Runs each tool as a subprocess, `N`
 times (`--repeats`, default 5), and reports wall clock time (median and
-min) and peak resident set size (`os.wait4`'s `ru_maxrss`, which is a
-per-child measurement -- no `/usr/bin/time` dependency, and it is not
-installed on the container this was developed on).
+min, over the runs that exited 0 -- a failed run's time is not counted,
+see `run_timed()`) and peak resident set size (`os.wait4`'s `ru_maxrss`,
+a per-child measurement, no `/usr/bin/time` dependency -- it is not
+installed on the container this was developed on -- but **not** a clean
+per-program number either: see `measure_rss_floor()`'s docstring for why,
+and the `(floor)` markers in the Markdown report).
 
 Suites (each independently skippable with `--skip NAME`, all run by
 default; a suite that needs a tool it cannot find prints why and is
@@ -34,14 +37,20 @@ skipped, not a hard failure):
                  and textX parsers (`tests/oracle/fasm-oracle`), on small
                  (`counter_test`), medium (`picosoc_demo`), large
                  (`linux_litex_demo`) corpus files and a generated 1M line
-                 synthetic file.
-* `xilinx7`   -- `fasm2frames`/`xcfasm`/`xc7frames2bit`/`bitread` vs.
-                 `xc_fasm`/prjxray (Python and C++), on the same three
-                 designs plus a `tools/gen-xilinx-corpus.py` "every
-                 feature" sample for xc7a35t (and xc7a200t if
-                 `--full-corpus`), with and without `FASM_XDB_CACHE`.
-* `ultrascale`-- `uray-fasm2frames`/`xcframes2bit`/`uray-bitread` vs.
-                 prjuray, on xczu3eg.
+                 synthetic file (textX on that last one is bounded to a
+                 few minutes and reported as "timed out" rather than run
+                 to completion -- see `suite_parser()`).
+* `xilinx7`   -- `fasm2frames`/`xcfasm` vs. `xc_fasm` (Python), on the
+                 same three designs plus each pass file of a
+                 `tools/gen-xilinx-corpus.py` "every feature" sample for
+                 xc7a35t (and xc7a200t if `--full-corpus`; see
+                 `run_every_feature_corpus()` for why each pass file is
+                 timed separately rather than concatenated), with and
+                 without the binary database cache (`--xdb-cache-dir`,
+                 primed once, untimed, before any cached measurement --
+                 see `prime_xdb_cache()`).
+* `ultrascale`-- `uray-fasm2frames` vs. prjuray's `utils/fasm2frames.py`,
+                 on xczu3eg, same every-feature-corpus treatment.
 * `python`    -- `fasm.parse_fasm_string` / `fasm.xilinx.fasm2frames`
                  (built with maturin into a scratch venv) vs. the oracle's
                  pure Python paths.
@@ -102,6 +111,7 @@ class Measurement:
     wall_times_s: list
     peak_rss_kib: list
     returncode: int
+    returncodes: list = dataclasses.field(default_factory=list)
     timed_out: bool = False
     skipped_reason: Optional[str] = None
 
@@ -118,6 +128,17 @@ class Measurement:
             statistics.median(self.peak_rss_kib) if self.peak_rss_kib else None
         )
 
+    def any_failed(self) -> bool:
+        """True when any repeat exited non-zero (a timeout is tracked
+        separately via `timed_out` and is not "failed" in this sense)."""
+        return any(rc != 0 for rc in self.returncodes)
+
+    def first_failure_rc(self) -> Optional[int]:
+        for rc in self.returncodes:
+            if rc != 0:
+                return rc
+        return None
+
     def to_json(self) -> dict:
         return {
             "name": self.name,
@@ -130,6 +151,8 @@ class Measurement:
             "min_s": self.min_s(),
             "median_rss_kib": self.median_rss_kib(),
             "returncode": self.returncode,
+            "returncodes": self.returncodes,
+            "any_failed": self.any_failed(),
             "timed_out": self.timed_out,
             "skipped_reason": self.skipped_reason,
         }
@@ -146,21 +169,31 @@ def run_timed(
     input_bytes: Optional[bytes] = None,
 ) -> Measurement:
     """Runs `argv` `repeats` times, discarding stdout/stderr, and returns
-    wall clock time and peak RSS of each run.
+    wall clock time and peak RSS of each successful (exit code 0) run,
+    plus every run's exit code.
 
-    Peak RSS comes from `os.wait4`'s `resource.struct_rusage.ru_maxrss`,
-    which (on Linux) is the *child's own* peak RSS in KiB -- unlike
-    `resource.getrusage(RUSAGE_CHILDREN)`, this is not an aggregate across
-    every child the *parent* process has ever reaped, so it is safe to
-    call from a long running driver process. Falls back cleanly (0) on
-    platforms without `os.wait4` (e.g. Windows; not expected here).
+    Peak RSS comes from `os.wait4`'s `resource.struct_rusage.ru_maxrss`
+    (on Linux, per-child, not `resource.getrusage(RUSAGE_CHILDREN)`'s
+    aggregate across every child the parent has ever reaped -- see
+    `measure_rss_floor()` below for why it is still not a clean per-
+    program number and how this script corrects for that. Falls back
+    cleanly (0) on platforms without `os.wait4`, e.g. Windows; not
+    expected here).
+
+    A run whose exit code is non-zero still records that exit code (in
+    `returncodes`) but its wall time/RSS are *not* added to
+    `wall_times_s`/`peak_rss_kib`: a failed run's "timing" is meaningless
+    (it may have exited before doing the work being measured at all), and
+    mixing it into a median silently understates the real cost. Callers
+    that need every run to succeed (e.g. a correctness-sensitive
+    comparison) should check `Measurement.any_failed()`.
     """
     env = dict(os.environ)
     if env_overrides:
         env.update(env_overrides)
     wall_times = []
     peak_rss = []
-    returncode = 0
+    returncodes = []
     timed_out = False
     for _ in range(max(1, repeats)):
         start = time.monotonic()
@@ -206,13 +239,17 @@ def run_timed(
                 status = proc.returncode if not run_timed_out else -1
         finally:
             elapsed = time.monotonic() - start
-        wall_times.append(elapsed)
-        if rusage is not None:
-            peak_rss.append(float(rusage.ru_maxrss))
-        returncode = -1 if run_timed_out else os.waitstatus_to_exitcode(status)
         if run_timed_out:
             timed_out = True
+            returncodes.append(-1)
             break
+        rc = os.waitstatus_to_exitcode(status)
+        returncodes.append(rc)
+        if rc == 0:
+            wall_times.append(elapsed)
+            if rusage is not None:
+                peak_rss.append(float(rusage.ru_maxrss))
+    last_rc = returncodes[-1] if returncodes else (-1 if timed_out else 0)
     return Measurement(
         name=name,
         argv=[str(a) for a in argv],
@@ -220,7 +257,8 @@ def run_timed(
         env_overrides=env_overrides or {},
         wall_times_s=wall_times,
         peak_rss_kib=peak_rss,
-        returncode=returncode,
+        returncode=last_rc,
+        returncodes=returncodes,
         timed_out=timed_out,
     )
 
@@ -236,6 +274,51 @@ def skipped(name: str, argv: list, reason: str) -> Measurement:
         returncode=0,
         skipped_reason=reason,
     )
+
+
+def measure_rss_floor(repeats: int = 3) -> Measurement:
+    """Measures this driver's current `ru_maxrss` floor: `/bin/true` (a
+    minimal, near-instant program) run through the same `run_timed()`
+    every real measurement uses.
+
+    Why this is needed: `ru_maxrss` is not a clean measurement of the
+    *benchmarked program's* memory. Linux's `fork()`/`posix_spawn()`
+    briefly gives the child the parent's own pages via copy-on-write
+    before `exec()` replaces the child's address space, and on this
+    container that history leaks into the reported peak: `/bin/true`
+    alone reports about 15 MiB, but immediately after this driver
+    allocates and frees a 300 MB buffer, the same `/bin/true` call reports
+    about 322 MiB -- a number entirely explained by this driver's own
+    history, not by `/bin/true`. Shelling out to `xz` for decompression
+    (see `materialize()`) removes one source of that growth but not the
+    general problem: many small, fast measurements (`fasm` on
+    `counter_test`, an ANTLR parse) come out indistinguishable from this
+    floor and must not be read as real per-program RSS.
+
+    Call this immediately before and after a suite (or a group of
+    measurements) whose driver-side memory footprint might have grown
+    (e.g. after `materialize()` has decompressed something, after a
+    subprocess's captured stdout/stderr was read into a Python `str`), and
+    report both: `annotate_rss_floor()` uses the *later, larger* of the
+    samples given to it as the threshold below which a measurement's RSS
+    is marked `(floor)` rather than trusted as real.
+    """
+    true_bin = shutil.which("true") or "/bin/true"
+    return run_timed("(baseline) /bin/true", [true_bin], repeats=repeats)
+
+
+def rss_floor_kib(floor_samples: list) -> Optional[float]:
+    """Given the `measure_rss_floor()` measurements taken during a run
+    (callers collect these at the points noted in that function's
+    docstring), returns the largest median RSS among them: the floor
+    `write_markdown` compares every other measurement's RSS against,
+    marking one at or below it as reflecting that floor rather than the
+    benchmarked program's own memory. `None` if none were successful.
+    """
+    values = [
+        m.median_rss_kib() for m in floor_samples if m.median_rss_kib()
+    ]
+    return max(values) if values else None
 
 
 # ---------------------------------------------------------------------------
@@ -302,15 +385,18 @@ def materialize(path: Path, scratch: Path) -> Optional[Path]:
     `path.fasm` or `path.fasm.xz`), decompressing into `scratch` if
     needed. `None` if neither exists.
 
-    Decompresses with the `xz` binary (`lzma.decompress` in-process would
-    leave the (possibly tens of MB) decompressed bytes resident in this
-    driver's own heap for the rest of the run -- CPython's allocator does
-    not reliably return freed arenas to the OS -- and that inflates every
-    later `os.wait4`/`ru_maxrss` measurement of a benchmarked child: right
-    after `fork()`/`posix_spawn()`, a child's pages are the parent's via
-    copy-on-write, and the high-water mark some kernels record for that
-    briefly-shared state leaks into the child's own peak RSS accounting.
-    Keeping this driver process small avoids it).
+    Decompresses with the `xz` binary rather than `lzma.decompress`
+    in-process, so this driver's own heap does not grow just to hold a
+    (possibly tens of MB) decompressed file it otherwise has no further
+    use for. This helps keep the driver small, which is worth doing on
+    general principle -- but on its own it does **not** fix the `ru_maxrss`
+    measurement floor described in `measure_rss_floor()`'s docstring: that
+    floor tracks the driver's peak *lifetime* memory (any large allocation
+    the driver ever made, even one already freed, via the fork/vfork
+    copy-on-write sharing window before `exec()` replaces the child's
+    address space), and other things this driver does (reading a
+    `gen-xilinx-corpus.py` subprocess's captured stdout, building the
+    JSON report) can raise that floor too. See `measure_rss_floor()`.
     """
     if path.exists():
         return path
@@ -404,6 +490,43 @@ def rust_bin(cli_dir: Path, name: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
+def prime_xdb_cache(
+    cli_dir: Path, xdb_cache_dir: Path, db_root: Path, part: str
+) -> None:
+    """Runs `fasm-db-cache build` once, untimed, so a part's binary cache
+    is already built (in `xdb_cache_dir`, explicitly -- never the
+    environment/XDG default, so this run's cache state is reproducible
+    and does not depend on, or pollute, anything left over on the machine
+    from a previous run) before any *timed* "default-cache" measurement
+    reads it. Without this, whichever measurement happens to run first
+    against a fresh cache directory pays the one-time build cost itself
+    and is not comparable to the steady-state cache-hit numbers every
+    other run of the same part gets (T5.3's own numbers, and
+    `docs/rewrite/DESIGN-xilinx-db.md` §8.8, both quote fresh-cache-file
+    write time as noticeably slower than a hit). Never raises: a failed
+    priming run just means the first timed run pays the build cost
+    instead, which is still correct, only less clean; callers should
+    still expect the "default-cache" numbers of a part whose priming
+    failed to plausibly include a one-off build cost.
+    """
+    fasm_db_cache = rust_bin(cli_dir, "fasm-db-cache")
+    if fasm_db_cache is None:
+        return
+    subprocess.run(
+        [
+            str(fasm_db_cache),
+            "--cache-dir",
+            str(xdb_cache_dir),
+            "build",
+            str(db_root),
+            part,
+        ],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+
+
 def suite_parser(results: list, args, scratch: Path, cli_dir: Path):
     rust_fasm = rust_bin(cli_dir, "fasm")
     oracle = ORACLE_DIR / "fasm-oracle"
@@ -474,12 +597,22 @@ def suite_parser(results: list, args, scratch: Path, cli_dir: Path):
                     if (args.quick or "large" in label or "synthetic" in label)
                     else min(repeats, 3)
                 )
+                # textX on the 1M-line synthetic file grows super-linearly
+                # (its RSS was still climbing well past 2 GiB after
+                # several minutes when this was first tried -- see
+                # docs/rewrite/BENCHMARKS.md); bound it to a few minutes
+                # instead of the full --reference-timeout budget so a run
+                # reliably finishes with a clearly labeled "timed out" row
+                # (write_markdown) rather than tying up the whole suite.
+                timeout_s = args.reference_timeout
+                if parser_name == "textx" and "synthetic" in label:
+                    timeout_s = min(args.reference_timeout, 300.0)
                 results.append(
                     run_timed(
                         f"parser/{label}/oracle-{parser_name}",
                         [str(oracle), "--parser", parser_name, str(path)],
                         repeats=reps,
-                        timeout_s=args.reference_timeout,
+                        timeout_s=timeout_s,
                     )
                 )
         else:
@@ -488,8 +621,217 @@ def suite_parser(results: list, args, scratch: Path, cli_dir: Path):
             )
 
 
+def sum_measurement(name: str, parts: list) -> Measurement:
+    """A synthetic "sum" row over several successful `run_timed()`
+    results (e.g. one every-feature pass file each): its one "run" is the
+    sum of each part's median wall time and median peak RSS. Only
+    meaningful when every part in `parts` succeeded (callers check that
+    before calling this); returns a `skipped` row with a clear reason if
+    `parts` is empty (nothing to sum, e.g. the corpus generator produced
+    no pass files).
+    """
+    if not parts:
+        return skipped(name, [], "nothing to sum (no pass files)")
+    total_s = sum(m.median_s() or 0.0 for m in parts)
+    total_rss = [m.median_rss_kib() for m in parts if m.median_rss_kib()]
+    names = ", ".join(m.name for m in parts)
+    return Measurement(
+        name=name,
+        argv=[f"sum of {len(parts)} runs: {names}"],
+        cwd=None,
+        env_overrides={},
+        wall_times_s=[total_s],
+        peak_rss_kib=[max(total_rss)] if total_rss else [],
+        returncode=0,
+        returncodes=[0],
+    )
+
+
+def run_every_feature_corpus(
+    results: list,
+    args,
+    scratch: Path,
+    label_prefix: str,
+    family_root: Path,
+    part: str,
+    rust_bin_path: Optional[Path],
+    rust_tool_name: str,
+    oracle_bin_path: Path,
+    oracle_tool_name: str,
+    xdb_cache_dir: Optional[Path] = None,
+    oracle_env: Optional[dict] = None,
+):
+    """Generates the "every feature" corpus for `part` with
+    `tools/gen-xilinx-corpus.py` and times each of its pass files
+    (`manifest.json`'s `"files"`, e.g. `features.fasm`,
+    `features-2.fasm`, ...) as a **separate** `fasm2frames`/
+    `uray-fasm2frames` run, never concatenated.
+
+    Concatenating the pass files (an earlier version of this script did)
+    is invalid: they exist as *separate* files precisely because their
+    features conflict with each other on the same tile when combined (the
+    generator's own multi-pass design, see `tools/gen-xilinx-corpus.py`'s
+    module doc comment and `manifest.json`'s `notes`/`uncovered` fields);
+    concatenating them produces a FASM both tools correctly reject before
+    doing most of the real assembly work, which is not a meaningful
+    "every feature" throughput measurement.
+
+    Every file is required to succeed (`rc == 0`) for both tools -- a
+    pass file the generator emits is a specific claim that it is
+    conflict-free, so a non-zero exit on it is a real problem worth
+    seeing in the report as `failed (rc=N)`, not silently averaged away.
+    Reports a row per file plus one `.../SUM(N files)` row per tool (the
+    sum of the per-file medians), for both the total-corpus comparison
+    and the per-file detail.
+    """
+    gen = REPO_ROOT / "tools" / "gen-xilinx-corpus.py"
+    part_dir = family_root / part
+    if not gen.exists() or not part_dir.exists():
+        results.append(
+            skipped(
+                f"{label_prefix}/every-feature/{part}",
+                [],
+                "generator or db missing",
+            )
+        )
+        return
+    out_dir = scratch / f"every-feature-{label_prefix}-{part}"
+    tiles_mode = ["all"] if args.full_corpus else ["sample", "20"]
+    gen_argv = [
+        sys.executable,
+        str(gen),
+        "--db-root",
+        str(family_root),
+        "--part",
+        part,
+        "--out-dir",
+        str(out_dir),
+        "--tiles",
+        *tiles_mode,
+        "--no-errors",
+    ]
+    proc = subprocess.run(
+        gen_argv,
+        capture_output=True,
+        text=True,
+        timeout=args.reference_timeout,
+    )
+    if proc.returncode != 0:
+        results.append(
+            skipped(
+                f"{label_prefix}/every-feature/{part}",
+                gen_argv,
+                f"generator failed: {proc.stderr[-500:]}",
+            )
+        )
+        return
+    manifest_path = out_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        pass_files = manifest["files"]
+    except (OSError, json.JSONDecodeError, KeyError) as e:
+        results.append(
+            skipped(
+                f"{label_prefix}/every-feature/{part}",
+                gen_argv,
+                f"could not read {manifest_path}: {e}",
+            )
+        )
+        return
+    if not pass_files:
+        results.append(
+            skipped(
+                f"{label_prefix}/every-feature/{part}",
+                gen_argv,
+                "manifest.json lists no pass files",
+            )
+        )
+        return
+
+    rust_results = []
+    oracle_results = []
+    for pass_file in pass_files:
+        src = out_dir / pass_file
+        stem = Path(pass_file).stem
+        if rust_bin_path:
+            out_frm = out_dir / f"{stem}.rust.frm"
+            m = run_timed(
+                f"{label_prefix}/every-feature/{part}/{rust_tool_name}/"
+                f"{pass_file}",
+                [
+                    str(rust_bin_path),
+                    "--db-root",
+                    str(family_root),
+                    "--part",
+                    part,
+                    str(src),
+                    str(out_frm),
+                ],
+                env_overrides=(
+                    {"FASM_XDB_CACHE": str(xdb_cache_dir)}
+                    if xdb_cache_dir
+                    else None
+                ),
+                repeats=args.repeats,
+                timeout_s=args.reference_timeout,
+            )
+            results.append(m)
+            if not m.any_failed() and not m.timed_out:
+                rust_results.append(m)
+        if oracle_bin_path.exists():
+            out_frm = out_dir / f"{stem}.oracle.frm"
+            m = run_timed(
+                f"{label_prefix}/every-feature/{part}/{oracle_tool_name}/"
+                f"{pass_file}",
+                [
+                    str(oracle_bin_path),
+                    "--db-root",
+                    str(family_root),
+                    "--part",
+                    part,
+                    str(src),
+                    str(out_frm),
+                ],
+                env_overrides=oracle_env,
+                repeats=min(args.repeats, 3),
+                timeout_s=args.reference_timeout,
+            )
+            results.append(m)
+            if not m.any_failed() and not m.timed_out:
+                oracle_results.append(m)
+    if rust_bin_path:
+        results.append(
+            sum_measurement(
+                f"{label_prefix}/every-feature/{part}/{rust_tool_name}/"
+                f"SUM({len(pass_files)} files)",
+                rust_results,
+            )
+        )
+    if oracle_bin_path.exists():
+        results.append(
+            sum_measurement(
+                f"{label_prefix}/every-feature/{part}/{oracle_tool_name}/"
+                f"SUM({len(pass_files)} files)",
+                oracle_results,
+            )
+        )
+    else:
+        results.append(
+            skipped(
+                f"{label_prefix}/every-feature/{part}/{oracle_tool_name}",
+                [],
+                "oracle wrapper missing",
+            )
+        )
+
+
 def suite_xilinx7(
-    results: list, args, scratch: Path, cli_dir: Path, db_root: Path
+    results: list,
+    args,
+    scratch: Path,
+    cli_dir: Path,
+    db_root: Path,
+    xdb_cache_dir: Path,
 ):
     fasm2frames = rust_bin(cli_dir, "fasm2frames")
     xcfasm = rust_bin(cli_dir, "xcfasm")
@@ -521,8 +863,9 @@ def suite_xilinx7(
                 skipped(f"xilinx7/{label}", [], f"{part_yaml} not found")
             )
             continue
+        prime_xdb_cache(cli_dir, xdb_cache_dir, artix7_root, part)
         for cache, cache_label in (
-            (None, "default-cache"),
+            ({"FASM_XDB_CACHE": str(xdb_cache_dir)}, "default-cache"),
             ({"FASM_XDB_CACHE": "0"}, "no-cache"),
         ):
             out_frm = scratch / f"{design}-{board}-{cache_label}.frm"
@@ -635,108 +978,38 @@ def suite_xilinx7(
     # "Every feature" synthetic corpus, sampled (a full --tiles all run of
     # xc7a200t is multiple GB / tens of minutes -- see
     # docs/rewrite/DESIGN-xilinx-db.md 8.9 -- so this defaults to a sample
-    # and only widens to --tiles all with --full-corpus).
-    gen = REPO_ROOT / "tools" / "gen-xilinx-corpus.py"
+    # and only widens to --tiles all with --full-corpus). Each pass file
+    # (manifest.json's "files") is timed on its own -- see
+    # run_every_feature_corpus()'s docstring for why they must not be
+    # concatenated.
     parts = [("xc7a35tcsg324-1", "artix7")]
     if args.full_corpus:
         parts.append(("xc7a200tffg1156-1", "artix7"))
     for part, family in parts:
         family_root = db_root / "prjxray-db" / family
-        part_dir = family_root / part
-        if not gen.exists() or not part_dir.exists():
-            results.append(
-                skipped(
-                    f"xilinx7/every-feature/{part}",
-                    [],
-                    "generator or db missing",
-                )
-            )
-            continue
-        out_dir = scratch / f"every-feature-{part}"
-        tiles_mode = ["all"] if args.full_corpus else ["sample", "20"]
-        gen_argv = [
-            sys.executable,
-            str(gen),
-            "--db-root",
-            str(family_root),
-            "--part",
+        prime_xdb_cache(cli_dir, xdb_cache_dir, family_root, part)
+        run_every_feature_corpus(
+            results,
+            args,
+            scratch,
+            "xilinx7",
+            family_root,
             part,
-            "--out-dir",
-            str(out_dir),
-            "--tiles",
-            *tiles_mode,
-            "--no-errors",
-        ]
-        proc = subprocess.run(
-            gen_argv,
-            capture_output=True,
-            text=True,
-            timeout=args.reference_timeout,
+            fasm2frames,
+            "rust-fasm2frames",
+            fasm2frames_oracle,
+            "oracle-fasm2frames",
+            xdb_cache_dir=xdb_cache_dir,
         )
-        if proc.returncode != 0:
-            results.append(
-                skipped(
-                    f"xilinx7/every-feature/{part}",
-                    gen_argv,
-                    f"generator failed: {proc.stderr[-500:]}",
-                )
-            )
-            continue
-        fasm_files = sorted(out_dir.glob("*.fasm"))
-        if not fasm_files:
-            results.append(
-                skipped(
-                    f"xilinx7/every-feature/{part}",
-                    gen_argv,
-                    "generator produced no .fasm",
-                )
-            )
-            continue
-        combined = out_dir / "combined.fasm"
-        with open(combined, "w") as f:
-            for p in fasm_files:
-                f.write(p.read_text())
-        part_yaml = part_dir / "part.yaml"
-        if fasm2frames:
-            out_frm = out_dir / "combined.frm"
-            results.append(
-                run_timed(
-                    f"xilinx7/every-feature/{part}/rust-fasm2frames",
-                    [
-                        str(fasm2frames),
-                        "--db-root",
-                        str(family_root),
-                        "--part",
-                        part,
-                        str(combined),
-                        str(out_frm),
-                    ],
-                    repeats=args.repeats,
-                    timeout_s=args.reference_timeout,
-                )
-            )
-        if fasm2frames_oracle.exists():
-            out_frm = out_dir / "combined-oracle.frm"
-            results.append(
-                run_timed(
-                    f"xilinx7/every-feature/{part}/oracle-fasm2frames",
-                    [
-                        str(fasm2frames_oracle),
-                        "--db-root",
-                        str(family_root),
-                        "--part",
-                        part,
-                        str(combined),
-                        str(out_frm),
-                    ],
-                    repeats=min(args.repeats, 3),
-                    timeout_s=args.reference_timeout,
-                )
-            )
 
 
 def suite_ultrascale(
-    results: list, args, scratch: Path, cli_dir: Path, db_root: Path
+    results: list,
+    args,
+    scratch: Path,
+    cli_dir: Path,
+    db_root: Path,
+    xdb_cache_dir: Path,
 ):
     uray_fasm2frames = rust_bin(cli_dir, "uray-fasm2frames")
     uray_fasm2frames_oracle = ORACLE_DIR / "uray-fasm2frames-oracle"
@@ -748,95 +1021,20 @@ def suite_ultrascale(
             skipped("ultrascale/xczu3eg", [], f"{part_dir} not found")
         )
         return
-
-    gen = REPO_ROOT / "tools" / "gen-xilinx-corpus.py"
-    out_dir = scratch / "uray-every-feature"
-    tiles_mode = ["all"] if args.full_corpus else ["sample", "20"]
-    gen_argv = [
-        sys.executable,
-        str(gen),
-        "--db-root",
-        str(family_root),
-        "--part",
+    prime_xdb_cache(cli_dir, xdb_cache_dir, family_root, part)
+    run_every_feature_corpus(
+        results,
+        args,
+        scratch,
+        "ultrascale",
+        family_root,
         part,
-        "--out-dir",
-        str(out_dir),
-        "--tiles",
-        *tiles_mode,
-        "--no-errors",
-    ]
-    proc = subprocess.run(
-        gen_argv,
-        capture_output=True,
-        text=True,
-        timeout=args.reference_timeout,
+        uray_fasm2frames,
+        "rust-uray-fasm2frames",
+        uray_fasm2frames_oracle,
+        "oracle-uray-fasm2frames",
+        xdb_cache_dir=xdb_cache_dir,
     )
-    if proc.returncode != 0 or not list(out_dir.glob("*.fasm")):
-        results.append(
-            skipped(
-                "ultrascale/xczu3eg",
-                gen_argv,
-                f"generator unavailable: {proc.stderr[-300:]}",
-            )
-        )
-        return
-    combined = out_dir / "combined.fasm"
-    with open(combined, "w") as f:
-        for p in sorted(out_dir.glob("*.fasm")):
-            f.write(p.read_text())
-
-    if uray_fasm2frames:
-        out_frm = out_dir / "combined.frm"
-        results.append(
-            run_timed(
-                "ultrascale/xczu3eg/rust-uray-fasm2frames",
-                [
-                    str(uray_fasm2frames),
-                    "--db-root",
-                    str(family_root),
-                    "--part",
-                    part,
-                    str(combined),
-                    str(out_frm),
-                ],
-                repeats=args.repeats,
-                timeout_s=args.reference_timeout,
-            )
-        )
-    else:
-        results.append(
-            skipped(
-                "ultrascale/xczu3eg/rust-uray-fasm2frames",
-                [],
-                "binary not built",
-            )
-        )
-    if uray_fasm2frames_oracle.exists():
-        out_frm = out_dir / "combined-oracle.frm"
-        results.append(
-            run_timed(
-                "ultrascale/xczu3eg/oracle-uray-fasm2frames",
-                [
-                    str(uray_fasm2frames_oracle),
-                    "--db-root",
-                    str(family_root),
-                    "--part",
-                    part,
-                    str(combined),
-                    str(out_frm),
-                ],
-                repeats=min(args.repeats, 3),
-                timeout_s=args.reference_timeout,
-            )
-        )
-    else:
-        results.append(
-            skipped(
-                "ultrascale/xczu3eg/oracle-uray-fasm2frames",
-                [],
-                "oracle wrapper missing",
-            )
-        )
 
 
 def build_python_bindings(scratch: Path) -> Optional[Path]:
@@ -892,7 +1090,14 @@ def build_python_bindings(scratch: Path) -> Optional[Path]:
     return venv_py
 
 
-def suite_python(results: list, args, scratch: Path, db_root: Path):
+def suite_python(
+    results: list,
+    args,
+    scratch: Path,
+    db_root: Path,
+    xdb_cache_dir: Path,
+    cli_dir: Path,
+):
     venv_py = build_python_bindings(scratch)
     if venv_py is None:
         results.append(
@@ -945,8 +1150,9 @@ def suite_python(results: list, args, scratch: Path, db_root: Path):
             "asm.parse_fasm_filename(sys.argv[3])\n"
             "asm.get_frames(sparse=False)\n"
         )
+        prime_xdb_cache(cli_dir, xdb_cache_dir, artix7_root, part)
         for cache_label, env in (
-            ("default-cache", None),
+            ("default-cache", {"FASM_XDB_CACHE": str(xdb_cache_dir)}),
             ("no-cache", {"FASM_XDB_CACHE": "0"}),
         ):
             results.append(
@@ -996,12 +1202,23 @@ def suite_python(results: list, args, scratch: Path, db_root: Path):
 # Reporting
 
 
-def write_json(results: list, machine: dict, refs: dict, out_path: Path):
+def write_json(
+    results: list,
+    machine: dict,
+    refs: dict,
+    out_path: Path,
+    xdb_cache_dir: Optional[Path] = None,
+    rss_floor_kib_value: Optional[float] = None,
+):
     out_path.write_text(
         json.dumps(
             {
                 "machine": machine,
                 "reference_commits": refs,
+                "xdb_cache_dir": (
+                    str(xdb_cache_dir) if xdb_cache_dir else None
+                ),
+                "rss_floor_kib": rss_floor_kib_value,
                 "measurements": [m.to_json() for m in results],
             },
             indent=2,
@@ -1017,13 +1234,23 @@ def fmt_s(v: Optional[float]) -> str:
     return f"{v:.2f} s"
 
 
-def fmt_rss(v: Optional[float]) -> str:
+def fmt_rss(v: Optional[float], floor: Optional[float] = None) -> str:
     if not v:
         return "-"
-    return f"{v / 1024:.1f} MiB"
+    text = f"{v / 1024:.1f} MiB"
+    if floor is not None and v <= floor:
+        text += " (floor)"
+    return text
 
 
-def write_markdown(results: list, machine: dict, refs: dict, out_path: Path):
+def write_markdown(
+    results: list,
+    machine: dict,
+    refs: dict,
+    out_path: Path,
+    xdb_cache_dir: Optional[Path] = None,
+    rss_floor_kib_value: Optional[float] = None,
+):
     lines = []
     lines.append("# Benchmark report\n")
     cpu = machine["lscpu_model"] or "(unknown)"
@@ -1038,6 +1265,16 @@ def write_markdown(results: list, machine: dict, refs: dict, out_path: Path):
     lines.append(
         f"* {machine['rustc_version']}, Python {machine['python_version']}"
     )
+    if xdb_cache_dir is not None:
+        lines.append(f"* `FASM_XDB_CACHE` for this run: `{xdb_cache_dir}`")
+    if rss_floor_kib_value is not None:
+        lines.append(
+            f"* peak-RSS measurement floor this run: "
+            f"{rss_floor_kib_value / 1024:.1f} MiB (see "
+            "`measure_rss_floor()`'s docstring in this script -- a "
+            "measurement at or below this reflects the floor, not the "
+            "benchmarked program's own memory, and is marked `(floor)`)"
+        )
     lines.append("")
     lines.append("| Measurement | Median | Min | Peak RSS | Runs |")
     lines.append("|---|---:|---:|---:|---:|")
@@ -1045,12 +1282,23 @@ def write_markdown(results: list, machine: dict, refs: dict, out_path: Path):
         if m.skipped_reason:
             lines.append(f"| {m.name} | skipped | | | {m.skipped_reason} |")
             continue
-        note = "timed out" if m.timed_out else ""
-        n_runs = len(m.wall_times_s)
-        suffix = f" {note}" if note else ""
+        n_runs = len(m.returncodes) or len(m.wall_times_s)
+        if m.timed_out:
+            lines.append(
+                f"| {m.name} | timed out | | | {n_runs} (1 timed out) |"
+            )
+            continue
+        if m.any_failed():
+            rc = m.first_failure_rc()
+            lines.append(
+                f"| {m.name} | failed (rc={rc}) | | | {n_runs} "
+                f"({sum(1 for r in m.returncodes if r != 0)} failed) |"
+            )
+            continue
         lines.append(
             f"| {m.name} | {fmt_s(m.median_s())} | {fmt_s(m.min_s())} | "
-            f"{fmt_rss(m.median_rss_kib())} | {n_runs}{suffix} |"
+            f"{fmt_rss(m.median_rss_kib(), rss_floor_kib_value)} | "
+            f"{n_runs} |"
         )
     out_path.write_text("\n".join(lines) + "\n")
 
@@ -1131,6 +1379,19 @@ def main() -> int:
         help="scratch directory (default: a temp dir)",
     )
     parser.add_argument(
+        "--xdb-cache-dir",
+        type=Path,
+        default=None,
+        help=(
+            "binary database cache directory for every \"default-cache\" "
+            "measurement (default: <scratch>/xdb-cache -- never the "
+            "environment/XDG default, so a run's cache state does not "
+            "depend on, or pollute, anything left on the machine by a "
+            "previous run); primed with one untimed build per part before "
+            "any timed measurement reads it"
+        ),
+    )
+    parser.add_argument(
         "--out-json", type=Path, default=Path("bench-report.json")
     )
     parser.add_argument("--out-md", type=Path, default=Path("bench-report.md"))
@@ -1146,6 +1407,8 @@ def main() -> int:
     own_scratch = args.scratch is None
     scratch = args.scratch or Path(tempfile.mkdtemp(prefix="fasm-bench-"))
     scratch.mkdir(parents=True, exist_ok=True)
+    xdb_cache_dir = args.xdb_cache_dir or (scratch / "xdb-cache")
+    xdb_cache_dir.mkdir(parents=True, exist_ok=True)
 
     machine = machine_info()
     refs = reference_commits()
@@ -1156,23 +1419,55 @@ def main() -> int:
     )
 
     results: list = []
+    # See measure_rss_floor()'s docstring: sampled before and after the
+    # suites run, since this driver's own peak-memory history (which
+    # leaks into every child's measured ru_maxrss) can only grow as it
+    # goes -- the later, larger sample is the floor reported and used to
+    # annotate every other measurement.
+    floor_samples = [measure_rss_floor()]
     try:
         if "parser" not in args.skip:
             suite_parser(results, args, scratch, args.cli_dir)
         if "xilinx7" not in args.skip:
-            suite_xilinx7(results, args, scratch, args.cli_dir, args.db_root)
+            suite_xilinx7(
+                results,
+                args,
+                scratch,
+                args.cli_dir,
+                args.db_root,
+                xdb_cache_dir,
+            )
         if "ultrascale" not in args.skip:
             suite_ultrascale(
-                results, args, scratch, args.cli_dir, args.db_root
+                results,
+                args,
+                scratch,
+                args.cli_dir,
+                args.db_root,
+                xdb_cache_dir,
             )
         if "python" not in args.skip:
-            suite_python(results, args, scratch, args.db_root)
+            suite_python(
+                results,
+                args,
+                scratch,
+                args.db_root,
+                xdb_cache_dir,
+                args.cli_dir,
+            )
     finally:
+        floor_samples.append(measure_rss_floor())
         if own_scratch and not args.keep_scratch:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    write_json(results, machine, refs, args.out_json)
-    write_markdown(results, machine, refs, args.out_md)
+    floor = rss_floor_kib(floor_samples)
+    results = floor_samples + results
+    write_json(
+        results, machine, refs, args.out_json, xdb_cache_dir, floor
+    )
+    write_markdown(
+        results, machine, refs, args.out_md, xdb_cache_dir, floor
+    )
     print(f"wrote {args.out_json} and {args.out_md}", file=sys.stderr)
 
     failures = [
