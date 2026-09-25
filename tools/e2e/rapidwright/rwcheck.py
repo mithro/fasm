@@ -146,6 +146,7 @@ def rw_batch(commands, work):
         status.setdefault(
             i, 'no result (java exit %d): %s' %
             (p.returncode, p.stderr.decode(errors='replace')[-500:]))
+    batch.unlink()
     return status
 
 
@@ -748,61 +749,74 @@ def compare_header_packets(bit, rw_json):
 
 
 def check_bits(args, work):
-    cases = bit_cases(args, work)
-    frm_cases = frm_corpus_cases(args)
+    cases = [('bit', c) for c in bit_cases(args, work)]
+    cases += [('frm', c) for c in frm_corpus_cases(args)]
     results = []
     d = work / 'bits'
-    d.mkdir(parents=True, exist_ok=True)
+    # A few cases at a time: the frames of an xc7a200t bitstream are 25 MB
+    # of .frm text per file, and each case has up to six of them.
+    for start in range(0, len(cases), args.chunk):
+        chunk = cases[start:start + args.chunk]
+        results += _check_bit_chunk(chunk, d, work, start)
+        shutil.rmtree(d, ignore_errors=True)
+        done = start + len(chunk)
+        print('bits: %d/%d cases' % (done, len(cases)), file=sys.stderr)
+    return results
+
+
+def _check_bit_chunk(chunk, d, work, start):
     # Phase 1 (Rust): read the originals, write our bitstreams.
-    for i, c in enumerate(cases):
-        c.dir = d / ('%03d' % i)
-        c.dir.mkdir(exist_ok=True)
-        c.ours = our_read(c.arch, c.part_file, c.bit, c.dir / 'ours.frm')
-        c.hdr_part = bit_header(c.bit.read_bytes()[:1024]).get('b', '')
-        our_write(
-            c.arch, c.part_file, c.dir / 'ours.frm', c.dir / 'ours.bit',
-            c.hdr_part)
-    for i, c in enumerate(frm_cases):
-        c.dir = d / ('frm%03d' % i)
-        c.dir.mkdir(exist_ok=True)
-        src = c.dir / 'input.frm'
-        data = c.frm.read_bytes()
-        if c.frm.suffix == '.xz':
-            data = lzma.decompress(data)
-        src.write_bytes(data)
-        our_write(c.arch, c.part_file, src, c.dir / 'ours.bit', c.rw_part)
-        c.ours = our_read(
-            c.arch, c.part_file, c.dir / 'ours.bit', c.dir / 'ours.frm')
+    for i, (kind, c) in enumerate(chunk):
+        c.dir = d / ('%04d' % (start + i))
+        c.dir.mkdir(parents=True, exist_ok=True)
+        if kind == 'bit':
+            c.ours = our_read(c.arch, c.part_file, c.bit, c.dir / 'ours.frm')
+            c.hdr_part = bit_header(c.bit.read_bytes()[:1024]).get('b', '')
+            our_write(
+                c.arch, c.part_file, c.dir / 'ours.frm', c.dir / 'ours.bit',
+                c.hdr_part)
+        else:
+            src = c.dir / 'input.frm'
+            data = c.frm.read_bytes()
+            if c.frm.suffix == '.xz':
+                data = lzma.decompress(data)
+            src.write_bytes(data)
+            our_write(c.arch, c.part_file, src, c.dir / 'ours.bit', c.rw_part)
+            c.ours = our_read(
+                c.arch, c.part_file, c.dir / 'ours.bit', c.dir / 'ours.frm')
     # Phase 2 (RapidWright): read everything, write from our frames.
     cmds = []
-    for c in cases:
+    for kind, c in chunk:
         c.cmd = len(cmds)
-        cmds += [
-            ('read', c.bit, c.dir / 'rw.frm', c.dir / 'rw.json'),
-            (
-                'read', c.dir / 'ours.bit', c.dir / 'rw-ours.frm',
-                c.dir / 'rw-ours.json'),
-            (
-                'write', rw_part_name(c.hdr_part), c.dir / 'ours.frm',
-                c.dir / 'rw-written.bit'),
-            ('rewrite', c.bit, c.dir / 'rw-rewritten.bit')
-        ]
-    for c in frm_cases:
-        c.cmd = len(cmds)
-        cmds += [
-            (
-                'read', c.dir / 'ours.bit', c.dir / 'rw-ours.frm',
-                c.dir / 'rw-ours.json'),
-            (
-                'write', c.rw_part, c.dir / 'input.frm',
-                c.dir / 'rw-written.bit')
-        ]
+        if kind == 'bit':
+            cmds += [
+                ('read', c.bit, c.dir / 'rw.frm', c.dir / 'rw.json'),
+                (
+                    'read', c.dir / 'ours.bit', c.dir / 'rw-ours.frm',
+                    c.dir / 'rw-ours.json'),
+                (
+                    'write', rw_part_name(c.hdr_part), c.dir / 'ours.frm',
+                    c.dir / 'rw-written.bit'),
+                ('rewrite', c.bit, c.dir / 'rw-rewritten.bit')
+            ]
+        else:
+            cmds += [
+                (
+                    'read', c.dir / 'ours.bit', c.dir / 'rw-ours.frm',
+                    c.dir / 'rw-ours.json'),
+                (
+                    'write', c.rw_part, c.dir / 'input.frm',
+                    c.dir / 'rw-written.bit')
+            ]
     status = rw_batch(cmds, work)
     # Phase 3: compare.
-    for c in cases:
-        results.append(compare_bit_case(c, status))
-    for c in frm_cases:
-        results.append(compare_frm_case(c, status))
+    results = []
+    for kind, c in chunk:
+        if kind == 'bit':
+            results.append(compare_bit_case(c, status))
+        else:
+            results.append(compare_frm_case(c, status))
+        c.ours = None
     return results
 
 
@@ -1031,6 +1045,11 @@ def main(argv=None):
         action='store_true',
         help='store the RapidWright layouts in tests/corpus')
     ap.add_argument('--report', help='write the results as JSON here')
+    ap.add_argument(
+        '--chunk',
+        type=int,
+        default=4,
+        help='bitstream cases per RapidWright run (disk use)')
     args = ap.parse_args(argv)
     args.what = args.what or ['layout', 'bits']
     if set(args.what) - {'layout', 'bits'}:
