@@ -907,3 +907,16 @@ what happened, branch/commit references, open issues.
   count misstated, all_three_reject checks only the line, and
   run-vtr-genfasm.sh could rm -rf a user supplied VTR_ROOT. Fixes
   requested.
+* T8.4 implemented on branch `worktree-agent-a4b50d199c81e7c11` (3
+  commits, Sonnet): crates.io metadata and include lists (cargo package
+  -p fasm verified: 398 KiB / 96 KiB compressed), per crate READMEs,
+  version 0.1.0-dev, wheels.yml (manylinux x86_64/aarch64, macOS,
+  Windows, parser only wheel, sdist, wheel tests; publish disabled
+  pending PyPI trusted publishing), CMake package config for the C API
+  (find_package(fasm) shared and static verified), package job in
+  rust.yml, docs/RELEASING.md and CHANGELOG.md; sdist 289 KiB and wheel
+  854 KiB pass twine check and a fresh venv install. Finding: the crate
+  name `fasm` is already taken on crates.io by an unrelated crate
+  (zk2u/fasm); publishing needs a rename or another decision by the
+  user (documented in RELEASING.md). cargo audit: 0 vulnerabilities.
+  Independent review (Opus) started.
