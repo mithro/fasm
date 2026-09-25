@@ -671,3 +671,5 @@ what happened, branch/commit references, open issues.
   Merged with --no-ff; merged tree: 473 Rust tests, xilinx-difftest and
   uray-difftest identical, tests/cli suite green. Worktree removed.
   Phase 6 (UltraScale/UltraScale+) is complete.
+* T5.10 (fasm.xilinx Python bindings + fasm_xilinx_* C API) started
+  (Opus); T7.3 running.
