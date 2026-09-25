@@ -748,3 +748,15 @@ what happened, branch/commit references, open issues.
   different. Worktree removed. Phase 5 is complete except T5.3b/T5.8b.
 * T8.1 (benchmark suite + docs/rewrite/BENCHMARKS.md) started (Sonnet);
   T7.6 running.
+* T8.1 implemented on branch `worktree-agent-a0371a01da3c39a86` (3
+  commits, Sonnet): parser bench corpus classes (lut, annotated, stress),
+  bitstream bench over Series7 + UltraScale+ (fixing a hard coded
+  words_per_frame), tools/bench/run-benchmarks.py (Rust vs ANTLR/textX,
+  xc_fasm, prjuray; median/min wall time, peak RSS), BENCHMARKS.md, README
+  pointer. Headline: parser 125-427 MB/s by corpus class (pips at the 200
+  MB/s target, stress below), idstring hit 52 ns vs plain HashMap 38 ns,
+  IdString sort 2.7x slower than String sort, fasm on linux_litex_demo
+  93 ms vs ANTLR 3.5 s / textX 66 s, fasm2frames counter_test 34-37 ms
+  cached vs 400-500 ms reference. Not measured: 1M line textX (RSS blow
+  up), perf profile (no perf), python suite re-run. Independent review
+  (Opus) started.
