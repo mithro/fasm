@@ -22,13 +22,23 @@ benchmark instantiates (T7.4).
 Several of VTR's Verilog benchmarks instantiate VTR's architecture hard
 blocks `single_port_ram`, `dual_port_ram`, `multiply` and `adder`, which
 VTR's own flows map to its architectures' RAM, DSP and carry chain
-blocks. For another architecture they need a model: VTR's
-`vtr_flow/primitives.v` has one for each (its simulation models). This
-copies those of the modules BENCHMARK.v uses and does not define itself,
-verbatim except for comments and the `(* keep_hierarchy *)` attribute
-(Yosys would keep them as separate modules, which the f4pga flow cannot
-pack), so the f4pga synthesis maps them to Xilinx block RAM, DSP48 and
-CARRY4 cells or logic.
+blocks. For another architecture they need a model. This writes one for
+each of those the benchmark uses and does not define itself:
+
+* `multiply` and `adder`: VTR's `vtr_flow/primitives.v` (its simulation
+  models), verbatim except for comments;
+* `single_port_ram` and `dual_port_ram`: the behaviour of the
+  `primitives.v` models (a synchronous write, then a synchronous read of
+  the addressed word that returns the data just written; a word per
+  port), written with non-blocking assignments so that Yosys infers block
+  RAM: `primitives.v`'s blocking `Mem[addr] = data; out = Mem[addr];`
+  makes Yosys replace the memory with registers (a 4096 x 32 memory then
+  takes Yosys more than 15 minutes, or it runs out of memory). What
+  happens when both ports of a `dual_port_ram` access the same word is
+  not modelled (VTR's architectures leave it undefined too).
+
+`(* keep_hierarchy *)` (on the RAMs of `primitives.v`) is dropped: Yosys
+would keep them as separate modules, which the f4pga flow cannot pack.
 
   hard-block-models.py PRIMITIVES.v BENCHMARK.v OUT.v
 
@@ -53,6 +63,64 @@ def modules(text):
     return out
 
 
+RAMS = {
+    'single_port_ram':
+    """module single_port_ram #(
+    parameter ADDR_WIDTH = 1,
+    parameter DATA_WIDTH = 1
+) (
+    input clk,
+    input [ADDR_WIDTH-1:0] addr,
+    input [DATA_WIDTH-1:0] data,
+    input we,
+    output reg [DATA_WIDTH-1:0] out
+);
+    reg [DATA_WIDTH-1:0] Mem[(2 ** ADDR_WIDTH)-1:0];
+    always @(posedge clk) begin
+        if (we) begin
+            Mem[addr] <= data;
+            out <= data;
+        end else begin
+            out <= Mem[addr];
+        end
+    end
+endmodule""",
+    'dual_port_ram':
+    """module dual_port_ram #(
+    parameter ADDR_WIDTH = 1,
+    parameter DATA_WIDTH = 1
+) (
+    input clk,
+    input [ADDR_WIDTH-1:0] addr1,
+    input [ADDR_WIDTH-1:0] addr2,
+    input [DATA_WIDTH-1:0] data1,
+    input [DATA_WIDTH-1:0] data2,
+    input we1,
+    input we2,
+    output reg [DATA_WIDTH-1:0] out1,
+    output reg [DATA_WIDTH-1:0] out2
+);
+    reg [DATA_WIDTH-1:0] Mem[(2 ** ADDR_WIDTH)-1:0];
+    always @(posedge clk) begin
+        if (we1) begin
+            Mem[addr1] <= data1;
+            out1 <= data1;
+        end else begin
+            out1 <= Mem[addr1];
+        end
+    end
+    always @(posedge clk) begin
+        if (we2) begin
+            Mem[addr2] <= data2;
+            out2 <= data2;
+        end else begin
+            out2 <= Mem[addr2];
+        end
+    end
+endmodule""",
+}
+
+
 def main(primitives, benchmark, out):
     with open(primitives) as f:
         models = modules(strip_comments(f.read()))
@@ -68,11 +136,11 @@ def main(primitives, benchmark, out):
     if not used:
         return 1
     with open(out, 'w') as f:
-        f.write('// VTR hard block models from vtr_flow/primitives.v '
+        f.write('// Models of VTR hard blocks '
                 '(tools/e2e/vtr/hard-block-models.py)\n')
         for name in used:
-            source = re.sub(r'^\(\*\s*keep_hierarchy\s*\*\)\s*', '',
-                            models[name])
+            source = RAMS.get(name) or re.sub(
+                r'^\(\*\s*keep_hierarchy\s*\*\)\s*', '', models[name])
             f.write(source + '\n\n')
     print(' '.join(used))
     return 0

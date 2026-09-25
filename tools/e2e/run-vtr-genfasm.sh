@@ -69,8 +69,9 @@
 #   symbiflow_route, symbiflow_write_fasm (genfasm), with a PCF from
 #   tools/e2e/vtr/make-pcf.py (the benchmarks have no pin constraints; the
 #   placer needs one). VTR's hard blocks that a benchmark instantiates
-#   (single_port_ram, dual_port_ram, multiply, adder) get their models
-#   from vtr_flow/primitives.v (tools/e2e/vtr/hard-block-models.py). A
+#   (single_port_ram, dual_port_ram, multiply, adder) get Verilog models
+#   (tools/e2e/vtr/hard-block-models.py: vtr_flow/primitives.v's, the
+#   RAMs rewritten so that Yosys infers block RAM). A
 #   benchmark that has more port bits than the package has pins, or that
 #   synthesis, packing, placement or routing reject, is recorded as not
 #   implementable.
@@ -340,8 +341,7 @@ run_verilog() {
   fi
   cp "$VTR/$netlist" "$out/"
   local top status=built synth_s=- pnr_s=- genfasm_s=- r
-  # VTR's hard blocks (single_port_ram, ...): their vtr_flow/primitives.v
-  # models.
+  # VTR's hard blocks (single_port_ram, ...): models of them.
   local vfiles=("$circuit.v")
   if python3 "$REPO_ROOT/tools/e2e/vtr/hard-block-models.py" "$VTR/vtr_flow/primitives.v" \
       "$out/$circuit.v" "$out/vtr_hard_blocks.v" > "$out/hard_blocks.txt"; then
@@ -355,8 +355,11 @@ run_verilog() {
   if [[ $status == built ]]; then
     r=$(cd "$out" && run_timed synth.log symbiflow_synth -t "$top" -v "${vfiles[@]}" -d "$family" -p "$part")
     synth_s=${r#* }
-    if [[ ${r%% *} != 0 ]]; then
+    if [[ ${r%% *} == 124 ]]; then
+      status="unimplementable: synthesis timed out ($TIMEOUT s)"
+    elif [[ ${r%% *} != 0 ]]; then
       status="unimplementable: synthesis: $(grep -m1 -E '^ERROR|Error' "$out/synth.log" | cut -c1-200)"
+      [[ $status == "unimplementable: synthesis: " ]] && status="failed: synthesis exit ${r%% *}"
     fi
   fi
   if [[ $status == built ]]; then
