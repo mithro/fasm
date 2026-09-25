@@ -100,6 +100,9 @@ die() { echo "run-nextpnr-examples.sh: ERROR: $*" >&2; exit 1; }
 #                 regression: demo-projects regression/<path>, run like
 #                   its run.sh, then fasm2frames/xc7frames2bit like
 #                   openXC7.mk
+#                 litex-build: a LiteX build directory <path>/<arg>
+#                   (build_top.sh and the Verilog LiteX generated are
+#                   in the repository), run like its build_top.sh
 #                 skip: not built, <arg> says why
 ENTRIES=(
   "nextpnr-xilinx/blinky/arty-a35|xc7a35tcsg324-1|xc7a35tcsg324-1|artix7|nx-script|arty-a35|blinky"
@@ -140,6 +143,22 @@ ENTRIES=(
   "openxc7-primitive-tests/mmcm-blinky-artixx/xc7a100tfgg676|xc7a100tfgg676-1|xc7a100tfgg676-1|artix7|make|mmcm-blinky-artixx|blinky"
   "openxc7-primitive-tests/mmcm-reconfig/qmtech-artix7|xc7a100tfgg676-1|xc7a100tfgg676-1|artix7|make|mmcm-reconfig|mmcm_reconfig"
   "openxc7-primitive-tests/pll-reconfig/qmtech-artix7|xc7a100tfgg676-1|xc7a100tfgg676-1|artix7|make|pll-reconfig|pll_reconfig"
+  "openxc7-primitive-tests/bscane2/qmtech-artix7|xc7a100tfgg676-1|xc7a100tfgg676-1|artix7|litex-build|bscane2|build"
+  "openxc7-primitive-tests/mmcm-blinky/xc7s50csga324|xc7s50csga324-1|-|spartan7|skip|mmcm-blinky|Spartan-7 xc7s50 (spartan7; out of scope)"
+  "openxc7-primitive-tests/mmcm-blinky-kintex/xc7k70tfbg676|xc7k70tfbg676-1|-|kintex7|skip|mmcm-blinky-kintex|Kintex-7 xc7k70t (kintex7; out of scope)"
+  "openxc7-primitive-tests/gtx_channel/xc7k70tfbg676|xc7k70tfbg676-1|-|kintex7|skip|gtx_channel|Kintex-7 xc7k70t (kintex7; out of scope)"
+  "openxc7-primitive-tests/gtx_common-internal-refclk/xc7k70tfbg676|xc7k70tfbg676-1|-|kintex7|skip|gtx_common/internal-refclk|Kintex-7 xc7k70t (kintex7; out of scope)"
+  "openxc7-primitive-tests/dsp-tests-basic-mult/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|dsp-tests/basic-mult|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/dsp-tests-mult-harness/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|dsp-tests/mult-harness|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-iddr/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|iologic-tests/iddr|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-idelay/xc7k325tffg676|xc7k325tffg676-1|-|kintex7|skip|iologic-tests/idelay|Kintex-7 xc7k325t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-iobuf/xc7k325tffg676|xc7k325tffg676-1|-|kintex7|skip|iologic-tests/iobuf|Kintex-7 xc7k325t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-iserdes/xc7k325tffg676|xc7k325tffg676-1|-|kintex7|skip|iologic-tests/iserdes|Kintex-7 xc7k325t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-mmcm/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|iologic-tests/mmcm|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-oddr/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|iologic-tests/oddr|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-odelay/xc7k160tffg676|xc7k160tffg676-2|-|kintex7|skip|iologic-tests/odelay|Kintex-7 xc7k160t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-oserdes/xc7k325tffg676|xc7k325tffg676-1|-|kintex7|skip|iologic-tests/oserdes|Kintex-7 xc7k325t (kintex7; out of scope)"
+  "openxc7-primitive-tests/iologic-tests-tristate/xc7k325tffg676|xc7k325tffg676-1|-|kintex7|skip|iologic-tests/tristate|Kintex-7 xc7k325t (kintex7; out of scope)"
 )
 
 entry() {
@@ -199,13 +218,17 @@ fetch() {
       *) dir="$OPENXC7_PRIMITIVE_TESTS_DIR" ;;
     esac
     if [[ ! -d "$dir/.git" ]]; then
-      log "cloning $url into $dir"
-      mkdir -p "$(dirname "$dir")"
-      # No submodules: nextpnr-xilinx's are the prjxray-db and metadata
-      # the snap already bundles.
-      timeout 900 git clone -q --filter=blob:none "$url" "$dir"
+      log "fetching $url $commit into $dir"
+      mkdir -p "$dir"
+      git -C "$dir" init -q
+      git -C "$dir" remote add origin "$url"
     fi
-    git -C "$dir" -c advice.detachedHead=false checkout -q "$commit"
+    # Only the pinned commit (depth 1); no submodules: nextpnr-xilinx's
+    # are the prjxray-db and metadata the snap already bundles.
+    if [[ "$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)" != "$commit" ]]; then
+      timeout 900 git -C "$dir" fetch -q --depth 1 origin "$commit"
+      git -C "$dir" -c advice.detachedHead=false checkout -q "$commit"
+    fi
     log "$name at $(git -C "$dir" rev-parse HEAD)"
   done
 }
@@ -325,7 +348,16 @@ fix_buf() {
   local json="$1" log="$2"
   if grep -q '"type": "\$buf"' "$json"; then
     echo "$json: \$buf cells, applying the techmap workaround" >>"$log"
-    echo "yosys -p 'read_json $(basename "$json"); techmap -map +/techmap.v t:\$buf; write_json $(basename "$json")'   # workaround, see run-nextpnr-examples.sh" >>"$OUT/commands.txt"
+    # Recorded right after the (first) yosys line of the flow's commands.
+    BUF_LINE="yosys -p 'read_json $(basename "$json"); techmap -map +/techmap.v t:\$buf; write_json $(basename "$json")'   # workaround, see run-nextpnr-examples.sh" \
+      python3 -c '
+import os, sys
+path = sys.argv[1]
+lines = open(path).read().splitlines()
+at = next((i + 1 for i, l in enumerate(lines) if l.startswith("yosys ")), len(lines))
+lines.insert(at, os.environ["BUF_LINE"])
+open(path, "w").write("\n".join(lines) + "\n")
+' "$OUT/commands.txt"
     step buf_fix "$log" yosys -q -p "read_json $json; techmap -map +/techmap.v t:\$buf; write_json $json" || return 1
     touch "$OUT/.buf_fix"
   fi
@@ -388,6 +420,34 @@ run_make() {
   )
 }
 
+# A LiteX build directory (primitive-tests bscane2/build): the commands of
+# its build_top.sh (written by LiteX for a /usr/share/nextpnr install),
+# with the chipdb and the database mapped to the snap's.
+run_litex_build() {
+  local dir="$1" log="$OUT/build.log"
+  (
+    cd "$dir"
+    rm -f top.json top.fasm top.frames top.bit
+    # top.ys reads top.v by the absolute path of the machine LiteX ran on.
+    sed -i -e 's|^read_verilog .*/top\.v$|read_verilog top.v|' top.ys
+    {
+      echo "sed -i -e 's|^read_verilog .*/top\\.v\$|read_verilog top.v|' top.ys   # top.ys names LiteX's absolute path"
+      echo "yosys -l top.rpt top.ys"
+      echo "nextpnr-xilinx --json top.json --xdc top.xdc --fasm top.fasm --chipdb $DEVICE.bin --write top_routed.json --timing-allow-fail --seed 1"
+      echo "fasm2frames --part $PART --db-root <snap prjxray-db>/$FAMILY top.fasm > top.frames"
+      echo "xc7frames2bit --part_file <snap prjxray-db>/$FAMILY/$PART/part.yaml --part_name $PART --frm_file top.frames --output_file top.bit"
+    } >"$OUT/commands.txt"
+    step synth "$log" yosys -l top.rpt top.ys || exit 10
+    fix_buf top.json "$log" || exit 10
+    step pnr "$log" nextpnr-xilinx --json top.json --xdc top.xdc --fasm top.fasm \
+      --chipdb "$CHIPDB" --write top_routed.json --timing-allow-fail --seed 1 || exit 11
+    step fasm2frames "$log" bash -c 'fasm2frames --part "$1" --db-root "$2" "$3" > "$4"' _ \
+      "$PART" "$PRJXRAY_DB_DIR/$FAMILY" top.fasm top.frames || exit 12
+    step xc7frames2bit "$log" xc7frames2bit --part_file "$PRJXRAY_DB_DIR/$FAMILY/$PART/part.yaml" \
+      --part_name "$PART" --frm_file top.frames --output_file top.bit || exit 13
+  )
+}
+
 # demo-projects regression/run.sh for one case (its yosys and nextpnr
 # command lines), then the snap fasm2frames and xc7frames2bit like
 # openXC7.mk (run.sh itself stops at the FASM). Also records run.sh's own
@@ -410,8 +470,11 @@ run_regression() {
     } >"$OUT/commands.txt"
     step synth "$log" yosys -q -p "$synth" || exit 10
     fix_buf top.json "$log" || exit 10
+    # run.sh writes nextpnr's output to the case's nextpnr.log, which some
+    # check.sh read (dup-package-pin, bufr-*, bufh-clock-constraint).
     # shellcheck disable=SC2086
-    step pnr "$log" nextpnr-xilinx --chipdb "$CHIPDB" --xdc top.xdc --json top.json \
+    step pnr "$log" bash -c 'nextpnr-xilinx "$@" > nextpnr.log 2>&1; rc=$?; cat nextpnr.log; exit $rc' _ \
+      --chipdb "$CHIPDB" --xdc top.xdc --json top.json \
       --write top_routed.json --fasm top.fasm $nextpnr_flags $no_route --timing-allow-fail || true
     local verdict=""
     if [[ -f expect_fail ]]; then
@@ -426,13 +489,16 @@ run_regression() {
       [[ "$miss" -eq 0 ]] && verdict+="${verdict:+; }expect.txt ok"
     fi
     if [[ -x check.sh || -f check.sh ]] && [[ -s top.fasm || -f expect_fail || -n "$no_route" ]]; then
-      if FASM="$d/top.fasm" CASE_DIR="$d" timeout 600 bash check.sh >"$OUT/check.log" 2>&1; then
+      # check.sh reads CHIPDB when it reruns nextpnr (xorigport-unknown-name).
+      if FASM="$d/top.fasm" CASE_DIR="$d" CHIPDB="$CHIPDB" timeout 600 bash check.sh >"$OUT/check.log" 2>&1; then
         verdict+="${verdict:+; }check.sh ok"
       else
         verdict+="${verdict:+; }check.sh FAILS"
       fi
     fi
     [[ -n "$verdict" ]] && echo "$verdict" >"$OUT/.verdict"
+    # A placement-level case: placed (14) or not (11); no FASM either way.
+    if [[ -n "$no_route" ]]; then [[ -s top_routed.json ]] && exit 14; exit 11; fi
     [[ -s top.fasm ]] || exit 11
     step fasm2frames "$log" bash -c 'fasm2frames --part "$1" --db-root "$2" "$3" > "$4"' _ \
       "$PART" "$PRJXRAY_DB_DIR/$FAMILY" top.fasm top.frames || exit 12
@@ -512,6 +578,11 @@ run_one() {
       dir="$work/$SRC_PATH"
       run_make "$dir" || rc=$?
       fasm="$dir/$ARG.fasm"; frames="$dir/$ARG.frames"; bit="$dir/$ARG.bit" ;;
+    litex-build)
+      mirror "$src" "$work" "$SRC_PATH/$ARG"
+      dir="$work/$SRC_PATH/$ARG"
+      run_litex_build "$dir" || rc=$?
+      fasm="$dir/top.fasm"; frames="$dir/top.frames"; bit="$dir/top.bit" ;;
     regression)
       mirror "$src" "$work" "regression/$SRC_PATH"
       dir="$work/regression/$SRC_PATH"
@@ -533,6 +604,7 @@ run_one() {
     11) status="place and route failed" ;;
     12) status="fasm2frames failed" ;;
     13) status="xc7frames2bit failed" ;;
+    14) status="placement only (no_route case, no FASM)" ;;
     *) status="failed ($rc)" ;;
   esac
   if [[ "$rc" -ne 0 ]]; then
@@ -577,7 +649,9 @@ while [[ $# -gt 0 ]]; do
         printf '%-72s %-18s %-18s %-10s %s\n' "$id" "$part" "$device" "$kind" "$avail"
       done
       exit 0 ;;
-    --config) entry "$2"; exit $? ;;
+    --config)
+      [[ $# -ge 2 ]] || { echo "usage: $0 --config ID" >&2; exit 2; }
+      entry "$2"; exit $? ;;
     --fetch) fetch; exit 0 ;;
     --build-chipdb) BUILD_CHIPDB=1; shift ;;
     --all) for e in "${ENTRIES[@]}"; do IDS+=("${e%%|*}"); done; shift ;;
@@ -586,6 +660,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ ${#IDS[@]} -gt 0 ]] || { usage; exit 2; }
+for id in "${IDS[@]}"; do
+  entry "$id" >/dev/null || die "unknown id $id (see --list)"
+done
 
 [[ -f "$E2E_BUILD/openxc7/status.json" ]] || die "openXC7 toolchain not set up in $E2E_BUILD (tools/e2e/setup-openxc7.sh, or OPENXC7_E2E_BUILD)"
 export OPENXC7_E2E_BUILD="$E2E_BUILD"
