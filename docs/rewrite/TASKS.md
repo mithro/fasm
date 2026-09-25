@@ -155,7 +155,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T7.2 fpgas.online-test-designs: build every Xilinx design (LiteX +
       openXC7), collect FASM into the corpus, run Rust `fasm2frames` /
       bitstream and compare against the reference flow (after T7.1, T5.9).
-- [ ] T7.3 f4pga-examples: set up the f4pga (VPR based) flow, build all xc7
+- [~] T7.3 f4pga-examples: set up the f4pga (VPR based) flow, build all xc7
       examples, collect FASM, compare frames/bitstreams (after T7.1, T5.9).
 - [ ] T7.4 VTR: build VTR `genfasm`, run the VTR regression designs that can
       produce FASM (f4pga arch defs + VTR `utils/fasm/test`), add to corpus

@@ -608,3 +608,6 @@ what happened, branch/commit references, open issues.
   Rust tests, tests/cli 1608 passed / 12 skipped, flake8 clean. Worktree
   removed. The full version 2 all-parts run (about 70 min) is started in
   the background and its result logged when done.
+* T7.3 (f4pga-examples through the f4pga/VPR flow) started (Opus) in the
+  slot freed by the T5.9 merge; T6.2 running; version 2 all-parts
+  reference run in the background (3 jobs, ~90 min estimate).
