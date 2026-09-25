@@ -638,10 +638,13 @@ def bit_cases(args, work):
             'prjxray-db/artix7/harness/arty-a7/swbut/design.bit',
             'prjxray/test_data/configuration_test.bit',
             'prjxray/test_data/configuration_test.perframecrc.bit',
+            'ToolsTestData/Series7/bram.bit',
             'ToolsTestData/UltraScale/design.bit',
             'ToolsTestData/UltraScalePlus/design.bit',
             'corpus/xilinx/artix7/smoke_x1y0.bit')
         cases = [c for c in cases if c.name in keep]
+    if args.cases:
+        cases = [c for c in cases if args.cases in c.name]
     return cases
 
 
@@ -709,9 +712,65 @@ def per_frame_crc_model(order, ours, arch):
     return out
 
 
-def shifted_frames_match(rw_frm, ours, arch):
-    model = per_frame_crc_model([a for a, _ in rw_frm], ours, arch)
-    return all(w == model[a] for a, w in rw_frm)
+def fdri_packets(data):
+    """The data words of every FDRI write packet, in order."""
+    start = data.find(SYNC) + 4
+    n = (len(data) - start) // 4
+    words = struct.unpack('>%dI' % n, data[start:start + 4 * n])
+    out = []
+    i = 0
+    reg = None
+    while i < len(words):
+        w = words[i]
+        t = w >> 29
+        if t == 1:
+            reg = (w >> 13) & 0x3fff
+            count = w & 0x7ff
+        elif t == 2:
+            count = w & 0x7ffffff
+        else:
+            i += 1
+            continue
+        if reg == 2 and (w >> 27) & 3 == 2 and count:
+            out.append(list(words[i + 1:i + 1 + count]))
+        i += 1 + count
+    return out
+
+
+def explain_per_frame_crc(rw_frm, ours, arch, bit):
+    """None if RapidWright's reading RW_FRM of the per frame CRC bitstream
+    BIT is not explained by `per_frame_crc_model`, else the explanation.
+
+    One more exception is verified exactly: the prjxray reader (and so
+    the Rust reader) writes the pad frame that follows the part's last
+    frame over that frame (`GetNextFrameAddress` has no next address, so
+    the current address is not advanced for the next FDRI packet), while
+    RapidWright has the lost frame at the address before."""
+    order = [a for a, _ in rw_frm]
+    model = per_frame_crc_model(order, ours, arch)
+    bad = [i for i, (a, w) in enumerate(rw_frm) if w != model[a]]
+    if not bad:
+        return (
+            'per frame CRC: RapidWright reads the frames of every row '
+            'one frame address early (model verified on all %d frames)' %
+            len(rw_frm))
+    if bad != [len(order) - 2]:
+        return None
+    packets = fdri_packets(bit.read_bytes())
+    if len(packets) < 2:
+        return None
+    lost, pad = packets[-2], packets[-1]
+    zero = [0] * WORDS_PER_FRAME[arch]
+    if (rw_frm[-2][1] == lost and ours.get(order[-1], zero) == pad
+            and pad == zero and lost != zero):
+        return (
+            'per frame CRC: RapidWright reads the frames of every row '
+            'one frame address early (model verified on all %d '
+            'frames); the last frame of the part (0x%08X) is lost by the '
+            'prjxray-compatible reader (overwritten by the trailing pad '
+            'frame), RapidWright has it at 0x%08X' %
+            (len(rw_frm), order[-1], order[-2]))
+    return None
 
 
 def read_rw_frm(path):
@@ -833,12 +892,10 @@ def compare_bit_case(c, status):
     if status[c.cmd] is None:
         rw = read_rw_frm(c.dir / 'rw.frm')
         st, det = compare_frames(rw, c.ours, words)
-        if (st != 'identical' and per_frame
-                and shifted_frames_match(rw, c.ours, c.arch)):
-            st, det = 'explained', (
-                'per frame CRC: RapidWright reads the frames of every row '
-                'one frame address early (model verified on all %d frames)' %
-                len(rw))
+        if st != 'identical' and per_frame:
+            why = explain_per_frame_crc(rw, c.ours, c.arch, c.bit)
+            if why is not None:
+                st, det = 'explained', why
         _step(res, 'read frames', st, det)
         rw_json = json.loads((c.dir / 'rw.json').read_text())
         probs = compare_header_packets(c.bit, rw_json)
@@ -966,6 +1023,8 @@ def frm_corpus_cases(args):
                 'xc7a35tcsg324-1'))
     if args.quick:
         cases = cases[:3] + cases[-1:]
+    if args.cases:
+        cases = [c for c in cases if args.cases in c.name]
     return cases
 
 
@@ -1032,6 +1091,10 @@ def main(argv=None):
         default=str(
             REPO_ROOT / 'tools' / 'e2e' / 'build' / 'rapidwright-work'))
     ap.add_argument('--parts', help='comma separated part names (layout)')
+    ap.add_argument(
+        '--cases',
+        help='only the bitstream / .frm cases whose name '
+        'contains this')
     ap.add_argument(
         '--flow-out',
         action='append',
