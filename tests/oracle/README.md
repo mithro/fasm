@@ -366,11 +366,11 @@ It creates, all under the gitignored `tests/oracle/build/xilinx/` and
 
 The `f4pga/prjuray` repo itself (`utils/fasm2frames.py`,
 `utils/bit2fasm.py`, ...) is cloned too, but has no `setup.py` -- it is
-not pip-installable. It's kept for Phase 6 (T6.x) use via a `PYTHONPATH`
-wrapper (its `utils` package needs the `prjuray` repo root on
-`PYTHONPATH`, alongside `prjuray-tools` for `prjuray.db`); T5.8 itself
-only needed the `prjuray-tools` Python package (prjxray-shaped API) and
-the C++ tools above, both covered.
+not pip-installable. `uray-fasm2frames-oracle` (T6.2, below) runs its
+`utils/fasm2frames.py` with the `prjuray` repo root and `utils/` on
+`sys.path` (alongside `prjuray-tools`' installed `prjuray` package for
+`prjuray.db`); T5.8 itself only needed the `prjuray-tools` Python package
+(prjxray-shaped API) and the C++ tools above, both covered.
 
 ### Pinned commits
 
@@ -409,6 +409,14 @@ first):
 | `xc7frames2bit-oracle` | the built `xc7frames2bit` C++ binary |
 | `bitread-oracle` | the built `bitread` C++ binary |
 | `gen_part_base_yaml-oracle` | the built `gen_part_base_yaml` C++ binary |
+| `uray-xcframes2bit-oracle` | prjuray-tools' built `xcframes2bit` (installed as `uray-xcframes2bit`) |
+| `uray-bitread-oracle` | prjuray-tools' built `bitread` (installed as `uray-bitread`) |
+| `uray-fasm2frames-oracle` | prjuray's `utils/fasm2frames.py`, run with `venv-xilinx`'s python (`-P`, the prjuray checkout and its `utils/` on `sys.path`, an empty `jinja2` stand-in module: `utils/util.py` imports it for templates `fasm2frames.py` never uses) |
+
+The three `uray-*` wrappers (T6.2) take `URAY_ORACLE_DIR` as the
+`tests/oracle` directory whose `build/` and `venv-xilinx/` they use
+(default: their own), so a worktree without its own oracle build can use
+the main checkout's.
 
 `source tests/oracle/xilinx-env.sh` puts `tests/oracle/build/xilinx/bin`
 on `PATH` and exports `PRJXRAY_DB_ROOT`/`PRJURAY_DB_ROOT` (this repo's

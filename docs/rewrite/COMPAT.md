@@ -378,7 +378,7 @@ which is rule 4, and rule 1 applied to the other error files
 | `.frm` output larger than the disk (`ENOSPC`), broken pipe | a traceback, exit code 1 | `OSError: [Errno 28] ...` / `BrokenPipeError: [Errno 32] Broken pipe`, exit code 1 |
 | Non-ASCII FASM file name | `UnicodeEncodeError` (the ANTLR wrapper encodes the name as ASCII) | the file is read |
 | Segbit whose frame address does not fit in 32 bits, or whose word is more than one frame before the frame start (impossible with the prjxray databases) | a 9+ digit frame address in the `.frm` / `IndexError` | `OverflowError: ...` / `IndexError: list index out of range` |
-| Architecture | Series7 only (101 words per frame; prjuray has its own `fasm2frames.py`) | the word count and the bit unit come from the database's architecture; UltraScale/UltraScale+ output is not verified yet (T6.x) |
+| A prjuray-db (UltraScale+) part | `AssertionError: Mapping file <db>/mapping/devices.yaml does not exist` (prjxray's `Database` only knows prjxray-db) | assembled like prjuray's `utils/fasm2bit.py` (prjuray's assembler: no IO bank, STEPDOWN or PUDC_B handling, `--emit_pudc_b_pullup` ignored, the errors of the `uray-fasm2frames` section) and written as 93 32-bit words per frame, the `.frm` `xcframes2bit` reads. Checked by `tools/difftest-xilinx.py --prjuray`: identical to prjuray's 16-bit `.frm` converted to 32-bit words on every successful run |
 | Database cache | none: every run parses the text database (lazily, per tile type) | the opened part is kept in a binary cache file in `$FASM_XDB_CACHE` (default `$XDG_CACHE_HOME/fasm/db` or `~/.cache/fasm/db`; `0` disables it), written (atomically) by the first run of a part and after any change of its source files. Same output, exit codes and messages with and without it (checked by `rust/fasm-cli/tests/db_cache.rs` and `make xilinx-difftest`); `FASM_XDB_CACHE_VERBOSE=1` adds messages on stderr. See `DESIGN-xilinx-db.md` §8.8 |
 
 `tools/difftest-xilinx.py` applies rules 1 (drops the oracle's
@@ -410,6 +410,16 @@ prjxray's C++ tools of the same name (`tools/xc7frames2bit.cc`,
   with gflags' line breaking, `--version` (exit code 0), `--undefok`,
   `--fromenv`, `--tryfromenv`; an unknown `--architecture` is Series7,
   like the reference's default variant;
+* `--architecture=UltraScale` / `UltraScalePlus` as the plain prjxray
+  checkout implements them (T6.2): the Series7 `part.yaml` types, frame
+  address layout and ECC (13 bits in word 50, computed over the longer or
+  shorter frame: no parity fold for 93 words) with 123 / 93 words per
+  frame and the UltraScale sync header and packet sequence of
+  `bitstream_writer.cc` / `configuration.cc`; `bitread` also compares
+  `-z`'s frames with a 101 word zero frame and masks word 50 in `-x`, `-y`
+  and the hex dump for them (prjuray-tools' own UltraScale support, with
+  its own part types and ECC, is the `xcframes2bit` / `uray-bitread`
+  section below);
 * `xc7frames2bit`: the same messages and exit codes (`Part file X not
   found or invalid`, `Unable to open frm file: X` / `Frames file X not
   found or invalid`, the `Frame <address>: found <n> words instead of
@@ -478,7 +488,7 @@ errors, malformed `.frm`/`.bit` input, every output mode).
 | `--flagfile=FILE` | reads more flags from `FILE` | `ERROR: --flagfile is not supported by this implementation of the prjxray tools`, exit code 1 |
 | `--tab_completion_word=WORD` | prints bash completions of `WORD`, exit code 0 | ignored |
 | gflags' "Did you really mean to set flag ..." warning | only for string flags whose help mentions `true`/`false` (none in these tools) | not implemented |
-| `--architecture=UltraScale`, `UltraScalePlus`, `Spartan6` | supported (UltraScale/UltraScale+ with the Series7 part types and ECC of the plain prjxray checkout) | `xc7frames2bit: --architecture=UltraScale is not supported yet (only Series7)` (or `bitread: ...`), exit code 1 (T6.2) |
+| `--architecture=Spartan6` | supported (65 16-bit word frames, `FAR_MAJ`/`FAR_MIN`) | `xc7frames2bit: --architecture=Spartan6 is not supported yet (only Series7, UltraScale and UltraScalePlus)` (or `bitread: ...`), exit code 1 |
 | A `part.yaml` of another architecture (`!<xilinx/xcupseries/part>`) given to these Series7 tools | depends on what yaml-cpp's Series7 decoder makes of it | `Part file ... not found or invalid` |
 | `.bit` header date and time | the current UTC time | the same, or the time of `$SOURCE_DATE_EPOCH` (seconds since the epoch) when it is set: an extension for reproducible builds, used by the tests. A value that is not an integer is reported (`warning: SOURCE_DATE_EPOCH="..." is not an integer, using the current time` on stderr) and the current time is used |
 | An error writing the `.bit` after the file was created (`ENOSPC`) | ignored: a truncated file, exit code 0 | `Error writing <file>: <error>`, `Failed to write bitstream`, `Exitting`, exit code 1 |
@@ -528,6 +538,141 @@ error cases.
 | Anything `xc7frames2bit` prints on stdout | captured and discarded | nothing is printed |
 | `.bit` header time | the current UTC time | the same, or `$SOURCE_DATE_EPOCH` (see `xc7frames2bit`) |
 | Database cache | none | as for `fasm2frames` (`$FASM_XDB_CACHE`) |
+| UltraScale / UltraScale+ | not supported: xc_fasm has no `--architecture` (it runs `xc7frames2bit` for Series7) and opens the database with prjxray's `Database` (`AssertionError: Mapping file .../mapping/devices.yaml does not exist` for prjuray-db) | a prjuray-db part is assembled like `fasm2frames` does (above), then the bitstream step is Series7 only: an `xcupseries` `--part_file` is `Part file X not found or invalid` and the `CalledProcessError` line, exit code 1 (use `fasm2frames` + `xcframes2bit --architecture=UltraScalePlus`) |
+
+## `xcframes2bit` and `uray-bitread` (prjuray-tools, `rust/fasm-cli/src/{xc7frames2bit,bitread}.rs`, T6.2)
+
+### Rule
+
+The `xcframes2bit` and `uray-bitread` binaries are drop in replacements
+for prjuray-tools' C++ `xcframes2bit` and `bitread`
+(`tools/xcframes2bit.cc`, `tools/bitread.cc` of SymbiFlow/prjuray-tools;
+the oracles `tests/oracle/uray-xcframes2bit-oracle` and
+`tests/oracle/uray-bitread-oracle`, which run the binaries
+`tests/oracle/setup-xilinx.sh` installs as `uray-xcframes2bit` and
+`uray-bitread`). Everything of the `xc7frames2bit` and `bitread`
+section above applies (the gflags emulation, the messages, exit codes
+and aborts, the unusual files, the streaming), with these differences
+of the prjuray-tools sources:
+
+* gflags 2.2.2: `--helpfull` instead of `--helpful`, the tools' flags
+  listed under `tools/xcframes2bit.cc` / `tools/bitread.cc`;
+* `--architecture`: `Series7`, `UltraScale` and `UltraScalePlus` with
+  prjuray-tools' own part types (`!<xilinx/xcuseries/part>`,
+  `!<xilinx/xcupseries/part>`: flat `rows` whose number includes the
+  half bit, or `configuration_ranges`), frame address layouts (UltraScale
+  = Series7's; UltraScale+ one bit higher with an 8-bit minor) and frame
+  ECC (48 bits in words 60/61 of the 123-word UltraScale frame, words
+  45/46 of the 93-word UltraScale+ frame); a `part.yaml` with another
+  architecture's tag is `Part file X not found or invalid`; an unknown
+  name aborts (`terminate called after throwing an instance of
+  'absl::bad_variant_access'` / `what():  Bad variant access`, SIGABRT;
+  `uray-bitread` prints `Bitstream size` first);
+* `xcframes2bit` checks every `.frm` frame address against the part
+  (`readFrames(file, part)`): the first one that is not in the part ends
+  the read with `Frames file contains an invalid frame: <address>` (the
+  C++ `FrameAddress` `operator<<`: `[<%#10x>] ` then `TOP`/`BOTTOM` for
+  Series7, ` Row=%2d Column=%2d Minor=%2d Type=<CLB/IO/CLK|Block
+  RAM|Config CLB|>`), then `Frames file X not found or invalid`, exit
+  code 1; the word count warnings of the lines before it are printed;
+* the `.bit` of `xcframes2bit` (still `Generator=xc7frames2bit`) is byte
+  for byte the reference's: the 6 (UltraScale) or 21 (UltraScale+) sync
+  words, the UltraScale packet sequence (two leading NOPs, `FAR` before
+  `UNKNOWN`, `COR0 = 0x38003FE5`, `COR1 = 0x400000`, `MASK`/`CTL0`
+  `0x1`/`0x101`, final `MASK`/`CTL0` `0x101`), the ECC of each frame, two
+  zero frames after each (row, bus) and at the end;
+* `uray-bitread` verifies the ECC of every selected frame (after `-z`,
+  `-f` and `-F`): a mismatch is `ERROR: ECC verification of frame
+  <address> failed.` on stderr and exit code 1, or with `-E` `WARNING:
+  ...` on stdout and the frame is printed; a frame too short for its ECC
+  words (the last frame of an `FDRI` write whose length is not a multiple
+  of the frame size) aborts (`std::out_of_range`, `what():  Span::at
+  failed bounds check`), and like the reference's `abort()` the output
+  still buffered (stdout, the `-o` file) is lost; `-x`/`-y` leave out the
+  ECC bits of the architecture (`is_ecc_bit`) unless `-C`; the hex dump
+  masks word 50 for Series7 only; `-z` compares with a zero frame of the
+  architecture's size; `-C`'s help is `do not ignore the ECC bits in each
+  frame`; `--aux` writes the same text as prjxray's (its `fseek(-1)`
+  trick replaces the trailing space), except on an unseekable file (a
+  pipe), where the reference's trailing spaces are kept too.
+
+`tools/difftest-xilinx.py --prjuray` (`make uray-difftest`) runs both
+`xcframes2bit`s on the frames of every successful run of its generated
+prjuray-db corpus (converted from `uray-fasm2frames`' 16-bit words) and
+both `uray-bitread`s with 9 flag sets on the result, and both
+`uray-bitread`s on the Vivado bitstreams of prjuray-tools'
+`ToolsTestData.tar.gz` (Series7 `design.bit`/`bram.bit`, UltraScale
+`design.bit`, UltraScale+ `design.bit`/`test.bit`) with the round trip
+bit -> `--frm_out` -> both `xcframes2bit`s -> both `uray-bitread`s;
+`tests/cli/test_uray_tools_compat.py` compares the command lines (gflags,
+malformed `.frm` / `.bit` inputs, ECC failures, aborts) on the synthetic
+UltraScale+ database (`rust/fasm-xilinx/testdata/synthetic-usp-db`).
+
+### Differences
+
+| Case | Original (prjuray-tools C++ tools) | Rust |
+|---|---|---|
+| The program name | the tools are called `xcframes2bit` and `bitread` (the oracle build installs them as `uray-xcframes2bit` / `uray-bitread`) | `xcframes2bit` and `uray-bitread` (`bitread` is prjxray's); the name only shows in the help and `--helppackage` (gflags matches it against `tools/<name>.cc`: `uray-bitread --helppackage` prints `Unable to find a package for file=uray-bitread` like the oracle binary of that name) |
+| Source file names in the help | absolute build paths (`/…/prjuray-tools/tools/xcframes2bit.cc`) | relative (`tools/xcframes2bit.cc`), like the prjxray tools |
+| `--architecture=Spartan6` | supported | `... is not supported yet (only Series7, UltraScale and UltraScalePlus)`, exit code 1 |
+| An `xcu(p)series` `part.yaml` whose values do not fit the frame address fields (a row key >= 64, a column >= 1024, an UltraScale+ `frame_count` > 256) | accepted: with `frame_count: 300` `xcframes2bit` writes a bitstream and exits 0; with row key 64 or column 1024 `addMissingFrames` loops forever (the masked address is found valid in row 0 again; timed out at 600 s) | `Part file X not found or invalid`, exit code 1 (the field check of `Part::new`, `rust/fasm-xilinx/src/part.rs`; `uray-bitread`: `Part file not found or invalid`). The hang is deliberately not reproduced. Series7 is unaffected (prjxray also rejects `frame_count: 200`) |
+| `uray-bitread --frm_out=FILE` | | the Rust extension of `bitread` (the frames as a `.frm` with the ECC bits of the architecture cleared unless `-C`) |
+| An abort in `uray-bitread` after frames were printed (a short frame) | the output of the stdio buffers is lost: 4 KiB blocks of it may have been written already | the unflushed part of a 64 KiB buffer is lost: the two tools lose the same when less than 4 KiB were printed since the last `std::endl` (the header lines), otherwise the amounts differ |
+| `uray-bitread` without `-E` on a frame whose ECC fails, stdout and stderr merged | the `ERROR` line comes before the frames printed so far, which are still buffered, unless more than the stdio buffer was printed | the same up to 64 KiB of frames |
+| The rest of the `xc7frames2bit` / `bitread` section (flagfile, tab completion, `SOURCE_DATE_EPOCH`, write errors, trailing bytes, huge `configuration_ranges`) | | the same |
+
+## `uray-fasm2frames` (prjuray's `utils/fasm2frames.py`, `rust/fasm-cli/src/uray_fasm2frames.rs`, T6.2)
+
+### Rule
+
+The `uray-fasm2frames` binary is a drop in replacement for prjuray's
+`utils/fasm2frames.py` (SymbiFlow/prjuray, on prjuray-tools' `prjuray`
+package; the oracle `tests/oracle/uray-fasm2frames-oracle`):
+
+* the same arguments (argparse emulation): `--db-root DB_ROOT` (required
+  unless `URAY_DATABASE_DIR` and `URAY_DATABASE` are set), `--part PART`
+  (required unless `URAY_PART` is set), `--sparse`, `--roi ROI`,
+  `--debug`, `--dump_bits`, `fn_in`, `fn_out` (default `/dev/stdout`);
+  the same usage errors (exit code 2); `-h`/`--help` fails like the
+  reference, whose argparse expands the `%` of the `--dump_bits` help
+  (`bit_%08x_%03d_%02d`): `TypeError: %x format: an integer is required,
+  not dict`, exit code 1, no help;
+* the output file is opened first, then the database (prjuray-db
+  layout, `<db-root>/<part>/tilegrid.json`); the FASM file, the ROI's
+  `required_features` and the part's `required_features.fasm` are
+  assembled with prjuray's `utils/fasm_assembler.py` semantics (a copy
+  of prjxray's before its word check): no IO bank, STEPDOWN or PUDC_B
+  handling; bits are keyed and checked in 16-bit words; a bit beyond the
+  end of the 186 16-bit word frame is kept (its frame is output) and a
+  set one is `IndexError: list index out of range`; conflicts are
+  `utils.fasm_assembler.FasmInconsistentBits: FASM line "..." wanted to
+  set bit (frame, 16-bit word, bit) ...`, unknown features
+  `utils.fasm_assembler.FasmLookupError: ...`;
+* the `.frm` has the frames as 16-bit words (186 per UltraScale+ frame,
+  `0x%08X` each, the low half of each 32-bit word first); `--dump_bits`
+  writes `bit_%08x_%03d_%02d` (frame, 32-bit word, bit) lines instead;
+  `--debug` prints the sparse dump in 16-bit words on stdout before the
+  output is written;
+* errors: the last line of the reference's traceback, exit code 1, as
+  for `fasm2frames` (its rules 1 to 4 and database errors apply).
+
+This `.frm` is not what `xcframes2bit` reads (it warns `found 186 words
+instead of 93` and skips every line): prjuray's `utils/fasm2bit.py`
+converts the frames to 32-bit words first; the Rust `fasm2frames` writes
+those directly for a prjuray-db part (the `fasm2frames` section).
+
+`tools/difftest-xilinx.py --prjuray` generates a corpus for every
+prjuray-db `zynqusp` part and compares both tools with the dense,
+`--sparse`, `--sparse --debug`, `--dump_bits` and ROI variants;
+`tests/cli/test_uray_tools_compat.py` covers the command line.
+
+### Differences
+
+| Case | Original (`utils/fasm2frames.py`) | Rust |
+|---|---|---|
+| Every difference of the `fasm2frames` section that is not about the IO banks, STEPDOWN or PUDC_B (the ANTLR parser cases, error message forms, database errors, the order of `required_features.fasm`, the database cache) | | the same |
+| `--debug` with the `.frm` written to stdout | the dump (`print`) and the `.frm` (a second file object on `/dev/stdout`) interleave by Python's buffering | the dump first, then the `.frm` |
+| The oracle's environment | `utils/util.py` imports `jinja2` at the top (for templates `fasm2frames.py` never uses); the oracle venv has none, so `uray-fasm2frames-oracle` provides an empty stand-in module | not needed |
 
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 

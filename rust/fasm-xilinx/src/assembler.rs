@@ -309,6 +309,9 @@ struct Core<'db> {
     in_use: HashSet<(u32, u32)>,
     last_in_use: Option<(u32, u32)>,
     warnings: Vec<String>,
+    /// prjuray's `utils/fasm_assembler.py` semantics
+    /// ([`FasmAssembler::set_prjuray`]).
+    prjuray: bool,
 }
 
 impl fmt::Debug for FasmAssembler<'_> {
@@ -373,10 +376,26 @@ impl<'db> FasmAssembler<'db> {
                 in_use: HashSet::new(),
                 last_in_use: None,
                 warnings: Vec::new(),
+                prjuray: false,
             },
             lines: Vec::new(),
             callback: None,
         })
+    }
+
+    /// Switches to the semantics of prjuray's `utils/fasm_assembler.py`
+    /// (a copy of prjxray's `fasm_assembler.py` before prjxray added its
+    /// word check, working in 16-bit words):
+    ///
+    /// * a bit beyond the end of the frame is not dropped with a warning:
+    ///   it is kept like any other bit (it takes part in the conflict
+    ///   checks and its frame is output), and [`FasmAssembler::get_frames`]
+    ///   fails with Python's `IndexError: list index out of range` if it
+    ///   is set;
+    /// * the bit of a [`AssemblerError::InconsistentBits`] message is
+    ///   `(frame, 16-bit word, bit)`.
+    pub fn set_prjuray(&mut self, prjuray: bool) {
+        self.core.prjuray = prjuray;
     }
 
     /// The database.
@@ -666,7 +685,7 @@ impl Core<'_> {
             let absolute = self.architecture.segbit_absolute_bit(offset, segbit);
             let word = absolute.div_euclid(32);
             let bit = absolute.rem_euclid(32) as u32;
-            if word >= words_per_frame {
+            if word >= words_per_frame && !self.prjuray {
                 let function = if segbit.is_set {
                     "frame_set"
                 } else {
@@ -689,6 +708,11 @@ impl Core<'_> {
                             ("set", "cleared")
                         } else {
                             ("clear", "set")
+                        };
+                        let (word, bit) = if self.prjuray {
+                            (absolute.div_euclid(16), absolute.rem_euclid(16) as u32)
+                        } else {
+                            (word, bit)
                         };
                         return Err(AssemblerError::InconsistentBits(format!(
                             "FASM line \"{}\" wanted to {wanted} bit ({frame}, {word}, {bit}) \

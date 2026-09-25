@@ -55,9 +55,24 @@ the Cargo workspace under `rust/`:
 * `rust/fasm-cli`: the `fasm` command line tool (a drop-in replacement for
   the original `fasm/tool.py` console script), the Xilinx tools
   `fasm2frames`, `xcfasm` (f4pga-xc-fasm), `xc7frames2bit` and `bitread`
-  (prjxray), and `fasm-db-cache`.
-* `rust/fasm-xilinx`: Xilinx 7 series database loading and bitstream
-  generation (in progress, see `docs/rewrite/TASKS.md`).
+  (prjxray), the UltraScale / UltraScale+ tools `xcframes2bit` and
+  `uray-bitread` (prjuray-tools' `xcframes2bit` and `bitread`) and
+  `uray-fasm2frames` (prjuray's `utils/fasm2frames.py`), and
+  `fasm-db-cache`. `fasm2frames` also assembles prjuray-db (UltraScale+)
+  parts, into the 32-bit word `.frm` files `xcframes2bit` reads:
+
+  ```
+  fasm2frames --db-root prjuray-db/zynqusp --part xczu3eg-sfvc784-1-e \
+      design.fasm design.frm
+  xcframes2bit --architecture=UltraScalePlus --part_name=xczu3eg \
+      --part_file=prjuray-db/zynqusp/xczu3eg-sfvc784-1-e/part.yaml \
+      --frm_file=design.frm --output_file=design.bit
+  uray-bitread --architecture=UltraScalePlus -z -y \
+      --part_file=prjuray-db/zynqusp/xczu3eg-sfvc784-1-e/part.yaml design.bit
+  ```
+* `rust/fasm-xilinx`: Xilinx database loading (prjxray-db, prjuray-db),
+  FASM -> frames, and the Series7, UltraScale and UltraScale+ bitstream
+  writer and reader (see `docs/rewrite/DESIGN-xilinx-db.md`).
 * `rust/fasm-capi`: the C ABI (`libfasm_capi`), with a generated header at
   `include/fasm/fasm.h` (see `docs/rewrite/DESIGN-capi.md`).
 * `rust/fasm-python`: the pyo3 extension module behind the Python package

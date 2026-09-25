@@ -289,11 +289,54 @@ configuration_ranges:
     // Bottom row 1 without a row 0: not reached by the walk (prjxray).
     assert!(part.is_valid_frame_address(addr(1, true, 1, 2, 0)));
     assert_eq!(part.frame_count(), 4);
-    let flat = Part::from_yaml_str(
-        "!<xilinx/xcupseries/part>\nidcode: 1\nconfiguration_ranges: []\n",
+    // UltraScale+ (`xcupseries`): the row includes the half bit, no
+    // `row_half`.
+    let usp = Part::from_yaml_str(
+        "!<xilinx/xcupseries/part>
+idcode: 1
+configuration_ranges:
+  - begin: !<xilinx/xcupseries/frame_address>
+      block_type: BLOCK_RAM
+      row: 33
+      column: 2
+      minor: 254
+    end: !<xilinx/xcupseries/configuration_frame_address>
+      block_type: BLOCK_RAM
+      row: 33
+      column: 3
+      minor: 0
+",
+        Architecture::Series7,
+    )
+    .unwrap();
+    let arch = Architecture::UltraScalePlus;
+    assert_eq!(usp.architecture, arch);
+    let first = FrameAddress::compose_row_index(arch, 1, false, 33, 2, 254);
+    assert!(first.is_bottom_half(arch));
+    assert!(usp.is_valid_frame_address(first));
+    // minor 255 is in the range, minor 0 of column 3 is not.
+    assert_eq!(usp.frame_count(), 256);
+    // A Series7 address in an UltraScale+ part.
+    let wrong = Part::from_yaml_str(
+        "!<xilinx/xcupseries/part>
+idcode: 1
+configuration_ranges:
+  - begin: !<xilinx/xc7series/frame_address>
+      block_type: CLB_IO_CLK
+      row_half: top
+      row: 0
+      column: 0
+      minor: 0
+    end: !<xilinx/xc7series/frame_address>
+      block_type: CLB_IO_CLK
+      row_half: top
+      row: 0
+      column: 0
+      minor: 1
+",
         Architecture::Series7,
     );
-    assert!(flat.is_err());
+    assert!(wrong.is_err());
 }
 
 #[test]

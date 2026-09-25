@@ -26,20 +26,45 @@
 //! and exit codes as the reference for every flag (`-c` is accepted and
 //! ignored, like in the reference). Extension: `--frm_out=<file>` writes
 //! the selected frames as a `.frm` file (ECC bits cleared unless `-C`),
-//! the inverse of `xc7frames2bit`. Only the Series7 architecture is
-//! implemented; see the `bitread` section of `docs/rewrite/COMPAT.md`.
+//! the inverse of `xc7frames2bit`.
+//!
+//! [`Flavor::Prjuray`] (the `uray-bitread` binary) is prjuray-tools'
+//! `bitread` instead: the `xcuseries`/`xcupseries` parts, frame addresses
+//! and ECC for `--architecture=UltraScale`/`UltraScalePlus` (prjxray's
+//! uses the Series7 ones with the UltraScale(+) word counts), the frame
+//! ECC verified (`ERROR: ECC verification of frame ... failed.`, `-E`
+//! makes it a warning), the ECC bits of each architecture left out of
+//! `-x`/`-y`, `-z` with the architecture's frame size, an abort for an
+//! unknown `--architecture`, and gflags' `--helpfull`. Spartan6 is not
+//! implemented; see the `bitread` sections of `docs/rewrite/COMPAT.md`.
 
 #![forbid(unsafe_code)]
 
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Seek, Write};
 
-use fasm_xilinx::bitstream::{BitstreamReader, Configuration};
+use fasm_xilinx::bitstream::{BitstreamReader, Configuration, Ecc};
 use fasm_xilinx::{Architecture, FrameAddress, Frames};
 
-use crate::gflags::{self, Flag, FlagType, Outcome, Program};
-use crate::xc7frames2bit::{architecture, os_path, read_part, Env, PartError, ABORT};
+use crate::gflags::{self, Flag, FlagType, Gflags, Outcome, Program};
+use crate::xc7frames2bit::{
+    architecture, cpp_frame_address, os_path, read_part, ArchitectureError, Env, PartError, ABORT,
+};
+
+/// Which reference `bitread` is reproduced.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Flavor {
+    /// prjxray's `tools/bitread.cc` (the `bitread` binary).
+    Prjxray,
+    /// prjuray-tools' `tools/bitread.cc` (the `uray-bitread` binary).
+    Prjuray,
+}
 
 const FILE: &str = "tools/bitread.cc";
+
+/// The `std::terminate` message of `verifyECC` on a frame too short for
+/// its ECC words (`absl::Span::at` throws `std::out_of_range`).
+const SPAN_AT_TERMINATE: &str = "terminate called after throwing an instance of 'std::out_of_range'\n  what():  Span::at failed bounds check\n";
+
 /// The file the help lists the Rust only flags under.
 const EXTENSION_FILE: &str = "rust/fasm-cli/src/bitread_extensions.rs";
 
@@ -56,6 +81,12 @@ The fields have the following meaning:\n  \
 
 /// The flags of `bitread` (and the `--frm_out` extension).
 pub fn flags() -> Vec<Flag> {
+    flags_of(Flavor::Prjxray)
+}
+
+/// The flags of the `bitread` of `flavor` (and the `--frm_out`
+/// extension): prjuray-tools' has `-E` and another `-C` help text.
+pub fn flags_of(flavor: Flavor) -> Vec<Flag> {
     use FlagType::{Bool, Int32, String};
     let f = |name, ty, default, help| Flag {
         name,
@@ -64,9 +95,25 @@ pub fn flags() -> Vec<Flag> {
         default,
         help,
     };
-    vec![
+    let mut flags = match flavor {
+        Flavor::Prjxray => vec![f(
+            "C",
+            Bool,
+            "false",
+            "do not ignore the checksum in each frame",
+        )],
+        Flavor::Prjuray => vec![
+            f(
+                "C",
+                Bool,
+                "false",
+                "do not ignore the ECC bits in each frame",
+            ),
+            f("E", Bool, "false", "Ignore failing frame ECC verification"),
+        ],
+    };
+    flags.extend([
         f("c", Bool, "false", "output '*' for repeating patterns"),
-        f("C", Bool, "false", "do not ignore the checksum in each frame"),
         f(
             "f",
             Int32,
@@ -114,7 +161,8 @@ pub fn flags() -> Vec<Flag> {
             default: "",
             help: "write the frames selected by -z, -f and -F to this file in the .frm format of fasm2frames and xc7frames2bit (the ECC bits are cleared unless -C) [Rust extension]",
         },
-    ]
+    ]);
+    flags
 }
 
 /// C `strtol(s, nullptr, 0)`: leading white space, a sign, a `0x` (hex)
@@ -181,34 +229,61 @@ impl Selection {
 
 /// The `--aux` file (`PrintHeader`, `PrintFpgaConfigurationLogicData`,
 /// `PrintFrameAddresses`).
-fn aux_text(bytes: &[u8], reader: &BitstreamReader, config: &Configuration<'_>) -> Vec<u8> {
+///
+/// prjuray-tools' `ExtractHeader` / `ExtractFpgaConfigurationLogicData`
+/// print `"<label>: "` and `"%02X "` / `"%08X "` per item, then
+/// `fseek(aux_fp, -1, SEEK_CUR)` so that the newline overwrites the last
+/// space: the same text as prjxray's `" %02X"` per item, unless the file
+/// cannot seek (a pipe), where the spaces stay (`trailing_spaces`).
+fn aux_text(
+    bytes: &[u8],
+    reader: &BitstreamReader,
+    config: &Configuration<'_>,
+    trailing_spaces: bool,
+) -> Vec<u8> {
     let mut out = Vec::new();
-    if let Some(sync) = bytes.windows(4).position(|w| w == [0xAA, 0x99, 0x55, 0x66]) {
-        out.extend_from_slice(b"Header bytes:");
-        for b in &bytes[..sync + 4] {
-            out.extend_from_slice(format!(" {b:02X}").as_bytes());
+    let line = |out: &mut Vec<u8>, label: &[u8], items: &mut dyn Iterator<Item = String>| {
+        out.extend_from_slice(label);
+        if trailing_spaces {
+            out.push(b' ');
+            for item in items {
+                out.extend_from_slice(item.as_bytes());
+                out.push(b' ');
+            }
+        } else {
+            for item in items {
+                out.push(b' ');
+                out.extend_from_slice(item.as_bytes());
+            }
         }
         out.push(b'\n');
+    };
+    if let Some(sync) = bytes.windows(4).position(|w| w == [0xAA, 0x99, 0x55, 0x66]) {
+        line(
+            &mut out,
+            b"Header bytes:",
+            &mut bytes[..sync + 4].iter().map(|b| format!("{b:02X}")),
+        );
     }
     let words = reader.words();
     let wcfg = words
         .windows(2)
         .position(|w| w == [0x3000_8001, 0x1])
         .unwrap_or(words.len());
-    out.extend_from_slice(b"FPGA configuration logic prefix:");
-    for w in &words[..wcfg] {
-        out.extend_from_slice(format!(" {w:08X}").as_bytes());
-    }
-    out.push(b'\n');
+    line(
+        &mut out,
+        b"FPGA configuration logic prefix:",
+        &mut words[..wcfg].iter().map(|w| format!("{w:08X}")),
+    );
     let null = words
         .windows(2)
         .rposition(|w| w == [0x3000_8001, 0x0])
         .unwrap_or(words.len());
-    out.extend_from_slice(b"FPGA configuration logic suffix:");
-    for w in &words[null..] {
-        out.extend_from_slice(format!(" {w:08X}").as_bytes());
-    }
-    out.push(b'\n');
+    line(
+        &mut out,
+        b"FPGA configuration logic suffix:",
+        &mut words[null..].iter().map(|w| format!("{w:08X}")),
+    );
     out.extend_from_slice(b"Frame addresses in bitstream: ");
     let n = config.len();
     for (i, (address, _)) in config.frames().enumerate() {
@@ -254,9 +329,28 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> u8 {
+    run_tool(Flavor::Prjxray, argv0, args, env, stdin, stdout, stderr)
+}
+
+/// [`run`] for the `bitread` of `flavor`.
+pub fn run_tool(
+    flavor: Flavor,
+    argv0: &[u8],
+    args: &[Vec<u8>],
+    env: &Env,
+    stdin: &mut dyn Read,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> u8 {
     let mut out = BufWriter::with_capacity(1 << 16, stdout);
-    let code = run_streamed(argv0, args, env, stdin, &mut out, stderr);
-    let _ = out.flush();
+    let code = run_streamed(flavor, argv0, args, env, stdin, &mut out, stderr);
+    if code == ABORT {
+        // An abort loses what the reference's stdout buffer holds: every
+        // line written with `std::endl` has been flushed already.
+        let _ = out.into_parts();
+    } else {
+        let _ = out.flush();
+    }
     code
 }
 
@@ -276,6 +370,7 @@ fn endl_line(stdout: &mut dyn Write, line: &str) {
 }
 
 fn run_streamed(
+    flavor: Flavor,
     argv0: &[u8],
     args: &[Vec<u8>],
     env: &Env,
@@ -289,7 +384,11 @@ fn run_streamed(
     let program = Program {
         argv0: argv0.to_vec(),
         usage,
-        flags: flags(),
+        flags: flags_of(flavor),
+        gflags: match flavor {
+            Flavor::Prjxray => Gflags::Prjxray,
+            Flavor::Prjuray => Gflags::Prjuray,
+        },
     };
     let parsed = match gflags::parse(&program, args, &|name| env.get(name)) {
         Outcome::Run(parsed) => parsed,
@@ -342,12 +441,23 @@ fn run_streamed(
     };
     endl_line(stdout, &format!("Bitstream size: {} bytes\n", bytes.len()));
 
-    if let Err(message) = architecture("bitread", parsed.string("architecture")) {
-        error(stdout, stderr, &[message.as_bytes()]);
-        return 1;
-    }
-    let arch = Architecture::Series7;
-    let wpf = arch.words_per_frame();
+    let prjuray = flavor == Flavor::Prjuray;
+    let format = match architecture("bitread", prjuray, parsed.string("architecture")) {
+        Ok(format) => format,
+        Err(ArchitectureError::Unsupported(message)) => {
+            error(stdout, stderr, &[message.as_bytes()]);
+            return 1;
+        }
+        Err(ArchitectureError::Abort(message)) => {
+            error(stdout, stderr, &[message.as_bytes()]);
+            return ABORT;
+        }
+    };
+    let arch = format.addressing;
+    let wpf = format.words_per_frame;
+    // `-z` compares with `std::vector<uint32_t> zero_frame(N)`: prjxray's N is
+    // always 101, prjuray-tools' the architecture's word count.
+    let zero_len = if prjuray { wpf } else { 101 };
     let Some(reader) = BitstreamReader::from_bytes(&bytes) else {
         error(stdout, stderr, &[b"Input doesn't look like a bitstream\n"]);
         return 1;
@@ -356,7 +466,7 @@ fn run_streamed(
         stdout,
         &format!("Config size: {} words\n", reader.words().len()),
     );
-    let part = match read_part(parsed.string("part_file")) {
+    let part = match read_part(parsed.string("part_file"), arch) {
         Ok(part) => part,
         Err(PartError::Abort(message)) => {
             error(stdout, stderr, &[message.as_bytes()]);
@@ -367,7 +477,7 @@ fn run_streamed(
             return 1;
         }
     };
-    let Ok(config) = reader.configuration(&part) else {
+    let Ok(config) = reader.configuration_with(&part, &format) else {
         error(
             stdout,
             stderr,
@@ -397,8 +507,11 @@ fn run_streamed(
     }
     let aux = parsed.string("aux");
     if !aux.is_empty() {
-        let text = aux_text(&bytes, &reader, &config);
-        let written = std::fs::File::create(os_path(aux)).map(|mut f| f.write_all(&text));
+        let written = std::fs::File::create(os_path(aux)).map(|mut f| {
+            let unseekable = f.stream_position().is_err();
+            let text = aux_text(&bytes, &reader, &config, prjuray && unseekable);
+            f.write_all(&text)
+        });
         if written.is_err() {
             let _ = stdout.write_all(b"Can't open aux output file '");
             let _ = stdout.write_all(aux);
@@ -411,33 +524,65 @@ fn run_streamed(
     // and written out.
     let to_stdout = file.is_none();
     let big_c = parsed.bool("C");
+    let big_e = prjuray && parsed.bool("E");
     let (x, y, p) = (parsed.bool("x"), parsed.bool("y"), parsed.bool("p"));
+    let frame_format = FrameFormat {
+        to_stdout,
+        arch,
+        ecc: (!big_c).then_some(format.ecc),
+        hex_mask_word_50: !big_c && (!prjuray || format.architecture == Architecture::Series7),
+        x,
+        y,
+        p,
+    };
     let mut pgmdata: Vec<&[u32]> = Vec::new();
     let mut pgmsep: Vec<usize> = Vec::new();
     let mut chunk: Vec<u8> = Vec::with_capacity(1 << 16);
+    // `-E` warnings (`std::cout`) while the frames go to the `-o` file:
+    // nothing else is written to stdout until `DONE`.
+    let mut stdout_warnings: Vec<u8> = Vec::new();
     let mut write_failed = false;
+    let mut aborted = false;
     {
         let f: &mut dyn Write = match file.as_mut() {
             Some(file) => file,
             None => &mut *stdout,
         };
         for (address, words) in config.frames() {
-            if !selection.selects(address, words, wpf) {
+            if !selection.selects(address, words, zero_len) {
                 continue;
             }
             chunk.clear();
-            format_frame(
-                &mut chunk,
-                address,
-                words,
-                FrameFormat {
-                    to_stdout,
-                    big_c,
-                    x,
-                    y,
-                    p,
-                },
-            );
+            if prjuray {
+                // `verifyECC<ArchType>` after the selection.
+                match format.ecc.verify(words) {
+                    Some(true) => {}
+                    Some(false) => {
+                        let message = format!(
+                            "ECC verification of frame {} failed.\n",
+                            cpp_frame_address(arch, FrameAddress(address))
+                        );
+                        if !big_e {
+                            // `std::cerr` (unbuffered); the frames printed
+                            // so far are still in stdout's buffer.
+                            let _ = stderr.write_all(format!("ERROR: {message}").as_bytes());
+                            let _ = stderr.flush();
+                            return 1;
+                        }
+                        let warning = format!("WARNING: {message}");
+                        if to_stdout {
+                            chunk.extend_from_slice(warning.as_bytes());
+                        } else {
+                            stdout_warnings.extend_from_slice(warning.as_bytes());
+                        }
+                    }
+                    None => {
+                        aborted = true;
+                        break;
+                    }
+                }
+            }
+            format_frame(&mut chunk, address, words, frame_format);
             if p {
                 let minor = FrameAddress(address).minor(arch);
                 if minor == 0 && !pgmdata.is_empty() {
@@ -447,11 +592,23 @@ fn run_streamed(
             }
             write_failed |= f.write_all(&chunk).is_err();
         }
-        if p {
+        if p && !aborted {
             write_failed |= write_pgm(f, &pgmdata, &pgmsep, wpf).is_err();
         }
-        write_failed |= f.flush().is_err();
+        if !aborted {
+            write_failed |= f.flush().is_err();
+        }
     }
+    if aborted {
+        // `std::terminate` -> `abort()`: the output still in the stdio
+        // buffers (stdout's and the -o file's) is lost.
+        if let Some(file) = file.take() {
+            let _ = file.into_parts();
+        }
+        let _ = stderr.write_all(SPAN_AT_TERMINATE.as_bytes());
+        return ABORT;
+    }
+    let _ = stdout.write_all(&stdout_warnings);
     if file.is_some() && write_failed {
         error(stdout, stderr, &[b"Error writing '", &o, b"'\n"]);
         return 1;
@@ -463,7 +620,7 @@ fn run_streamed(
         let mut frames = Frames::new(wpf);
         for (address, words) in config.to_frames(!big_c, false).iter() {
             let original = config.get(address).unwrap_or_default();
-            if selection.selects(address, original, wpf) {
+            if selection.selects(address, original, zero_len) {
                 frames.insert_if_absent(address, words);
             }
         }
@@ -487,7 +644,13 @@ fn run_streamed(
 #[derive(Clone, Copy)]
 struct FrameFormat {
     to_stdout: bool,
-    big_c: bool,
+    /// The frame address layout (the C++ `FrameAddress` type).
+    arch: Architecture,
+    /// The ECC bits `-x`/`-y` leave out (none with `-C`).
+    ecc: Option<Ecc>,
+    /// The hex dump clears the Series7 ECC bits of word 50 (prjxray: for
+    /// every architecture unless `-C`; prjuray-tools: for Series7 only).
+    hex_mask_word_50: bool,
     x: bool,
     y: bool,
     p: bool,
@@ -495,16 +658,20 @@ struct FrameFormat {
 
 /// The text of one frame (everything but the `-p` image).
 fn format_frame(f: &mut Vec<u8>, address: u32, words: &[u32], format: FrameFormat) {
-    let fields = FrameAddress(address).fields(Architecture::Series7);
+    let frame = FrameAddress(address);
+    let arch = format.arch;
+    // The C++ `row()` includes the half bit for UltraScale(+).
+    let (block_type, bottom, row, column, minor) = (
+        frame.block_type_raw(arch),
+        u8::from(frame.is_bottom_half(arch)),
+        frame.row_index(arch),
+        frame.column(arch),
+        frame.minor(arch),
+    );
     if format.to_stdout {
         f.extend_from_slice(
             format!(
-                "Frame 0x{address:08x} (Type={} Top={} Row={} Column={} Minor={}):\n",
-                fields.block_type,
-                u8::from(fields.bottom),
-                fields.row,
-                fields.column,
-                fields.minor
+                "Frame 0x{address:08x} (Type={block_type} Top={bottom} Row={row} Column={column} Minor={minor}):\n",
             )
             .as_bytes(),
         );
@@ -517,22 +684,14 @@ fn format_frame(f: &mut Vec<u8>, address: u32, words: &[u32], format: FrameForma
         // formatted by hand: this is most of bitread's run time.
         let prefix = format!("bit_{address:08x}_").into_bytes();
         let suffix = if format.x {
-            format!(
-                "_t{}_h{}_r{}_c{}_m{}\n",
-                fields.block_type,
-                u8::from(fields.bottom),
-                fields.row,
-                fields.column,
-                fields.minor
-            )
-            .into_bytes()
+            format!("_t{block_type}_h{bottom}_r{row}_c{column}_m{minor}\n").into_bytes()
         } else {
             b"\n".to_vec()
         };
         for (i, &word) in words.iter().enumerate() {
             let mut bits = word;
-            if i == 50 && !format.big_c {
-                bits &= !0x1FFF;
+            if let Some(ecc) = format.ecc {
+                bits &= !ecc.ecc_mask(i);
             }
             while bits != 0 {
                 let k = bits.trailing_zeros() as usize;
@@ -552,10 +711,10 @@ fn format_frame(f: &mut Vec<u8>, address: u32, words: &[u32], format: FrameForma
             f.extend_from_slice(format!(".frame 0x{address:08x}\n").as_bytes());
         }
         for (i, &word) in words.iter().enumerate() {
-            let value = if i != 50 || format.big_c {
-                word
-            } else {
+            let value = if i == 50 && format.hex_mask_word_50 {
                 word & 0xFFFF_E000
+            } else {
+                word
             };
             f.extend_from_slice(format!("{value:08x}").as_bytes());
             f.extend_from_slice(if i % 6 == 5 { b"\n" } else { b" " });

@@ -2190,10 +2190,9 @@ differences are in the `xc7frames2bit`/`bitread` and `xcfasm` sections of
   `Configuration::to_frames(clear_ecc, skip_zero)` (bit -> `Frames` ->
   `.frm`).
 
-Only Series7 is implemented: other architectures are
-`BitstreamError::UnsupportedArchitecture` / `ReadError::...` (T6.2 adds
-UltraScale/UltraScale+, whose plain prjxray support uses the Series7
-frame address and ECC, while prjuray-tools has its own).
+Only Series7 was implemented in T5.6; T6.2 added UltraScale and
+UltraScale+, in prjxray's and in prjuray-tools' variants
+(`BitstreamFormat`, §8.10).
 
 **Reference behaviour found on the way.**
 
@@ -2755,9 +2754,186 @@ of `tests/oracle/setup-xilinx.sh`, prjxray
   families; the most exclusive options per tile type need up to 22 files
   for the parts with few `_SING` IOB tiles.
 
+### 8.10 UltraScale/UltraScale+ bitstreams (T6.2)
+
+What the UltraScale and UltraScale+ bitstream writer and reader
+(`rust/fasm-xilinx/src/bitstream/`) and the prjuray tools
+(`xcframes2bit`, `uray-bitread`, `uray-fasm2frames`) do, how they differ
+from Series7, and measurements. Sources, read in full for this task:
+prjuray-tools `f53f07b8fe37721137a57e9bee3b2b13e7676f53`
+(`tools/{xcframes2bit,bitread}.cc`, `lib/include/prjxray/xilinx/
+{architectures,configuration,frames,bitstream_reader,bitstream_writer,
+ecc}.h`, `lib/xilinx/{configuration,frames,bitstream_writer}.cc`,
+`lib/xilinx/{xcuseries,xcupseries}/*.cc`, `third_party/gflags`) and
+prjuray `c550b03a26b4c4a9c4453353bd642a21f710b3ec`
+(`utils/{fasm2frames,fasm2bit,fasm_assembler,util}.py`); the user visible
+behaviour is in the `xcframes2bit` / `uray-bitread` and
+`uray-fasm2frames` sections of `COMPAT.md`.
+
+**Two implementations of `--architecture=UltraScale(Plus)`.** The plain
+prjxray checkout (the `xc7frames2bit` / `bitread` of T5.6) declares
+`UltraScale` and `UltraScalePlus` as `Series7` with other
+`words_per_frame`, sync headers and packet sequences: Series7 `part.yaml`
+types and frame addresses, and `Frames<UltraScale(Plus)>::updateECC` is
+`xc7series::updateECC` (on 123 / 93 words: the parity fold at word 100
+happens for 123 words and not for 93). prjuray-tools gives both their own
+`xcuseries` / `xcupseries` `Part` and `FrameAddress` types and ECC.
+`BitstreamFormat` (`writer.rs`) captures both: `architecture` (sync header
+and packets), `addressing` (the `Part` type), `words_per_frame` and `ecc`;
+`BitstreamFormat::native(arch)` is prjuray-tools' (and prjxray's Series7),
+`BitstreamFormat::prjxray(arch)` prjxray's. `bitstream_bytes`,
+`configuration_words`, `fdri_payload` and `Configuration::from_packets`
+use the part's native format, the `_with` variants take one. The
+`xc7frames2bit` and `bitread` binaries use `prjxray(arch)`, `xcframes2bit`
+and `uray-bitread` `native(arch)`.
+
+**Differences from Series7** (prjuray-tools; all confirmed byte for byte
+against the reference tools, below):
+
+| | Series7 | UltraScale (`xcuseries`) | UltraScale+ (`xcupseries`) |
+|---|---|---|---|
+| words per frame | 101 | 123 | 93 |
+| frame address | block 25:23, half 22, row 21:17, column 16:7, minor 6:0 | the same | block 26:24, half 23, row 22:18, column 17:8, minor 7:0 |
+| `FrameAddress::row()` / `part.yaml` rows | row within the half; `global_clock_regions: {top, bottom}` | the half bit is the top bit of `row()`; a flat `rows` map keyed by it (`configuration_ranges` addresses have no `row_half`) | the same |
+| part walk (`GetNextFrameAddress`) | next minor, column, row of the half, bottom half, next bus | next minor, column, *next row of the part* (only tried for the current bus: a row without the bus ends that bus's walk, and its later rows are never visited, `part_walk_skips_rows_after_a_row_without_the_bus`), next bus | the same |
+| sync words before the packets | 13 (8 x `FFFFFFFF`, `BB`, `11220044`, `FFFFFFFF` x 2, `AA995566`) | 6 (1 x `FFFFFFFF`) | 21 (16 x `FFFFFFFF`) |
+| packet sequence | §6.3 | one more leading NOP, `FAR = 0` before `UNKNOWN`, `COR0 = 0x38003FE5`, `COR1 = 0x400000`, `MASK`/`CTL0` `0x1`/`0x101`, final `MASK`/`CTL0` `0x101` | the same as UltraScale |
+| frame ECC | 13 bits, low bits of word 50 | 48 bits: word 60 and the low half of word 61 | 48 bits: word 45 and the low half of word 46 |
+| `bitread` ECC bits (`is_ecc_bit`, left out of `-x`/`-y` unless `-C`) | word 50 bits 0-12 | word 60, word 61 bits 0-15 | 16-bit words 90-92 = word 45, word 46 bits 0-15 |
+| `bitread` hex dump | word 50 masked with `0xFFFFE000` unless `-C` | not masked | not masked |
+| zero frame padding, `FDRI` layout, reader register machine, `.bit` header, no CRC | §6.3-§6.6 | the same | the same |
+
+The UltraScale(+) ECC (`xcu(p)series/ecc.cc`, `calculate_us_ecc`): every
+set bit `i` of word `w` (the ECC words masked out: the first one fully,
+the second one's low half) XORs a 48-bit value into the ECC: the 11-bit
+offset `(w + 255 - last_word) << 3 | i / 4` (`last_word` 122 / 92) gets
+an odd parity bit 11, each of its 12 bits becomes one bit per nibble (bit
+`k` -> bit `4k`), shifted left by `i % 4`. `Ecc` (`ecc.rs`) keeps a
+table of the 48-bit values per (word, bit) and walks the set bits
+(`trailing_zeros`); a literal port checks it on random frames, and real
+Vivado frames of both architectures verify. §9 item 1 is resolved:
+UltraScale is neither Series7's algorithm nor at UltraScale+'s position.
+`verifyECC` compares the stored ECC with the computed one
+(`Ecc::verify`); Series7's `verifyECC` compares 13 stored bits with the
+whole computed value (fine for 101 words, never true for most 123-word
+frames of prjxray's UltraScale format, which is why only
+`uray-bitread` verifies).
+
+**prjuray-tools' tools, beyond the architecture** (`COMPAT.md`):
+`xcframes2bit` validates the `.frm` addresses against the part
+(`read_frm_checked`, the C++ `FrameAddress` `operator<<` in the message,
+`cpp_frame_address`), aborts on an unknown `--architecture`
+(`absl::bad_variant_access`; prjxray's defaults to Series7) and still
+writes `Generator=xc7frames2bit`; its gflags is 2.2.2 (`--helpfull`, the
+only difference to prjxray's copy); `bitread` verifies the ECC (`-E`
+turns the error into a warning on stdout), sizes `-z`'s zero frame per
+architecture (prjxray's is always 101 words, so its `-z` never skips an
+UltraScale frame), and writes `--aux` with `fseek(-1)` tricks that give
+prjxray's text except on unseekable files. Both prjuray tools also
+support Spartan6, which is not implemented (`ArchitectureError::
+Unsupported`).
+
+**prjuray's `utils/fasm2frames.py`** (`uray-fasm2frames`,
+`fasm_xilinx::uray_fasm2frames`): prjuray's `fasm_assembler.py` is
+prjxray's without the `word_addr >= 101` check, working in 16-bit words
+(`FasmAssembler::set_prjuray`: bits past the frame end are kept and a set
+one fails in `get_frames` with `IndexError`; conflict messages give the
+16-bit word); `run()` has no IO bank / STEPDOWN / PUDC_B steps and
+writes the frames as 186 16-bit words (`write_frm_halfwords`), `.bits`
+lines (`write_bits`) or the 16-bit sparse dump (`--debug`,
+`dump_frames_sparse_halfwords`). Its `.frm` cannot be read by
+`xcframes2bit` (186 words instead of 93); prjuray's `fasm2bit.py`
+converts to 32-bit words first, and the Rust `fasm2frames` does the same
+for a prjuray-db part (xc_fasm itself cannot open prjuray-db). Its
+`--help` raises `TypeError` (argparse formats the `%` of the
+`--dump_bits` help).
+
+**Decisions.** The prjxray tools keep their names and behaviour
+(`xc7frames2bit`, `bitread`, now with prjxray's UltraScale formats
+instead of "not supported"); prjuray-tools' `bitread` is the separate
+binary `uray-bitread` (same flags plus `-E`, `Flavor::Prjuray`);
+`xcframes2bit` has prjuray's name; `uray-fasm2frames` is prjuray's
+`fasm2frames.py`. `xc_fasm` (`xcfasm`) has no UltraScale support (no
+`--architecture`, prjxray's `Database`), so `xcfasm` gets none either.
+
+**Reference behaviour found on the way.**
+
+1. The part walk skips the later rows of a bus after a row without that
+   bus (table above); the real zynqusp parts have every bus in every row,
+   so `iter_frame_addresses` visits `frame_count` frames for both of them
+   (tested).
+2. gflags' `LOG(WARNING)` is a bare `std::cerr` (no `WARNING: ` prefix,
+   no newline): `--helppackage` of a tool whose name matches no flag file
+   prints `Unable to find a package for file=<name>` (a Rust bug in the
+   T5.6 gflags emulation, fixed).
+3. `uray-bitread` aborts (`Span::at failed bounds check`) when it verifies
+   a frame shorter than its ECC words (an `FDRI` write whose length is not
+   a multiple of the frame size) and loses its buffered output.
+4. `uray-fasm2frames --help` fails with `TypeError: %x format: an integer
+   is required, not dict`; prjuray's `utils/util.py` imports `jinja2`,
+   which the oracle venv lacks (the oracle wrapper provides a stub).
+5. `ToolsTestData.tar.gz`'s Vivado bitstreams (Series7, UltraScale,
+   UltraScale+) all pass `verifyECC`; bit -> frames -> `xcframes2bit`
+   gives the same frames back, not the same bytes (Vivado's packet
+   sequences differ from the tools').
+6. An `xcu(p)series` `part.yaml` whose values do not fit the frame
+   address fields (a row key >= 64, a column >= 1024, an UltraScale+
+   `frame_count` > 256) is accepted by prjuray-tools: with
+   `frame_count: 300` `xcframes2bit` writes a bitstream and exits 0; with
+   row key 64 or column 1024 `addMissingFrames` loops forever (the masked
+   address is found valid in row 0 again; timed out at 600 s in the
+   review). `Part::new` rejects such parts (`Part file X not found or
+   invalid`, exit code 1); the hang is deliberately not reproduced
+   (`COMPAT.md`). Series7 is unaffected (prjxray also rejects
+   `frame_count: 200`).
+
+**Tests.** Unit tests: the UltraScale(+) ECC (literal port, the
+`calculate_us_ecc` comment example, real Vivado frames, `is_ecc_bit`),
+the packet sequences of all formats, random frames -> bit -> frames in
+the four new formats, the padding and the part walk quirk,
+`read_frm_checked`, `configuration_ranges` for `xcupseries`, the 16-bit
+writers, the frame address printing, gflags `--helpfull` /
+`--helppackage`. `tests/synthetic_usp_db.rs` (the new
+`testdata/synthetic-usp-db` fixture: 16-bit offsets, the RCLK tile after
+the ECC words, 256-frame `BLOCK_RAM` columns, a bottom half row, bits at
+and past the frame end) and `fasm-cli/tests/uray_tools.rs` (the three
+tools and `fasm2frames` on it). Real data (skipped without
+`FASM_DB_CACHE`): `tests/ultrascale_real_db.rs` assembles one feature in
+every 7th tile of both zynqusp parts of prjuray-db
+(xczu3eg-sfvc784-1-e, xczu3eg-sbva484-1-e), round trips the bitstream
+and compares it with the reference `xcframes2bit` (byte identical), and
+checks the UltraScale / UltraScale+ `ToolsTestData` bitstreams (ECC,
+round trip, identical to the reference).
+
+**Differential runs** (this machine, 4 cores):
+
+| run | cases | identical | different |
+|---|---|---|---|
+| `difftest-xilinx.py --prjuray` (2 parts, seed 1, 20 designs + 5 error files per part): `uray-fasm2frames` dense / sparse / debug / dump_bits / ROI | 220 | 220 | 0 |
+| ... on the 98 successful dense / sparse / ROI runs: `fasm2frames` (32-bit) = converted oracle `.frm`, `xcframes2bit` `.bit`, `uray-bitread` x 9 flag sets | 1078 | 1078 | 0 |
+| `uray-bitread` x 9 flag sets + bit -> frm -> bit round trip on the 5 `ToolsTestData` bitstreams | 5 | 5 | 0 |
+| `tests/cli/test_uray_tools_compat.py` (gflags / argparse command lines, malformed inputs, ECC failures, aborts) | 92 | 92 | 0 |
+| ToolsTestData by hand: `uray-bitread` 15 flag sets x 5 bitstreams (75), prjxray `bitread` with `--architecture=UltraScale(Plus)` 15 flag sets x 3 inputs (45), bit -> frm -> `xcframes2bit` / `xc7frames2bit` round trips in all 6 formats (6) | 126 | 126 | 0 |
+| `difftest-xilinx.py` (prjxray mode, regression check): 107 fasm2frames + 372 bitstream runs, 60 xcfasm, 6 x 11 bitread | all | all | 0 |
+| `tests/cli/test_{xc7frames2bit,bitread}_compat.py` (with the new prjxray UltraScale cases) | 128 | 128 | 0 |
+
+**Measurements** (release, best of 3, including process start):
+
+| input | reference | Rust |
+|---|---|---|
+| `xcframes2bit`, ToolsTestData UltraScale `design.bit` frames (32510 frames, 16 MB `.bit`) | 0.42 s | 0.21 s |
+| `xcframes2bit`, ToolsTestData UltraScale+ (14952 frames, 5.6 MB) | 0.15 s | 0.07 s |
+| `uray-bitread -z -y -o`, UltraScale / UltraScale+ `design.bit` | 0.14 / 0.058 s | 0.047 / 0.020 s |
+| `uray-bitread -x -o`, UltraScale / UltraScale+ | 0.49 / 0.18 s | 0.063 / 0.023 s |
+| `uray-fasm2frames`, dense `.frm` of xczu3eg (14898 frames, 30.6 MB) | 0.99 s | 0.33 s (0.29 s with the database cache) |
+
 ## 9. Open questions / risks
 
-1. **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**
+1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+
+   algorithm with its own parameters (48 bits in word 60 and the low half
+   of word 61, `255 - 122`), confirmed on Vivado bitstreams and against
+   the reference tools. The original note:
+   **UltraScale (plain, non-Plus) ECC algorithm is unconfirmed.**
    `prjuray-tools/lib/include/prjxray/xilinx/xcuseries/ecc.h` and
    `lib/xilinx/xcuseries/ecc.cc` exist (confirmed via `find`) but were not
    opened this session (token budget). Do **not** assume it matches either

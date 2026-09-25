@@ -259,7 +259,7 @@ fn errors_without_a_database() {
             "ERROR: unknown command line flag 'bogus'\nERROR: flag '--part_file' is missing its argument; flag description: Definition file for target 7-series part\n"
         )
     );
-    let (code, _, stderr) = run_xc7frames2bit(&[arg("--architecture=UltraScale")], &Env::default());
+    let (code, _, stderr) = run_xc7frames2bit(&[arg("--architecture=Spartan6")], &Env::default());
     assert_eq!(code, 1);
     assert!(stderr.contains("not supported yet"));
     let (code, stdout, stderr) = run_bitread(&[arg("/nonexistent.bit")]);

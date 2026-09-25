@@ -25,6 +25,11 @@
 //!   `.frm` -> `.bit` in one step);
 //! * `xc7frames2bit` ([`xc7frames2bit`]) and `bitread` ([`bitread`]):
 //!   prjxray's C++ tools (`.frm` -> `.bit`, `.bit` -> frames);
+//! * `xcframes2bit` ([`xc7frames2bit::Tool::Xcframes2bit`]) and
+//!   `uray-bitread` ([`bitread::Flavor::Prjuray`]): prjuray-tools' C++
+//!   tools (UltraScale / UltraScale+ bitstreams);
+//! * `uray-fasm2frames` ([`uray_fasm2frames`]): prjuray's
+//!   `utils/fasm2frames.py` (FASM -> `.frm` in 16-bit words);
 //! * `fasm-db-cache` ([`db_cache`]): maintenance of the binary database
 //!   cache that `fasm2frames` and `xcfasm` use (Rust only, no reference
 //!   tool).
@@ -43,5 +48,6 @@ pub mod pystr;
 pub mod terminal;
 pub mod tool;
 mod unicode_tables;
+pub mod uray_fasm2frames;
 pub mod xc7frames2bit;
 pub mod xcfasm;

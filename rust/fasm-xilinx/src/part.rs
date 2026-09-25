@@ -269,6 +269,15 @@ impl Part {
             }
         } else {
             let Some(part_rows) = doc.get("rows")? else {
+                if let Some(ranges) = doc.get("configuration_ranges")? {
+                    let addresses = configuration_ranges(arch, ranges)?;
+                    return Part::from_frame_addresses(arch, idcode, addresses).map_err(
+                        |message| YamlError {
+                            line: doc.line,
+                            message,
+                        },
+                    );
+                }
                 return Err(unsupported_form(&doc));
             };
             yaml_rows(part_rows, false, &mut rows)?;
@@ -476,22 +485,45 @@ impl Part {
 /// address in `[begin, end)` of each `configuration_frame_range`
 /// (`YAML::convert<xc7series::Part>::decode`).
 fn configuration_ranges(arch: Architecture, ranges: &Node) -> Result<Vec<FrameAddress>, YamlError> {
+    let namespace = arch.yaml_namespace();
+    let tags = [
+        format!("xilinx/{namespace}/frame_address"),
+        format!("xilinx/{namespace}/configuration_frame_address"),
+    ];
     let address = |node: &Node| -> Result<u32, YamlError> {
-        let tag_ok = matches!(
-            node.tag.as_deref(),
-            Some("xilinx/xc7series/frame_address" | "xilinx/xc7series/configuration_frame_address")
-        );
+        let tag_ok = node
+            .tag
+            .as_deref()
+            .is_some_and(|tag| tags.iter().any(|t| t == tag));
         let bad = |message: &str| YamlError {
             line: node.line,
             message: message.to_owned(),
         };
         if !tag_ok {
-            return Err(bad(
-                "expected a !<xilinx/xc7series/configuration_frame_address>",
-            ));
+            return Err(bad(&format!(
+                "expected a !<xilinx/{namespace}/configuration_frame_address>"
+            )));
         }
         let block_type = BlockType::from_name(node.require("block_type")?.as_str()?)
             .ok_or_else(|| bad("unknown block_type"))?;
+        let row = node.require("row")?.as_u32()?;
+        let column = node.require("column")?.as_u32()?;
+        let minor = node.require("minor")?.as_u32()?;
+        if !arch.has_global_clock_regions() {
+            // `xcu(p)series::FrameAddress(block_type, uint8_t row,
+            // uint16_t column, uint8_t minor)`: the row includes the half
+            // bit; the values are truncated to the parameter types, then
+            // masked to their fields.
+            return Ok(FrameAddress::compose_row_index(
+                arch,
+                u32::from(block_type.raw()),
+                false,
+                row & 0xFF,
+                column & 0xFFFF,
+                minor & 0xFF,
+            )
+            .0);
+        }
         let bottom = match node.require("row_half")?.as_str()? {
             "top" => false,
             "bottom" => true,
@@ -501,9 +533,9 @@ fn configuration_ranges(arch: Architecture, ranges: &Node) -> Result<Vec<FrameAd
             arch,
             u32::from(block_type.raw()),
             bottom,
-            node.require("row")?.as_u32()?,
-            node.require("column")?.as_u32()?,
-            node.require("minor")?.as_u32()?,
+            row,
+            column,
+            minor,
         )
         .0)
     };
