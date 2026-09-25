@@ -198,5 +198,9 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       canonical path still sorts formatted Strings (after T8.2).
 - [r] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
+- [ ] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
+      (inherited from the original package, `dir(fasm)` raises TypeError);
+      decide: fix with a COMPAT.md row (recommended, nothing relies on the
+      crash) or keep for 1:1 compatibility and document (after T8.3).
 - [ ] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
       install for the C API, release notes.

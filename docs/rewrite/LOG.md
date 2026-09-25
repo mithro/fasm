@@ -879,3 +879,11 @@ what happened, branch/commit references, open issues.
   `__dir__` so dir(fasm) raises TypeError (also in the original
   package?); to be judged by the reviewer. Independent review (Opus)
   started.
+* T8.3 review (Opus): install, Xilinx examples, Rust docs, style, links
+  and numbers verified; REQUEST CHANGES: the fasm API examples in
+  PYTHON.md and the C/C++ parse/print/merge examples in CAPI.md do not
+  run (wrong module paths, missing canonical argument, wrong C++ method
+  name), several docstring/README claims wrong (antlr parser mentions,
+  env var table incomplete, comment group rule), test_stubs.py ignores
+  parameter kind/defaults and is not wired into CI. 14 fixes requested.
+  The __dir__ TypeError is inherited from the original package: T8.3b.
