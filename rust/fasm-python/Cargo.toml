@@ -7,6 +7,10 @@ repository.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "pyo3 extension module fasm._fasm_rs, built with maturin, exposing the fasm crate to the existing fasm Python package."
+# Not a general purpose Rust library: it is maturin's build target for
+# the `fasm` Python wheel (see pyproject.toml, docs/rewrite/DESIGN-python.md)
+# and has no reason to exist as a standalone crates.io crate.
+publish = false
 
 [lib]
 name = "_fasm_rs"

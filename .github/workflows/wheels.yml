@@ -1,0 +1,276 @@
+# Builds release wheels and an sdist for the `fasm` Python package
+# (pyproject.toml, maturin build of rust/fasm-python) for every target
+# platform, and (only when explicitly triggered, see the `publish` job)
+# publishes them to PyPI.
+#
+# Runs on every push/PR like `python.yml` so a metadata or build script
+# regression that only shows up on macOS/Windows/aarch64 or in the sdist
+# is caught immediately; the wheels and sdist built here are what a tag
+# push would publish (`publish` needs a `v*` tag AND a manual
+# confirmation, see below), so no separate "release" trigger duplicates
+# this build.
+name: wheels
+
+on:
+  push:
+    # Not `branches: ['**']`: that would run this a second time for every
+    # commit already covered by a pull_request event (every branch this
+    # repository pushes to has an open PR against it in the normal
+    # workflow, see docs/rewrite/WORKFLOW.md), doubling the wheel/sdist
+    # build cost for no extra coverage. Limited to the branches releases
+    # actually get cut from/merged into, plus tags (a `v*` tag push is
+    # also what `publish` gates on, see that job).
+    branches: [master, claude/master, claude/epic-goldberg-uc7xqf]
+    tags: ['v*']
+  pull_request:
+  # Lets a maintainer publish an already-built tag without pushing a new
+  # commit (see the `publish` job).
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish dist/ to PyPI (only takes effect on a v* tag; see the publish job)'
+        type: boolean
+        default: false
+
+# Least-privilege default (the `publish` job opts back into `id-token:
+# write` for itself); and cancel a superseded run on the same branch/PR
+# instead of letting redundant wheel builds pile up.
+permissions:
+  contents: read
+
+concurrency:
+  group: wheels-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # abi3 wheels: one wheel per platform/arch covers every CPython >= 3.9
+  # (pyo3 "abi3-py39", see rust/fasm-python/Cargo.toml), with the
+  # `xilinx` feature on (the default). The Linux aarch64 wheel is
+  # cross-compiled on the ubuntu-latest (x86_64) runner -- maturin-action
+  # installs the aarch64 Rust target and a manylinux cross container/
+  # linker for it (rust-cross's manylinux-cross images), it does not run
+  # the build under QEMU emulation (QEMU only comes in if maturin-action
+  # is also asked to run tests inside the target container, which this
+  # job does not do -- testing the aarch64 wheel happens separately, if
+  # at all, since none of this repository's runners are natively
+  # aarch64; see test-wheel's comment).
+  wheels:
+    name: wheel (${{ matrix.os }}, ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+            manylinux: 2_28
+          - os: ubuntu-latest
+            target: aarch64
+            manylinux: 2_28
+          - os: macos-latest
+            target: x86_64
+          - os: macos-latest
+            target: aarch64
+          - os: windows-latest
+            target: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  # A parser-only wheel (`--no-default-features`, drops the `xilinx`
+  # cargo feature of rust/fasm-python: fasm.xilinx then raises ImportError,
+  # see docs/PYTHON.md) for users who only need `fasm`/`fasm.tool` and
+  # want a smaller extension module. Cheap to add (same manylinux
+  # container as the default x86_64 wheel above) so it is built here too,
+  # but not published by default (see the `publish` job): PyPI allows
+  # only one wheel per (platform, abi, version), and the default (xilinx
+  # enabled) wheel already covers this platform/abi, so shipping both to
+  # the same PyPI release needs distinct wheel tags or a separate project
+  # name, which is a decision for whoever enables `publish` to make
+  # first.
+  wheel-parser-only:
+    name: wheel (parser-only, linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheel (--no-default-features)
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: 2_28
+          args: --release --out dist --no-default-features
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-parser-only-linux-x86_64
+          path: dist/*.whl
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Check sdist size (catch an accidental include of tests/corpus etc.)
+        # The sdist is rust/ sources + fasm/ + pyproject metadata; as of
+        # T8.4 it is ~300 KiB. Fail loudly well before it could approach
+        # PyPI's per-file size limits if something starts pulling in the
+        # multi-megabyte test corpora under tests/.
+        run: |
+          size=$(stat -c%s dist/*.tar.gz)
+          echo "sdist size: ${size} bytes"
+          if [ "${size}" -gt 10485760 ]; then
+            echo "::error::sdist is over 10 MiB (${size} bytes); check MANIFEST.in / pyproject.toml [tool.maturin] excludes for an accidental large include"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Installs the default (xilinx-enabled) wheel for this runner's platform
+  # and runs the tests the installed package (not the source tree) must
+  # pass; this is what T8.4 verified locally with `maturin build
+  # --release --sdist` + a fresh venv before writing this workflow.
+  test-wheel:
+    name: test wheel (${{ matrix.os }})
+    needs: wheels
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `macos-latest` is an Apple Silicon (arm64) runner (as of this
+        # writing); it must install the `aarch64` wheel, not the
+        # `x86_64` one (pip refuses to install a wheel whose platform tag
+        # does not match the host). `macos-15-intel` is GitHub's current
+        # Intel (x86_64) macOS runner label, added here (test-only,
+        # cheap: it does not rebuild anything, just installs the
+        # `wheels` job's already-built x86_64 artifact) so that wheel
+        # gets tested natively too, instead of only cross-built and
+        # never run.
+        os: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: wheels-ubuntu-latest-x86_64
+          - os: macos-latest
+            artifact: wheels-macos-latest-aarch64
+          - os: macos-15-intel
+            artifact: wheels-macos-latest-x86_64
+          - os: windows-latest
+            artifact: wheels-windows-latest-x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.os == 'ubuntu-latest'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install the wheel and pytest
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest dist/*.whl
+      # tests/test_xilinx_python.py additionally compares fasm.xilinx
+      # against the Rust command line tools, found through FASM_CLI_DIR
+      # (same as python.yml's `test` job); only worth the extra `cargo
+      # build` on one leg of this matrix, not on every OS -- the
+      # Rust-side behaviour it exercises is not platform specific, and
+      # python.yml's own `test` job already runs it on every supported
+      # Python version.
+      - name: Build the Rust command line tools (ubuntu-latest only)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo build --release -p fasm-cli
+      - name: Run tests against the installed wheel
+        # cwd outside the checkout, --import-mode=importlib: import the
+        # installed fasm package, not the source tree (which has no
+        # compiled extension); see tests/README.md and the `test` job in
+        # python.yml, which does the same for the develop-mode build.
+        shell: bash
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pytest-wheel"
+          cd "${RUNNER_TEMP}/pytest-wheel"
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            export FASM_CLI_DIR="${GITHUB_WORKSPACE}/target/release"
+            EXTRA_TESTS="${GITHUB_WORKSPACE}/tests/test_xilinx_python.py"
+          else
+            EXTRA_TESTS=""
+          fi
+          python -m pytest --import-mode=importlib \
+            "${GITHUB_WORKSPACE}/tests/test_simple.py" \
+            "${GITHUB_WORKSPACE}/tests/test_stubs.py" \
+            ${EXTRA_TESTS}
+
+  # Publishing to PyPI with trusted publishing (no stored token): OIDC
+  # `id-token: write` exchanges this run's identity for a short-lived
+  # upload token, configured entirely on PyPI's side (nothing to add to
+  # this repository's secrets). This job is disabled by default (see the
+  # `if:` below) because:
+  #
+  #   1. Publishing is the user's decision (docs/rewrite/TASKS.md T8.4 /
+  #      AGENTS.md: this task prepares metadata and workflows only).
+  #   2. PyPI trusted publishing must be configured first. The "fasm"
+  #      project already exists on PyPI (this project's own prior
+  #      package, see docs/RELEASING.md); an account that already
+  #      administers it adds a trusted publisher under
+  #      https://pypi.org/manage/project/fasm/settings/publishing/ with
+  #      Owner=<the GitHub org/user>, Repository=fasm,
+  #      Workflow=wheels.yml, Environment=pypi. See docs/RELEASING.md
+  #      ("Configuring PyPI trusted publishing") for the full steps and
+  #      the repository-URL decision (chipsalliance/fasm vs. mithro/fasm)
+  #      that Owner above depends on.
+  #   3. The crates.io name `fasm` used by the Rust crates is separately
+  #      taken by an unrelated project (docs/RELEASING.md); this does not
+  #      block PyPI (crates.io and PyPI are separate namespaces, and
+  #      PyPI's own "fasm" is this project's, not a collision) but is
+  #      worth resolving before a coordinated release of both.
+  #
+  # To enable an actual publish once trusted publishing is configured:
+  # push a `v*` tag AND re-run (or dispatch) this workflow with the
+  # `publish` input set to true (`gh workflow run wheels.yml -f
+  # publish=true --ref vX.Y.Z`), then delete/flip the `if: false` guard
+  # below in a follow-up commit so ordinary tag pushes publish on their
+  # own once the process is trusted.
+  publish:
+    name: publish to PyPI
+    needs: [wheels, wheel-parser-only, sdist, test-wheel]
+    if: false # ${{ startsWith(github.ref, 'refs/tags/v') && github.event.inputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      # The parser-only wheel is not published by default: see
+      # wheel-parser-only's comment above. Download it here (uncomment)
+      # once that naming question is resolved.
+      # - uses: actions/download-artifact@v4
+      #   with:
+      #     name: wheel-parser-only-linux-x86_64
+      #     path: dist-parser-only
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist

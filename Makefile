@@ -301,26 +301,40 @@ capi-test:
 .PHONY: capi-test
 
 # Installs the C header (fasm.h), the header-only C++ wrapper (fasm.hpp),
-# the shared and static libraries (release profile) and a pkg-config file
-# into PREFIX/{include/fasm,lib} (default PREFIX is /usr/local; DESTDIR is
-# honoured for staged installs). `pkg-config --cflags --libs fasm` then
-# gives the flags to build against the installed library (see
-# rust/fasm-capi/fasm.pc.in and rust/fasm-capi/examples/cpp).
+# the shared and static libraries (release profile), a pkg-config file and
+# a CMake package config (fasmConfig.cmake/fasmConfigVersion.cmake) into
+# PREFIX/{include/fasm,lib} (default PREFIX is /usr/local; DESTDIR is
+# honoured for staged installs). `pkg-config --cflags --libs fasm` and
+# `find_package(fasm CONFIG)` both then work against the installed
+# library (see rust/fasm-capi/fasm.pc.in, rust/fasm-capi/cmake/ and
+# rust/fasm-capi/examples/cpp; docs/CAPI.md has the full walkthrough of
+# both). This drives cargo directly rather than going through
+# rust/fasm-capi/cmake/CMakeLists.txt (a from-scratch, all-CMake
+# alternative entry point to the same install, documented there): it is
+# what this repository's own tests use, and needs cmake only to generate
+# the two small package config files below, not to build the crate.
 PREFIX ?= /usr/local
 FASM_PC_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' $(TOP_DIR)/Cargo.toml | head -1)
 # The system libraries the Rust staticlib needs (see FASM_NATIVE_LIBS in
 # rust/fasm-capi/tests/c/CMakeLists.txt, derived from `cargo rustc -p
 # fasm-capi -- --print native-static-libs`); Linux only, like that file.
 FASM_PC_LIBS_PRIVATE ?= -lpthread -ldl -lm
+CMAKE ?= cmake
 
 capi-install:
 	cargo build --release -p fasm-capi
-	install -d $(DESTDIR)$(PREFIX)/include/fasm $(DESTDIR)$(PREFIX)/lib/pkgconfig
+	install -d $(DESTDIR)$(PREFIX)/include/fasm $(DESTDIR)$(PREFIX)/lib/pkgconfig $(DESTDIR)$(PREFIX)/lib/cmake/fasm
 	install -m 644 $(TOP_DIR)/include/fasm/fasm.h $(DESTDIR)$(PREFIX)/include/fasm/fasm.h
 	install -m 644 $(TOP_DIR)/include/fasm/fasm.hpp $(DESTDIR)$(PREFIX)/include/fasm/fasm.hpp
 	install -m 755 $(CAPI_CARGO_TARGET_DIR)/release/libfasm_capi.so $(DESTDIR)$(PREFIX)/lib/libfasm_capi.so
 	install -m 644 $(CAPI_CARGO_TARGET_DIR)/release/libfasm_capi.a $(DESTDIR)$(PREFIX)/lib/libfasm_capi.a
 	sed -e 's|@PREFIX@|$(PREFIX)|g' -e 's|@VERSION@|$(FASM_PC_VERSION)|g' -e 's|@LIBS_PRIVATE@|$(FASM_PC_LIBS_PRIVATE)|g' $(TOP_DIR)/rust/fasm-capi/fasm.pc.in > $(DESTDIR)$(PREFIX)/lib/pkgconfig/fasm.pc
+	$(CMAKE) \
+		-DFASM_PREFIX=$(PREFIX) \
+		-DFASM_VERSION=$(FASM_PC_VERSION) \
+		-DFASM_SOURCE_DIR=$(TOP_DIR)/rust/fasm-capi/cmake \
+		-DFASM_OUT_DIR=$(DESTDIR)$(PREFIX)/lib/cmake/fasm \
+		-P $(TOP_DIR)/rust/fasm-capi/cmake/generate-config.cmake
 
 .PHONY: capi-install
 

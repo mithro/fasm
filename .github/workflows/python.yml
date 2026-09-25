@@ -1,8 +1,12 @@
-# CI/CD for the fasm Python package (fasm/, pyproject.toml, maturin build
-# of rust/fasm-python; see docs/rewrite/DESIGN-python.md). Replaces the
-# legacy wheel.yml, publish-to-pypi.yml, check-install.yml and the Python
-# parts of presubmit.yml, all removed in T3.2 along with the setuptools +
-# CMake + ANTLR build they drove.
+# CI for the fasm Python package's lint and test suite (fasm/,
+# pyproject.toml, maturin build of rust/fasm-python; see
+# docs/rewrite/DESIGN-python.md). Replaces the legacy wheel.yml,
+# publish-to-pypi.yml, check-install.yml and the Python parts of
+# presubmit.yml, all removed in T3.2 along with the setuptools + CMake +
+# ANTLR build they drove.
+#
+# Building release wheels/sdist for every target platform and publishing
+# to PyPI is `wheels.yml` (T8.4), not this file.
 name: python
 on: [push, pull_request]
 
@@ -63,63 +67,3 @@ jobs:
             "${GITHUB_WORKSPACE}/tests/test_xilinx_python.py" \
             "${GITHUB_WORKSPACE}/tests/test_stubs.py"
 
-  wheels:
-    name: wheels (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [x86_64, aarch64]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build abi3 manylinux_2_28 wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          manylinux: 2_28
-          args: --release --out dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.target }}
-          path: dist/*.whl
-
-  sdist:
-    name: sdist
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: dist/*.tar.gz
-
-  # Publishes to PyPI with trusted publishing (no stored token) when a
-  # `v*` tag is pushed. Configure the "pypi" trusted publisher for this
-  # repository/workflow on https://pypi.org/manage/project/fasm/settings/
-  # (or the project's initial publish) before this job can succeed.
-  publish:
-    name: publish to PyPI
-    needs: [lint, test, wheels, sdist]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    environment: pypi
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          path: dist
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist
