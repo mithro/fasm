@@ -588,6 +588,33 @@ mod properties {
         }
 
         #[test]
+        fn intern_split_matches_intern_bytes(
+            known in proptest::collection::vec(dotted(), 0..8),
+            bytes in proptest::collection::vec(
+                prop_oneof![
+                    Just(b'a'), Just(b'b'), Just(b'.'), Just(0xc3), Just(0xa9), Just(0xff)
+                ],
+                0..12,
+            ),
+            limit in prop_oneof![Just(u32::MAX), 1u32..4],
+        ) {
+            let interner = Interner::with_level_limit(limit);
+            for s in &known {
+                interner.intern(s);
+            }
+            let mut dots = [usize::MAX; 2];
+            for (slot, pos) in dots
+                .iter_mut()
+                .zip(bytes.iter().enumerate().filter(|(_, &b)| b == b'.').map(|(i, _)| i))
+            {
+                *slot = pos;
+            }
+            let expected = std::str::from_utf8(&bytes).map(|s| interner.intern(s));
+            prop_assert_eq!(interner.intern_split(&bytes, dots), expected);
+            prop_assert_eq!(interner.intern_bytes(&bytes), expected);
+        }
+
+        #[test]
         fn round_trip_dotted(s in dotted()) {
             check_round_trip(&GLOBAL, &s);
         }

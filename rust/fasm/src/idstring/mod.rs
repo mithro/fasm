@@ -135,6 +135,14 @@ impl IdString {
         GLOBAL.intern_bytes(bytes)
     }
 
+    /// [`IdString::from_bytes`] for a name whose first two `.` are at
+    /// `dots[0]` and `dots[1]` (`usize::MAX` where there is none); see
+    /// [`Interner::intern_split`].
+    #[inline]
+    pub(crate) fn from_split(bytes: &[u8], dots: [usize; 2]) -> Result<Self, Utf8Error> {
+        GLOBAL.intern_split(bytes, dots)
+    }
+
     /// Returns the handle `s` would have in [`GLOBAL`], if it can be
     /// produced without interning anything (see [`Interner::lookup`]).
     ///
