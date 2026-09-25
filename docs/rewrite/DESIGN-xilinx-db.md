@@ -2939,6 +2939,129 @@ round trip, identical to the reference).
 | `uray-bitread -x -o`, UltraScale / UltraScale+ | 0.49 / 0.18 s | 0.063 / 0.023 s |
 | `uray-fasm2frames`, dense `.frm` of xczu3eg (14898 frames, 30.6 MB) | 0.99 s | 0.33 s (0.29 s with the database cache) |
 
+### 8.11 f4pga-examples (T7.3)
+
+Every Xilinx 7 series example of f4pga-examples (`13f11197`) built with
+the f4pga Yosys + VPR flow the examples are written for (toolchain:
+`tools/e2e/setup-f4pga.sh`; flow, collection and comparison:
+`tools/e2e/run-f4pga-examples.sh`, `compare-f4pga-examples.py`,
+`install-f4pga-examples-corpus.py`; details and quirks:
+`tools/e2e/README.md`, "f4pga-examples corpus (T7.3)"). The FASM of each
+design/board is in the corpus
+(`tests/corpus/xilinx/{artix7,zynq7}/designs/f4pga-examples/<design>/<board>/vpr.fasm[.xz]`,
+8.1 MB for 30 designs/boards, with `difftest.json` and a README of the
+provenance and the sha256 of the flow's FASM, frames and bitstream), so
+`make xilinx-difftest` covers it.
+
+**Databases.** The flow's prjxray-db (conda package `prjxray-db
+0.0_257_g0a0adde`) is prjxray-db `0a0added`, the commit
+`tools/fetch-db.sh` pins, and its database files are identical to the
+pinned copy (`diff -r`), so "the flow's db" and "the pinned db" give the
+same results by construction; both were run anyway. (This differs from
+T7.2's openXC7 snap database, which is another prjxray-db commit.) The
+VPR architecture (symbiflow-arch-defs `007d1c1`) only decides which
+features VPR can emit.
+
+**What was compared, per design/board** (the columns of the matrix):
+
+* *Same as flow*: the Rust `xcfasm` with the flow's own command line
+  (`--sparse --emit_pudc_b_pullup`, flow db) writes the flow's frames
+  byte for byte (`top.frm`, from the flow's xcfasm command line rerun
+  with `--frm_out`, whose `.bit` is checked to be the flow's but for the
+  header's `.frm` path, date and time) and
+  the flow's `top.bit` byte for byte except the `.frm` path in the header
+  design field (the flow's xcfasm writes its frames to a `mkstemp` file;
+  the header time is injected with `SOURCE_DATE_EPOCH`); the Rust
+  `fasm2frames` with the same options writes the same frames; the Rust
+  `xc7frames2bit` on the flow's frames writes the flow's `.bit` (same
+  rule); the Rust `bitread` prints what the flow's `bitread` (prjxray
+  `ae546d6b`) prints for the flow's `.bit` with the 11 flag sets of
+  `BITREAD_FLAGS`; the Rust `fasm` CLI prints what the flow's `fasm` (PyPI
+  0.0.2.post88) prints, with and without `--canonical`.
+* *Same with pinned db / oracle*: `fasm2frames` with the pinned database
+  writes the flow's frames, the `fasm` CLI matches `tests/oracle/fasm-oracle`.
+* Timings: one run of each tool on this machine (4 cores, shared with
+  other jobs; the Rust tools with a warm `FASM_XDB_CACHE`); the flow's
+  `fasm2frames` is its `xc_fasm.fasm2frames`.
+
+| Design | Board | Part | Built | FASM lines | Build | Same as flow (frm, bit, bitread, fasm) | Same with pinned db / oracle | xcfasm flow / Rust | fasm2frames flow / Rust | fasm --canonical flow / Rust |
+|---|---|---|---|---|---|---|---|---|---|---|
+| counter_test | arty_35 | xc7a35tcsg324-1 | yes | 803 | 66 s | yes | yes | 0.43 / 0.03 s | 0.38 / 0.02 s | 0.05 / 0.002 s |
+| counter_test | arty_100 | xc7a100tcsg324-1 | yes | 837 | 102 s | yes | yes | 0.68 / 0.04 s | 0.63 / 0.03 s | 0.05 / 0.002 s |
+| counter_test | nexys4ddr | xc7a100tcsg324-1 | yes | 795 | 107 s | yes | yes | 0.66 / 0.03 s | 0.60 / 0.03 s | 0.05 / 0.002 s |
+| counter_test | basys3 | xc7a35tcpg236-1 | yes | 782 | 70 s | yes | yes | 0.45 / 0.03 s | 0.42 / 0.02 s | 0.05 / 0.002 s |
+| counter_test | nexys_video | xc7a200tsbg484-1 | **no** (xc7a200t_test not installed) | | | | | | | |
+| counter_test | zybo | xc7z010clg400-1 | yes | 7486 | 284 s | yes | yes | 0.49 / 0.04 s | 0.43 / 0.03 s | 0.11 / 0.007 s |
+| picosoc_demo | arty_35 | xc7a35tcsg324-1 | yes | 97441 | 232 s | yes | yes | 3.59 / 0.14 s | 3.58 / 0.12 s | 1.17 / 0.066 s |
+| picosoc_demo | arty_100 | xc7a100tcsg324-1 | yes | 96951 | 283 s | yes | yes | 3.94 / 0.12 s | 3.79 / 0.13 s | 1.19 / 0.071 s |
+| picosoc_demo | nexys4ddr | xc7a100tcsg324-1 | yes | 97848 | 280 s | yes | yes | 3.95 / 0.13 s | 3.86 / 0.14 s | 1.28 / 0.068 s |
+| picosoc_demo | basys3 | xc7a35tcpg236-1 | yes | 99269 | 239 s | yes | yes | 3.55 / 0.12 s | 3.84 / 0.12 s | 1.22 / 0.070 s |
+| litex_demo_picorv32 | arty_35 | xc7a35tcsg324-1 | yes | 220114 | 413 s | yes | yes | 10.72 / 0.26 s | 10.53 / 0.26 s | 2.89 / 0.164 s |
+| litex_demo_picorv32 | arty_100 | xc7a100tcsg324-1 | yes | 217907 | 498 s | yes | yes | 13.25 / 0.25 s | 13.41 / 0.26 s | 2.90 / 0.182 s |
+| litex_demo_vexriscv | arty_35 | xc7a35tcsg324-1 | yes | 261029 | 479 s | yes | yes | 12.51 / 0.33 s | 12.23 / 0.29 s | 3.49 / 0.197 s |
+| litex_demo_vexriscv | arty_100 | xc7a100tcsg324-1 | yes | 260033 | 530 s | yes | yes | 14.84 / 0.33 s | 14.70 / 0.32 s | 3.53 / 0.211 s |
+| linux_litex_demo | arty_35 | xc7a35tcsg324-1 | yes | 344230 | 634 s | yes | yes | 15.07 / 0.42 s | 14.88 / 0.41 s | 4.33 / 0.238 s |
+| linux_litex_demo | arty_100 | xc7a100tcsg324-1 | yes | 340958 | 664 s | yes | yes | 17.19 / 0.39 s | 17.55 / 0.37 s | 4.41 / 0.263 s |
+| litex_sata_demo | nexys_video | xc7a200tsbg484-1 | **no** (xc7a200t_test not installed) | | | | | | | |
+| timer | basys3 | xc7a35tcpg236-1 | yes | 2970 | 72 s | yes | yes | 0.50 / 0.04 s | 0.44 / 0.03 s | 0.09 / 0.004 s |
+| pulse_width_led | arty_35 | xc7a35tcsg324-1 | yes | 1834 | 73 s | yes | yes | 0.47 / 0.04 s | 0.43 / 0.03 s | 0.06 / 0.003 s |
+| button_controller | basys3 | xc7a35tcpg236-1 | yes | 2997 | 72 s | yes | yes | 0.47 / 0.03 s | 0.45 / 0.03 s | 0.07 / 0.004 s |
+| hello_a | arty_35 | xc7a35tcsg324-1 | yes | 76 | 60 s | yes | yes | 0.40 / 0.03 s | 0.36 / 0.02 s | 0.04 / 0.001 s |
+| hello_b | arty_35 | xc7a35tcsg324-1 | yes | 209 | 60 s | yes | yes | 0.40 / 0.03 s | 0.36 / 0.02 s | 0.04 / 0.002 s |
+| hello_c | arty_35 | xc7a35tcsg324-1 | yes | 209 | 64 s | yes | yes | 0.40 / 0.03 s | 0.37 / 0.02 s | 0.05 / 0.002 s |
+| hello_d | arty_35 | xc7a35tcsg324-1 | yes | 255 | 61 s | yes | yes | 0.40 / 0.03 s | 0.35 / 0.02 s | 0.04 / 0.002 s |
+| hello_e | arty_35 | xc7a35tcsg324-1 | yes | 760 | 63 s | yes | yes | 0.45 / 0.03 s | 0.39 / 0.02 s | 0.05 / 0.002 s |
+| hello_f | arty_35 | xc7a35tcsg324-1 | yes | 856 | 61 s | yes | yes | 0.43 / 0.03 s | 0.39 / 0.03 s | 0.05 / 0.002 s |
+| hello_g | arty_35 | xc7a35tcsg324-1 | yes | 1991 | 61 s | yes | yes | 0.46 / 0.03 s | 0.42 / 0.03 s | 0.06 / 0.002 s |
+| hello_h | arty_35 | xc7a35tcsg324-1 | yes | 457 | 60 s | yes | yes | 0.46 / 0.03 s | 0.38 / 0.02 s | 0.04 / 0.002 s |
+| hello_i | arty_35 | xc7a35tcsg324-1 | yes | 1060 | 62 s | yes | yes | 0.45 / 0.03 s | 0.39 / 0.03 s | 0.05 / 0.002 s |
+| hello_j | arty_35 | xc7a35tcsg324-1 | yes | 806 | 61 s | yes | yes | 0.41 / 0.03 s | 0.39 / 0.02 s | 0.06 / 0.002 s |
+| hello_k | arty_35 | xc7a35tcsg324-1 | yes | 4395 | 70 s | yes | yes | 0.52 / 0.03 s | 0.49 / 0.03 s | 0.09 / 0.005 s |
+| hello_l | arty_35 | xc7a35tcsg324-1 | yes | 3642 | 66 s | yes | yes | 0.53 / 0.03 s | 0.47 / 0.03 s | 0.08 / 0.004 s |
+
+Build times are the whole documented flow (synthesis, pack, place,
+route, genfasm, bitstream; LiteX designs include generating the SoC and
+compiling its BIOS), one build at a time, on a machine shared with
+other jobs. Summed over the 30 designs: the flow's xcfasm 108 s, the
+Rust xcfasm 3.1 s (35x); the flow's fasm2frames 107 s, Rust 3.0 s (36x);
+the flow's `fasm --canonical` 27.6 s, Rust 1.6 s (17x); xc7frames2bit
+1.4 s / 0.5 s and bitread `-z -y -o` 1.1 s / 0.3 s (both C++ on the
+flow side, dominated by process start and I/O at these sizes).
+
+**Dense, sparse, pudc and debug variants** (`tools/difftest-xilinx.py
+--corpus-root tools/e2e/build/out/f4pga-examples`, 30 FASM files; per
+file 4 fasm2frames runs, 3 of them through xc7frames2bit and the 11
+bitread flag sets, and 3 xcfasm runs): against the oracle (prjxray
+`c9f02d85`, pinned db) 120/120 fasm2frames runs and 90/90 xcfasm runs
+identical (1080 xc7frames2bit/bitread runs); against the flow's own
+tools (prjxray `ae546d6b` C++ tools, xc_fasm `25dc605c`, flow db) the
+same, 120/120 and 90/90. `make xilinx-difftest` (the committed corpus,
+now with these 30 files): 56 FASM files (26 before), 227/227 fasm2frames runs, 150/150 xcfasm runs and the 6 reference bitstreams identical, 6.5 minutes with `--jobs 2`. `tools/difftest.py` (Rust
+`fasm` parser, `to_string`, canonical form and round trip against the
+original Python package, ANTLR and textX): 30/30 files identical (6.6 minutes, `--jobs 2`).
+
+**Not built.** `counter_test/nexys_video` and `litex_sata_demo/nexys_video`
+(the only designs of the Nexys Video, xc7a200tsbg484-1): the
+`xc7a200t_test` architecture package is 10.5 GiB extracted (a single
+VPR routing graph), more than this task's 6 GiB disk budget and, next to
+VPR itself, this machine's 15 GiB of RAM for a tmpfs. Everything else
+the f4pga-examples CI builds for xc7 was built, including
+`linux_litex_demo` (its prebuilt gateware Verilog and memory images are
+in the repository; no BIOS build is needed) and `litex_demo` for both
+CPUs (with the LiteX packages its Arty targets import, see the README).
+
+**Findings.** No difference between the Rust tools and the flow's or
+the oracle's anywhere; no Rust bug found, no Rust change. Quirks of the
+reference flow (`docs/rewrite/COMPAT.md`, "The f4pga flow's outputs"):
+the environment's `bin/fasm2frames` does not run (prjxray's pip package
+misses `utils/`); `symbiflow_write_fasm` ignores a failing `genfasm`
+(`tools/e2e/f4pga/check-genfasm.sh` now checks genfasm's own log)
+(an OOM-killed `genfasm` gave a truncated 320 line FASM for
+`counter_test/arty_100` and a "successful" build; rebuilt, 837 lines);
+the flow's `.bit` header names its temporary `.frm` file. The flow is
+deterministic (`counter_test/arty_35` rebuilt gives the committed FASM
+byte for byte).
+
 ### 8.12 prjuray-db all-parts differential testing (T6.3)
 
 `tools/gen-xilinx-corpus.py` (generator, now for both layouts),
@@ -3115,7 +3238,6 @@ contents, the wrappers, `build/xilinx/bin`, prjuray's `utils/`, the
   prjuray-tools commits from `tests/oracle/build/xilinx/status.json`, the
   prjuray-db commit); the Rust `uray-fasm2frames` and `fasm2frames` with
   and without the database cache; 9 s.
-
 ## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+

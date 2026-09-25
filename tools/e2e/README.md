@@ -1,4 +1,4 @@
-# End-to-end toolchain (T7.1)
+# End-to-end toolchains (T7.1, T7.2, T7.3)
 
 Makes an open source Xilinx 7 series synthesis + place-and-route flow
 available on this machine, so later tasks (T7.2, T7.3) can turn the
@@ -565,4 +565,154 @@ total. FASM plain or `xz`'d over 1 MiB, `.frm` (dense + sparse) always
 build timestamp; each design's own README.md records its sha256
 instead).
 
+## f4pga-examples corpus (T7.3)
 
+Builds every Xilinx 7 series example of
+[f4pga-examples](https://github.com/chipsalliance/f4pga-examples)
+(commit `13f11197b33dae1cde3bf146f317d63f0134eacf`) with the **f4pga**
+flow (Yosys + VPR, the flow those examples are written for, not
+openXC7), collects the flow's FASM, frames and bitstream, and compares
+the Rust tools against them, against the flow's own tools and against
+the oracle. Results matrix and timings:
+`docs/rewrite/DESIGN-xilinx-db.md` §8.11.
+
+### Setup
+
+```
+tools/e2e/setup-f4pga.sh                                   # conda env + xc7a50t_test + xc7z010_test
+tools/e2e/setup-f4pga.sh --devices xc7a100t_test           # Arty A7-100T, Nexys 4 DDR
+tools/e2e/setup-f4pga.sh --remove-devices xc7a50t_test     # make room
+source tools/e2e/f4pga-env.sh                              # "conda activate xc7"
+```
+
+`setup-f4pga.sh` follows f4pga-examples' `docs/getting.rst` under
+`tools/e2e/build/f4pga` (`$F4PGA_E2E_ROOT`; `F4PGA_INSTALL_DIR` of the
+documentation, `FPGA_FAM=xc7`), everything pinned (see its header):
+
+| Component | Pin | Size |
+|---|---|---|
+| conda environment `xc7` (yosys 0.27_29_g0f5e7c244 + symbiflow-yosys-plugins, vtr-optimized 8.0.0_5699_g25e723a24 (VPR, genfasm), prjxray-tools 0.1_3015_gae546d6b (xc7frames2bit, bitread), prjxray-db 0.0_257_g0a0adde, gcc-riscv64-elf-newlib 10.1.0, openFPGALoader, python 3.7.16) | explicit lock with md5s, `tools/e2e/f4pga/xc7-conda-explicit.txt` (77 packages, channels litex-hub + defaults) | 1.9 GiB |
+| PyPI part (f4pga `e1cd038f`, prjxray `ae546d6b`, f4pga-xc-fasm `25dc605c` (xcfasm), fasm 0.0.2.post88, numpy, scipy, ...) | `tools/e2e/f4pga/xc7-pip-freeze.txt` | 0.3 GiB |
+| symbiflow-arch-defs `20220920-124259`/`007d1c1`, `install-xc7` | sha256 in the script | 0.6 MiB |
+| `xc7a50t_test` (arty_35, basys3) | sha256 in the script | 2.6 GiB |
+| `xc7z010_test` (zybo) | sha256 in the script | 1.5 GiB |
+| `xc7a100t_test` (arty_100, nexys4ddr) | sha256 in the script | 4.8 GiB |
+| `xc7a200t_test` (nexys_video) | sha256 in the script | 10.5 GiB |
+
+Almost all of a device package is one file, the VPR routing graph
+`rr_graph_<device>.rr_graph.real.bin`. With this task's 6 GiB disk budget
+the devices were installed one at a time (`--remove-devices`), and
+`xc7a100t_test` was installed into a tmpfs (`--big-files-dir
+/dev/shm/f4pga-t73`: the device directory lives there and
+`arch/xc7a100t_test` is a symlink to it; lost at reboot, the script
+reinstalls it when run again). Only the directory can be a symlink:
+VPR maps the graph with the size `lstat()` gives for its path, so a
+symlinked graph file fails with `mmap_file.cpp:34 size_ 73 is not a
+multiple of capnp::word`. **`xc7a200t_test` was not installed**: its 10.5 GiB graph
+fits neither the disk budget nor, next to VPR, this machine's 15 GiB of
+RAM, so the two Nexys Video designs (`counter_test`, `litex_sata_demo`)
+were not built.
+
+Deviations from the documented procedure, none of which changes what is
+installed:
+
+* micromamba 2.3.2 (one static binary, pinned) instead of the unpinned
+  `Miniconda3-latest` installer, creating the environment from the
+  explicit lock of what `conda env create -f xc7/environment.yml`
+  resolves to;
+* the f4pga python package is installed from a git clone at the pinned
+  commit: the documented `github.com/chipsalliance/f4pga/archive/<commit>.zip`
+  URL is refused with HTTP 403 by this machine's egress proxy (git clones
+  of the same repository are not);
+* the downloaded archives are sha256 checked, extracted and deleted.
+
+### Running
+
+```
+tools/e2e/run-f4pga-examples.sh --list                  # design, board, device, part, family
+tools/e2e/run-f4pga-examples.sh DESIGN BOARD [...]      # build, into tools/e2e/build/out/f4pga-examples/
+tools/e2e/run-f4pga-examples.sh --device xc7a50t_test   # every design of an installed device
+tools/e2e/compare-f4pga-examples.py [DESIGN/BOARD ...]  # Rust vs the flow's outputs and tools, timings
+python3 tools/difftest-xilinx.py --corpus-root tools/e2e/build/out/f4pga-examples ...   # see below
+tools/e2e/install-f4pga-examples-corpus.py [DESIGN/BOARD ...]   # into the corpus
+```
+
+`run-f4pga-examples.sh` clones f4pga-examples at the pinned commit (with
+its submodules) into `tools/e2e/build/f4pga-examples`
+(`$F4PGA_EXAMPLES_DIR`) and runs each design's documented command (those
+of f4pga-examples' `.github/scripts/build-examples.sh`): `TARGET=<board>
+make -C <example>` for the Makefile examples (`counter_test` on
+`arty_35` goes through `f4pga build --flow flow.json`, the others
+through the `symbiflow_*` wrappers), LiteX's `arty.py --toolchain=symbiflow
+--cpu-type {picorv32,vexriscv}` for `litex_demo`, the project F
+`projf-makefiles/hello/hello-arty/{A..L}` designs. It keeps the flow's
+`top.fasm` and `top.bit`, and reruns the flow's exact `xcfasm` command
+line with `--frm_out` to keep its frames (`top.frm`; the flow writes them
+to a temporary file). The `litex_demo` designs need the LiteX packages
+of `xc7/litex_demo/requirements.txt` in the environment: the script
+installs the 18 its Arty targets use, at the pinned commits, as shallow
+clones (the full list also clones the pythondata-cpu packages of
+blackparrot, rocket, microwatt, ..., several GiB of git history).
+
+The flow's prjxray-db is the conda package `prjxray-db
+0.0_257_g0a0adde`: prjxray-db commit `0a0added`, the same commit
+`tools/fetch-db.sh` pins, and every database file is identical to
+`tests/oracle/build/db/prjxray-db` (`diff -r`: only the repository's
+top level README/LICENSE/Makefile files are not in the package). The
+flow's reference tools are prjxray `ae546d6b` (C++ tools and python
+package) and f4pga-xc-fasm `25dc605c`; the oracle's are prjxray
+`c9f02d85` and the same f4pga-xc-fasm.
+
+Both comparisons of the dense/sparse/pudc variants:
+
+```
+# against the oracle and the pinned database
+python3 tools/difftest-xilinx.py --corpus-root tools/e2e/build/out/f4pga-examples \
+  --oracle tests/oracle/fasm2frames-oracle --frames2bit-oracle tests/oracle/xc7frames2bit-oracle \
+  --bitread-oracle tests/oracle/bitread-oracle --xcfasm-oracle tests/oracle/xcfasm-oracle
+# against the flow's own tools and database
+E=tools/e2e/build/f4pga/xc7/conda/envs/xc7
+python3 tools/difftest-xilinx.py --corpus-root tools/e2e/build/out/f4pga-examples \
+  --oracle tools/e2e/f4pga/fasm2frames-flow --frames2bit-oracle $E/bin/xc7frames2bit \
+  --bitread-oracle $E/bin/bitread --xcfasm-oracle $E/bin/xcfasm --db-cache $E/share/symbiflow
+```
+
+### Quirks of the flow found here
+
+* The environment's `bin/fasm2frames` (prjxray's console script) does
+  not run: `ModuleNotFoundError: No module named 'utils'` (prjxray's pip
+  package does not install its `utils/` directory). The flow itself only
+  uses `xcfasm`; `tools/e2e/f4pga/fasm2frames-flow` runs the flow's
+  `xc_fasm.fasm2frames` instead (with `python -I`: from the root of this
+  repository `import fasm` would otherwise find this repository's
+  `fasm/` package).
+* The flow's `top.bit` header names the temporary `.frm` file of its
+  `xcfasm` (`/tmp/tmpXXXXXXXX`) and the build time: not byte
+  reproducible, as documented for `xcfasm` in `docs/rewrite/COMPAT.md`.
+  Everything after the header is.
+* The flow is deterministic: rebuilding `counter_test/arty_35` gives the
+  committed FASM byte for byte (`tests/e2e/test_f4pga_examples.py`).
+
+* `symbiflow_write_fasm` (the make and LiteX flows) runs `genfasm` in
+  `/bin/bash -c` with more commands after it and without `set -e`: a
+  `genfasm` that is killed (OOM here: `counter_test/arty_100` first came
+  out as a 320 line FASM without routing) or fails leaves a truncated
+  FASM, and the flow writes its bitstream and succeeds.
+  `run-f4pga-examples.sh` checks each build with
+  `tools/e2e/f4pga/check-genfasm.sh`: genfasm's own log (`fasm.log`, or
+  `vpr_stdout.log` for `f4pga build`) must end with `Writing
+  Implementation FASM: ...` and `The entire flow of VPR took ...`, and
+  the build output must not hold a bash signal report naming genfasm.
+
+### Tests
+
+`tests/e2e/test_f4pga_examples.py` (109 tests): check-genfasm.sh on fake
+genfasm runs (killed by SIGKILL/SIGBUS/SIGTERM/SIGSEGV/SIGABRT, failing,
+succeeding; run through `/bin/bash -c` like the flow), the corpus metadata, that
+`make xilinx-difftest` covers every entry (its `difftest.json`), the Rust
+`fasm` parses every FASM and the Rust `fasm2frames --sparse
+--emit_pudc_b_pullup` reproduces the flow's frames (committed
+`vpr.frm.xz` or the recorded sha256) with the pinned database; with the
+toolchain, the flow's tools run and `counter_test/arty_35` is rebuilt end
+to end and compared (`F4PGA_EXAMPLES_DIR` or `F4PGA_EXAMPLES_BUILD=1`).
+Each part skips cleanly without its prerequisites.

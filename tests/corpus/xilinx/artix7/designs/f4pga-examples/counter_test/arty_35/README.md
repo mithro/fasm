@@ -122,3 +122,9 @@ sha256 of the uncompressed files:
 a0ff0016cd2b2b3f6fbf2e541a6cdb154ee48558c1500c09ef31314b0707bc51  top.sparse.frm
 a1f670ac5e1c8be76e4ba65ad03d60ce4616945fb86a2828baa3f00561fef4de  top.pudc.frm
 ```
+
+## The f4pga (VPR) flow FASM of the same design (T7.3)
+
+`vpr.fasm` (with `vpr.frm.xz` and `difftest.json`) in this directory is
+the same design built with the f4pga Yosys + VPR flow; see
+`README.vpr.md`.
