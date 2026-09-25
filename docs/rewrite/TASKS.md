@@ -182,7 +182,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 
 - [x] T8.1 Benchmarks (`cargo bench`) and `docs/rewrite/BENCHMARKS.md` with
       comparison against Python textX/ANTLR and fasm2frames.py.
-- [ ] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
+- [~] T8.2 Optimise hot paths found in T8.1 (parser SIMD scanning, database
       cache, frame assembly). Known: on pip heavy FASM the parser runs at
       150-164 MB/s (target 200) with ~48% of instructions in idstring
       interning and ~9% in UTF-8 validation of names; speed up the interner

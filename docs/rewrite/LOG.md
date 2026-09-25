@@ -795,3 +795,6 @@ what happened, branch/commit references, open issues.
   targets, ranked: interner hit path (52 vs 38 ns), byte-wise ASCII name
   validation, IdString sort (2.7x), streaming canonical output, stress /
   pips parser classes below 200 MB/s.
+* T8.2 (hot path optimisation: interner hit path, byte-wise name
+  validation, IdString sort, streaming canonical output) started (Opus);
+  T7.6 under review.
