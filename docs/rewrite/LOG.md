@@ -611,3 +611,16 @@ what happened, branch/commit references, open issues.
 * T7.3 (f4pga-examples through the f4pga/VPR flow) started (Opus) in the
   slot freed by the T5.9 merge; T6.2 running; version 2 all-parts
   reference run in the background (3 jobs, ~90 min estimate).
+* T6.2 implemented on branch `worktree-agent-aaffa2f97024e493a` (14
+  commits): UltraScale/UltraScale+ ECC and bitstream writer/reader with
+  `BitstreamFormat` (prjuray-tools native vs prjxray's UltraScale
+  variant), new binaries `xcframes2bit`, `uray-bitread`,
+  `uray-fasm2frames`, UltraScale in `xc7frames2bit`/`bitread`,
+  `fasm2frames` on prjuray-db parts, configuration_ranges part.yaml,
+  synthetic-usp-db fixture, uray-* oracle wrappers,
+  tests/cli/test_uray_tools_compat.py (92), `make uray-difftest`, gflags
+  --helppackage fix, §8.10 + COMPAT sections. Reported byte identical on
+  220 uray-fasm2frames runs (both zynqusp parts), 1078 derived bitstream
+  runs, ToolsTestData round trips, prjxray regression unchanged; Rust
+  2-8x faster. xcfasm has no UltraScale (xc_fasm lacks it); Spartan6 not
+  implemented. Independent review (Opus) started.
