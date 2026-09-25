@@ -57,7 +57,15 @@ edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chipsalliance/fasm"
 homepage = "https://github.com/chipsalliance/fasm"
-documentation = "https://docs.rs/fasm"
+# No shared `documentation` here: docs.rs (the default when the field is
+# left out) serves each crate at its own name once published
+# (docs.rs/<crate-name>), and a single workspace-wide URL would point
+# every crate at whichever one happens to share that URL -- wrongly, as
+# `https://docs.rs/fasm` did here before publishing even started
+# (crates.io already has an unrelated crate at that name, see
+# docs/RELEASING.md). Set `documentation` per crate instead, once
+# actually publishing, if the default docs.rs URL for its own name is
+# not what is wanted.
 authors = ["The F4PGA Authors"]
 # Minimum supported Rust version, verified in CI (.github/workflows/rust.yml,
 # the `msrv` job): `rust/fasm/src/idstring/interner.rs` uses

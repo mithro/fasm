@@ -42,18 +42,6 @@ jobs:
       # docs/rewrite/DESIGN-python.md) must keep building.
       - name: cargo clippy -p fasm-python --no-default-features
         run: cargo clippy -p fasm-python --no-default-features --all-targets -- -D warnings
-      # `cargo package --list` catches an include/exclude mistake (a test
-      # fixture or dev-only file slipping into the published package)
-      # without needing a full `cargo package`, which for these three
-      # crates would otherwise fail in CI for the unrelated reason
-      # covered in the `package` job's comment below.
-      - name: cargo package --list (fasm-xilinx, fasm-cli, fasm-capi)
-        run: |
-          for crate in fasm-xilinx fasm-cli fasm-capi; do
-            echo "::group::cargo package -p $crate --list"
-            cargo package -p "$crate" --list --allow-dirty
-            echo "::endgroup::"
-          done
 
   test:
     name: test (${{ matrix.os }})
@@ -100,26 +88,32 @@ jobs:
       - name: make capi-header-check capi-test
         run: make capi-header-check capi-test
 
-  # `cargo package` for the core crate, with the same `--verify` (build
-  # from the packaged tarball) a real `cargo publish -p fasm` would do;
-  # catches an include/exclude list or Cargo.toml metadata mistake before
-  # release (T8.4, docs/RELEASING.md). Not run for fasm-xilinx/fasm-cli/
-  # fasm-capi: their path dependency on `fasm` needs a `version`
-  # requirement that resolves against the *published* crates.io index,
-  # which fails in ordinary CI the same way it does locally pre-publish
-  # (see docs/RELEASING.md's crates.io name collision note); `--list`
-  # avoids the registry lookup and is checked in `lint` instead
-  # (comparable to `cargo package -p fasm --list`, cheap enough to run
-  # for all four crates there).
+  # `cargo package` (with `--verify`: build from the packaged tarball, the
+  # same thing a real `cargo publish` does) for the four publishable
+  # crates, catching an include/exclude list or Cargo.toml metadata
+  # mistake before release (T8.4, docs/RELEASING.md). This needs a
+  # `version` requirement on every path dependency between them
+  # (fasm-xilinx/fasm-cli/fasm-capi -> fasm) even though none of these
+  # crates are actually published yet: cargo (>= 1.90) resolves and
+  # verifies path dependencies that declare a version against a local,
+  # in-memory registry overlay built from the workspace's own path
+  # dependencies, not the real crates.io index, so this works whether or
+  # not `fasm` is on crates.io yet. Passing the four crates explicitly
+  # (rather than `--workspace`) skips fasm-python, whose `fasm`/
+  # `fasm-xilinx` path dependencies deliberately have no `version` (it is
+  # `publish = false`, see its Cargo.toml): `cargo package --workspace`
+  # fails outright on that (there is no `--exclude` needed with an
+  # explicit `-p` list; `--workspace --exclude fasm-python` is the
+  # equivalent when workspace-wide flags are wanted instead).
   package:
-    name: cargo package (fasm)
+    name: cargo package (fasm, fasm-xilinx, fasm-cli, fasm-capi)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo package -p fasm
-        run: cargo package -p fasm
+      - name: cargo package -p fasm -p fasm-xilinx -p fasm-cli -p fasm-capi
+        run: cargo package -p fasm -p fasm-xilinx -p fasm-cli -p fasm-capi
 
   msrv:
     name: msrv (1.88.0)

@@ -5,7 +5,6 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-documentation.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "C ABI (libfasm_capi) for the fasm crate: header include/fasm/fasm.h generated with cbindgen, plus the header-only C++ wrapper include/fasm/fasm.hpp."
@@ -17,7 +16,7 @@ categories = ["external-ffi-bindings", "hardware-support"]
 # `cargo build`; the published crate only needs src/ to build
 # libfasm_capi. tests/ (C/C++ test programs + CMakeLists.txt) and
 # examples/ are excluded too.
-include = ["src/**", "Cargo.toml", "README.md"]
+include = ["src/**", "/Cargo.toml", "/README.md", "/LICENSE"]
 
 [lib]
 # `fasm` is already taken by the core crate in this workspace, so the
