@@ -973,3 +973,18 @@ what happened, branch/commit references, open issues.
 * Third container restart interrupted T7.5 (8 commits kept) and T5.3b
   (1 commit + uncommitted work kept); both resumed from their
   transcripts.
+* T7.5 implemented on branch `worktree-agent-ae6f7361e01bbdfcd` (15
+  commits): capability study (DESIGN-rapidwright.md): RapidWright
+  v2026.1.0-beta has no FASM support; the FPGA interchange route
+  (RapidWright netlists + device resources -> python-fpga-interchange
+  fasm_generator) works without Vivado for Series7 with documented
+  workarounds; its public bitstream package reads/writes all three
+  architectures. Cross-checks: frame layout identical for 128 parts;
+  bitstreams 104 cases = 98 identical + 6 explained (RapidWright reads
+  per-frame-CRC bitstreams one frame early per row; prjxray agrees with
+  the debug bitstream); FASM 13 cases = 7 identical + 6 not possible
+  (generator failures, no UltraScale+ generator, encrypted harness
+  EDIF). Documented: the prjxray "lost last frame" behaviour we keep on
+  purpose. No Rust bug. Setup script, check driver, 147 e2e tests,
+  layout JSONs and 5 FASM designs committed. Independent review (Opus)
+  started.
