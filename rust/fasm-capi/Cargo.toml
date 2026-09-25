@@ -4,9 +4,20 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "C ABI (libfasm_capi) for the fasm crate: header include/fasm/fasm.h generated with cbindgen, plus the header-only C++ wrapper include/fasm/fasm.hpp."
+readme = "README.md"
+keywords = ["fasm", "fpga", "ffi", "capi", "eda"]
+categories = ["external-ffi-bindings", "hardware-support"]
+# include/, cbindgen.toml and fasm.pc.in are consumed by `make
+# capi-header`/`capi-install` from the repository checkout, not by
+# `cargo build`; the published crate only needs src/ to build
+# libfasm_capi. tests/ (C/C++ test programs + CMakeLists.txt) and
+# examples/ are excluded too.
+include = ["src/**", "Cargo.toml", "README.md"]
 
 [lib]
 # `fasm` is already taken by the core crate in this workspace, so the
@@ -17,9 +28,9 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-fasm = { path = "../fasm" }
+fasm = { path = "../fasm", version = "0.1.0-dev" }
 # The `fasm_xilinx_*` functions (src/xilinx/).
-fasm-xilinx = { path = "../fasm-xilinx" }
+fasm-xilinx = { path = "../fasm-xilinx", version = "0.1.0-dev" }
 
 [lints]
 workspace = true

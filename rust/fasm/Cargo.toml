@@ -4,9 +4,18 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "Core library for the FASM (FPGA Assembly) file format: idstring interning, data model, parser and output/merge support."
+readme = "README.md"
+keywords = ["fasm", "fpga", "parser", "bitstream", "eda"]
+categories = ["parser-implementations", "hardware-support"]
+# Keep the published crate to source + license + readme: no benches/
+# fixtures, no fuzz/ (its own cargo-fuzz workspace, T1.6), no dev-only
+# example inputs. `cargo package -p fasm --list` verifies this.
+include = ["src/**", "Cargo.toml", "README.md"]
 
 [lib]
 name = "fasm"

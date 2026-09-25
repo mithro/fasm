@@ -46,10 +46,18 @@ default-members = [
 exclude = ["rust/fasm/fuzz"]
 
 [workspace.package]
-version = "0.1.0"
+# Pre-release version of the eventual 0.1.0 (the rewrite is not feature
+# complete, see docs/rewrite/TASKS.md): a valid Cargo/crates.io semver
+# pre-release identifier. The Python package's `version` in pyproject.toml
+# is kept in step by hand (`0.1.0.dev0`, the PEP 440 spelling of the same
+# pre-release; PEP 440 and semver pre-release syntax differ, so the two
+# strings cannot be made byte-identical) -- see docs/rewrite/RELEASING.md.
+version = "0.1.0-dev"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/chipsalliance/fasm"
+homepage = "https://github.com/chipsalliance/fasm"
+documentation = "https://docs.rs/fasm"
 authors = ["The F4PGA Authors"]
 # Minimum supported Rust version, verified in CI (.github/workflows/rust.yml,
 # the `msrv` job): `rust/fasm/src/idstring/interner.rs` uses

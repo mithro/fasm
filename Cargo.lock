@@ -66,7 +66,7 @@ dependencies = [
 
 [[package]]
 name = "fasm"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "foldhash",
  "num-bigint",
@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "fasm-capi"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "fasm",
  "fasm-xilinx",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "fasm-cli"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "fasm",
  "fasm-xilinx",
@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "fasm-python"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "fasm",
  "fasm-xilinx",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "fasm-xilinx"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "blake3",
  "fasm",

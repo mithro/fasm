@@ -4,16 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 authors.workspace = true
 rust-version.workspace = true
 description = "prjxray/prjuray database loader, FASM -> frames assembler and frames -> bitstream writer for Xilinx Series7 / UltraScale / UltraScale+ parts."
+readme = "README.md"
+keywords = ["fasm", "fpga", "xilinx", "bitstream", "eda"]
+categories = ["parser-implementations", "hardware-support"]
+# build.rs only reads src/ (docs/rewrite/DESIGN-xilinx-db.md §8.8); the
+# published crate skips testdata/ (test tile-grid/part fixtures, not
+# needed to build or use the library) and benches/tests fixtures.
+include = ["src/**", "build.rs", "Cargo.toml", "README.md"]
 
 [lib]
 name = "fasm_xilinx"
 path = "src/lib.rs"
 
 [dependencies]
-fasm = { path = "../fasm" }
+fasm = { path = "../fasm", version = "0.1.0-dev" }
 # Hasher of the IdString keyed maps (same as the fasm interner).
 foldhash = "0.2"
 serde = { workspace = true }
