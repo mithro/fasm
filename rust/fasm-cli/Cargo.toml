@@ -41,6 +41,10 @@ name = "uray-bitread"
 path = "src/bin/uray-bitread.rs"
 
 [[bin]]
+name = "uray-fasm2frames"
+path = "src/bin/uray-fasm2frames.rs"
+
+[[bin]]
 name = "fasm-db-cache"
 path = "src/bin/fasm-db-cache.rs"
 

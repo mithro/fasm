@@ -85,7 +85,7 @@ impl Environment {
 }
 
 /// `os.path.join(a, b)` (POSIX).
-fn path_join(a: &PyStr, b: &PyStr) -> PyStr {
+pub(crate) fn path_join(a: &PyStr, b: &PyStr) -> PyStr {
     let slash = u32::from('/');
     if b.at(0) == Some(slash) || a.is_empty() {
         return b.clone();
@@ -296,10 +296,17 @@ pub(crate) fn build_frames(
         }
         return Err("TypeError: encoding without a string argument\n".to_string());
     };
-    fasm2frames(&db, fn_in, &options, &mut |warning| {
-        let _ = writeln!(stderr, "{warning}");
-    })
-    .map_err(|e| match e {
+    // A prjuray-db (UltraScale+) part, which xc_fasm cannot open: prjuray's
+    // flow (`utils/fasm2bit.py`: no IO bank, STEPDOWN or PUDC_B handling),
+    // the frames in 32-bit words, ready for `xcframes2bit`.
+    let result = if db.architecture() == fasm_xilinx::Architecture::Series7 {
+        fasm2frames(&db, fn_in, &options, &mut |warning| {
+            let _ = writeln!(stderr, "{warning}");
+        })
+    } else {
+        fasm_xilinx::uray_fasm2frames(&db, fn_in, &options)
+    };
+    result.map_err(|e| match e {
         AssemblerError::Parse(first) => traceback(AssemblerError::Parse(report_parse_error(
             first, &db, &options, fn_in,
         ))),
@@ -318,7 +325,7 @@ pub(crate) fn build_frames(
 /// first text with an error: the first of them that does not parse is the
 /// one `first` comes from. (The PUDC_B and STEPDOWN features are single
 /// generated lines, to which the precedence does not apply.)
-fn report_parse_error(
+pub(crate) fn report_parse_error(
     first: ParseError,
     db: &Database,
     options: &Fasm2FramesOptions,

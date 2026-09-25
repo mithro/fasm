@@ -1,0 +1,31 @@
+!<xilinx/xcupseries/part>
+idcode: 0x4a42093
+rows:
+  0: !<xilinx/xcupseries/row>
+    configuration_buses:
+      CLB_IO_CLK: !<xilinx/xcupseries/configuration_bus>
+        configuration_columns:
+          0: !<xilinx/xcupseries/configuration_column>
+            frame_count: 16
+          1: !<xilinx/xcupseries/configuration_column>
+            frame_count: 16
+          2: !<xilinx/xcupseries/configuration_column>
+            frame_count: 6
+          3: !<xilinx/xcupseries/configuration_column>
+            frame_count: 76
+      BLOCK_RAM: !<xilinx/xcupseries/configuration_bus>
+        configuration_columns:
+          0: !<xilinx/xcupseries/configuration_column>
+            frame_count: 256
+  32: !<xilinx/xcupseries/row>
+    configuration_buses:
+      CLB_IO_CLK: !<xilinx/xcupseries/configuration_bus>
+        configuration_columns:
+          0: !<xilinx/xcupseries/configuration_column>
+            frame_count: 16
+          1: !<xilinx/xcupseries/configuration_column>
+            frame_count: 16
+      BLOCK_RAM: !<xilinx/xcupseries/configuration_bus>
+        configuration_columns:
+          0: !<xilinx/xcupseries/configuration_column>
+            frame_count: 256

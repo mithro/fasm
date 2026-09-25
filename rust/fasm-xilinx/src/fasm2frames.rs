@@ -100,6 +100,120 @@ pub fn fasm2frames(
     result
 }
 
+/// `run(db_root, part, filename_in, ...)` of prjuray's
+/// `utils/fasm2frames.py` for the part `db` was opened for: like
+/// [`fasm2frames`] without the IO bank maps, the PUDC_B pullup and the
+/// STEPDOWN propagation (steps 3, 4, 5 and 8), with the assembler in
+/// prjuray mode ([`FasmAssembler::set_prjuray`]). `options.emit_pudc_b_pullup`
+/// is ignored. The frames are 32-bit words; prjuray writes them as 16-bit
+/// words ([`write_frm_halfwords`], [`dump_frames_sparse_halfwords`],
+/// [`write_bits`]).
+///
+/// # Errors
+///
+/// See [`AssemblerError`].
+pub fn uray_fasm2frames(
+    db: &Database,
+    fasm: &Path,
+    options: &Fasm2FramesOptions,
+) -> Result<Frames, AssemblerError> {
+    let mut assembler = FasmAssembler::new(db)?;
+    assembler.set_prjuray(true);
+    let info = db.part_info().ok_or_else(|| AssemblerError::Python {
+        exception: "AttributeError",
+        message: "the database was opened without a part".to_owned(),
+    })?;
+    let mut extra_features: Vec<FasmLine> = Vec::new();
+    if let Some(roi_path) = options.roi.as_deref().filter(|p| !p.as_os_str().is_empty()) {
+        let design = read_roi_design(roi_path)?;
+        assembler.mark_roi_frames(&design.roi);
+        if let Some(text) = design.required_features {
+            extra_features = fasm::parse_fasm_string(&text)?;
+        }
+    }
+    let required = db.get_required_fasm_features(Some(&info.name)).join("\n");
+    extra_features.extend(fasm::parse_fasm_string(&required)?);
+    assembler.parse_fasm_filename(fasm, extra_features)?;
+    assembler.get_frames(options.sparse)
+}
+
+/// The 16-bit words of a frame of 32-bit words, low half first (prjuray's
+/// frames of `2 * words_per_frame` 16-bit words).
+fn halfwords(words: &[u32]) -> impl Iterator<Item = u32> + '_ {
+    words.iter().flat_map(|&w| [w & 0xFFFF, w >> 16])
+}
+
+/// `dump_frm(f, frames)` of prjuray's `utils/fasm2frames.py`: like
+/// [`Frames::write_frm`], with the 16-bit words (186 for UltraScale+) as
+/// `0x%08X`.
+///
+/// # Errors
+///
+/// The errors of `out`.
+pub fn write_frm_halfwords(frames: &Frames, out: &mut dyn Write) -> io::Result<()> {
+    let mut line = String::with_capacity(11 + 22 * frames.words_per_frame());
+    for (address, words) in frames.iter() {
+        line.clear();
+        line.push_str(&format!("0x{address:08X} "));
+        for (i, half) in halfwords(words).enumerate() {
+            if i > 0 {
+                line.push(',');
+            }
+            line.push_str(&format!("0x{half:08X}"));
+        }
+        line.push('\n');
+        out.write_all(line.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// `dump_frames_sparse(frames)` of prjuray's `utils/fasm2frames.py` (the
+/// `--debug` output): [`dump_frames_sparse`] on the 16-bit words.
+///
+/// # Errors
+///
+/// The errors of `out`.
+pub fn dump_frames_sparse_halfwords(frames: &Frames, out: &mut dyn Write) -> io::Result<()> {
+    writeln!(out)?;
+    writeln!(out, "Frames: {}", frames.len())?;
+    for (address, words) in frames.iter() {
+        if words.iter().all(|&w| w == 0) {
+            continue;
+        }
+        writeln!(out, "Frame @ 0x{address:08X}")?;
+        for (i, half) in halfwords(words).enumerate() {
+            if half != 0 {
+                writeln!(out, "  {:>3}: 0x{half:08X}", format!(" {i}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `output_bits(f, frames)` of prjuray's `utils/fasm2frames.py`
+/// (`--dump_bits`): `bit_%08x_%03d_%02d` (frame, 32-bit word, bit) for
+/// every set bit, in frame, word and bit order.
+///
+/// # Errors
+///
+/// The errors of `out`.
+pub fn write_bits(frames: &Frames, out: &mut dyn Write) -> io::Result<()> {
+    let mut text = String::new();
+    for (address, words) in frames.iter() {
+        text.clear();
+        for (i, &word) in words.iter().enumerate() {
+            let mut bits = word;
+            while bits != 0 {
+                let k = bits.trailing_zeros();
+                bits &= bits - 1;
+                text.push_str(&format!("bit_{address:08x}_{i:03}_{k:02}\n"));
+            }
+        }
+        out.write_all(text.as_bytes())?;
+    }
+    Ok(())
+}
+
 fn not_found(path: PathBuf) -> AssemblerError {
     // What `open()` reports: read the file to get the real error (e.g.
     // `IsADirectoryError` for a directory).
@@ -587,6 +701,31 @@ mod tests {
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "\nFrames: 2\nFrame @ 0x00000020\n    5: 0x000000AB\n   100: 0x00000001\n"
+        );
+    }
+
+    #[test]
+    fn prjuray_halfword_outputs() {
+        let mut frames = Frames::zeroed(2, [0x100, 0x2_0000]);
+        frames.get_mut(0x100).unwrap()[1] = 0x8001_0004;
+        let mut frm = Vec::new();
+        write_frm_halfwords(&frames, &mut frm).unwrap();
+        assert_eq!(
+            String::from_utf8(frm).unwrap(),
+            "0x00000100 0x00000000,0x00000000,0x00000004,0x00008001\n\
+             0x00020000 0x00000000,0x00000000,0x00000000,0x00000000\n"
+        );
+        let mut dump = Vec::new();
+        dump_frames_sparse_halfwords(&frames, &mut dump).unwrap();
+        assert_eq!(
+            String::from_utf8(dump).unwrap(),
+            "\nFrames: 2\nFrame @ 0x00000100\n    2: 0x00000004\n    3: 0x00008001\n"
+        );
+        let mut bits = Vec::new();
+        write_bits(&frames, &mut bits).unwrap();
+        assert_eq!(
+            String::from_utf8(bits).unwrap(),
+            "bit_00000100_001_02\nbit_00000100_001_16\nbit_00000100_001_31\n"
         );
     }
 

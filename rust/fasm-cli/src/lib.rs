@@ -43,5 +43,6 @@ pub mod pystr;
 pub mod terminal;
 pub mod tool;
 mod unicode_tables;
+pub mod uray_fasm2frames;
 pub mod xc7frames2bit;
 pub mod xcfasm;

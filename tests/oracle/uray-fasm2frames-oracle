@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+#
+# Copyright 2017-2022 F4PGA Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Runs prjuray's `utils/fasm2frames.py` (FASM -> .frm with 186 16-bit words
+# per UltraScale+ frame) from the prjuray checkout of
+# tests/oracle/setup-xilinx.sh, with the oracle venv's python (the prjuray
+# and fasm packages), e.g.:
+#
+#   tests/oracle/uray-fasm2frames-oracle \
+#       --db-root <db>/prjuray-db/zynqusp --part xczu3eg-sfvc784-1-e \
+#       in.fasm out.frm
+#
+# `utils/` is not a package: like prjuray's own environment.sh, the
+# checkout and its `utils/` directory go on sys.path (`from utils import
+# fasm_assembler`, `import bitstream`). `utils/util.py` imports jinja2 at
+# the top for templates fasm2frames never uses; the venv does not have it,
+# so an empty stand-in module is provided when it is missing. The script
+# runs as `__main__` with sys.argv[0] = the script path, so its argparse
+# program name is `fasm2frames.py`.
+#
+# Run tests/oracle/setup-xilinx.sh first. URAY_ORACLE_DIR overrides the
+# tests/oracle directory whose build/ and venv-xilinx/ are used (e.g. those
+# of another checkout of this repository).
+set -euo pipefail
+
+SCRIPT_DIR="${URAY_ORACLE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+PYTHON="$SCRIPT_DIR/venv-xilinx/bin/python"
+PRJURAY="$SCRIPT_DIR/build/xilinx/src/prjuray"
+
+if [[ ! -x "$PYTHON" || ! -f "$PRJURAY/utils/fasm2frames.py" ]]; then
+  echo "uray-fasm2frames-oracle: $PYTHON or $PRJURAY/utils/fasm2frames.py not found; run tests/oracle/setup-xilinx.sh first" >&2
+  exit 1
+fi
+
+exec "$PYTHON" -P -c '
+import runpy, sys, types
+try:
+    import jinja2  # noqa: F401
+except ImportError:
+    stub = types.ModuleType("jinja2")
+    stub.Environment = stub.FileSystemLoader = None
+    sys.modules["jinja2"] = stub
+root = sys.argv[1]
+sys.path[0:0] = [root, root + "/utils"]
+tool = root + "/utils/fasm2frames.py"
+sys.argv = [tool] + sys.argv[2:]
+runpy.run_path(tool, run_name="__main__")
+' "$PRJURAY" "$@"

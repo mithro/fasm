@@ -1,0 +1,116 @@
+{
+    "BRAM_X2Y0": {
+        "bits": {
+            "BLOCK_RAM": {
+                "baseaddr": "0x01000000",
+                "frames": 256,
+                "offset": 0,
+                "words": 15
+            },
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00000200",
+                "frames": 6,
+                "offset": 0,
+                "words": 15
+            }
+        },
+        "clock_region": "X0Y0",
+        "grid_x": 3,
+        "grid_y": 60,
+        "pin_functions": {},
+        "sites": {
+            "RAMB18_X0Y0": "RAMBFIFO18",
+            "RAMB18_X0Y1": "RAMB181",
+            "RAMB36_X0Y0": "RAMBFIFO36"
+        },
+        "type": "BRAM"
+    },
+    "CLEM_X1Y0": {
+        "bits": {
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00000100",
+                "frames": 16,
+                "offset": 0,
+                "words": 3
+            }
+        },
+        "clock_region": "X0Y0",
+        "grid_x": 2,
+        "grid_y": 60,
+        "pin_functions": {},
+        "sites": {
+            "SLICE_X1Y0": "SLICEM"
+        },
+        "type": "CLEM"
+    },
+    "CLEM_X1Y1": {
+        "bits": {
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00000100",
+                "frames": 16,
+                "offset": 3,
+                "words": 3
+            }
+        },
+        "clock_region": "X0Y0",
+        "grid_x": 2,
+        "grid_y": 59,
+        "pin_functions": {},
+        "sites": {
+            "SLICE_X1Y1": "SLICEM"
+        },
+        "type": "CLEM"
+    },
+    "CLEM_X1Y60": {
+        "bits": {
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00800100",
+                "frames": 16,
+                "offset": 0,
+                "words": 3
+            }
+        },
+        "clock_region": "X0Y1",
+        "grid_x": 2,
+        "grid_y": 0,
+        "pin_functions": {},
+        "sites": {
+            "SLICE_X1Y60": "SLICEM"
+        },
+        "type": "CLEM"
+    },
+    "EDGE_X0Y0": {
+        "bits": {
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00000100",
+                "frames": 16,
+                "offset": 185,
+                "words": 1
+            }
+        },
+        "clock_region": "X0Y0",
+        "grid_x": 1,
+        "grid_y": 60,
+        "pin_functions": {},
+        "sites": {},
+        "type": "EDGE"
+    },
+    "RCLK_INT_L_X2Y29": {
+        "bits": {
+            "CLB_IO_CLK": {
+                "baseaddr": "0x00000300",
+                "frames": 76,
+                "offset": 93,
+                "words": 3
+            }
+        },
+        "clock_region": "X0Y0",
+        "grid_x": 4,
+        "grid_y": 30,
+        "pin_functions": {},
+        "sites": {
+            "BUFCE_LEAF_X0Y0": "BUFCE_LEAF"
+        },
+        "type": "RCLK_INT_L"
+    }
+}
