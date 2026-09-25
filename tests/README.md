@@ -19,7 +19,7 @@ python3 -m venv venv
 venv/bin/pip install maturin pytest textx
 VIRTUAL_ENV=$PWD/venv venv/bin/maturin develop --release  # or: venv/bin/pip install -e .
 venv/bin/pytest tests/test_simple.py tests/test_rust_parser.py \
-    tests/test_fast_paths.py
+    tests/test_fast_paths.py tests/test_stubs.py
 ```
 
 `maturin develop` builds `fasm/_fasm_rs.abi3.so` into the source tree
@@ -40,7 +40,7 @@ venv/bin/pip install pytest .          # or the wheel / sdist
 cd "$(mktemp -d)"
 /path/to/venv/bin/pytest --import-mode=importlib \
     /path/to/fasm/tests/test_simple.py /path/to/fasm/tests/test_rust_parser.py \
-    /path/to/fasm/tests/test_fast_paths.py
+    /path/to/fasm/tests/test_fast_paths.py /path/to/fasm/tests/test_stubs.py
 ```
 
 `--import-mode=importlib` keeps pytest from adding the repository root to
@@ -59,6 +59,13 @@ tools need them built (`cargo build -p fasm-cli`; they are found in
 xc7a35tcsg324-1 and a design on xczu3eg, and with the f4pga-xc-fasm
 oracle venv (`tests/oracle/setup-xilinx.sh`, or `ORACLE_DIR`) it compares
 with `xc_fasm.fasm2frames` itself. Those parts are skipped otherwise.
+
+`test_stubs.py` (T8.3) audits `fasm/xilinx/__init__.pyi` (the only .pyi
+in the repository) against the installed `fasm.xilinx`'s runtime API:
+its `__all__`, the `Database`/`Frames`/`FasmAssembler` classes' methods,
+every checked function/method's parameters (name, positional/keyword-only
+kind, and whether it has a default), and the namedtuples' field order.
+Also skipped when the extension (or its `xilinx` feature) is not built.
 
 The other test directories have their own instructions: `cli/` (Rust
 `fasm` CLI vs. the original, `make cli-difftest`), `oracle/` (the original

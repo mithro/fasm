@@ -8,6 +8,22 @@ Each entry gives an example and what the textX parser
 when built) and the Rust implementation do with it. All examples were run
 through the oracle (`tests/oracle/dump.py --parser antlr|textx`).
 
+## Table of contents
+
+* [Parser](#parser-rustfasmsrcparser-t13)
+* [Command line tool (`fasm`)](#command-line-tool-fasm-rustfasm-cli-t21)
+* [`fasm2frames`](#fasm2frames-rustfasm-clisrcfasm2framesrs-rustfasm-xilinx-t54t55)
+* [`xc7frames2bit` and `bitread`](#xc7frames2bit-and-bitread-rustfasm-clisrcxc7frames2bitbitreadgflagsrs-rustfasm-xilinxsrcbitstream-t56)
+* [`xcfasm`](#xcfasm-rustfasm-clisrcxcfasmrs-t57)
+* [`xcframes2bit` and `uray-bitread`](#xcframes2bit-and-uray-bitread-prjuray-tools-rustfasm-clisrcxc7frames2bitbitreadrs-t62)
+* [`uray-fasm2frames`](#uray-fasm2frames-prjurays-utilsfasm2framespy-rustfasm-clisrcuray_fasm2framesrs-t62)
+* [The f4pga flow's outputs](#the-f4pga-flows-outputs-f4pga-examples-t73)
+* [The openXC7 snap's tools](#the-openxc7-snaps-tools-nextpnr-xilinx-examples-t76)
+* [C API (`libfasm_capi`)](#c-api-libfasm_capi-rustfasm-capi-t41)
+  * [C++ wrapper](#c-wrapper-includefasmfasmhpp-t42)
+* [Python bindings](#python-bindings-fasmparserrust-rustfasm-python-t31-t33)
+  * [`fasm.xilinx`](#fasmxilinx-t510)
+
 ## Parser (`rust/fasm/src/parser/`, T1.3)
 
 ### Rule

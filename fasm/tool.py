@@ -16,6 +16,17 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
+""" The ``fasm`` command line tool.
+
+Implements the ``fasm`` console script: parses a FASM file with the
+selected parser implementation (see :mod:`fasm.parser`) and prints it
+back out, optionally in canonical form (``--canonical``). The Rust
+``fasm`` binary (``rust/fasm-cli``) is a byte for byte compatible
+reimplementation of this module's behaviour, including the ``Error: ...``
+message printed to stdout (not stderr) on failure with exit code 0; see
+``docs/rewrite/COMPAT.md`` ("Command line tool") for the exact,
+documented scope of that compatibility.
+"""
 
 import argparse
 import importlib
@@ -24,20 +35,38 @@ from fasm import fasm_tuple_to_string
 
 
 def nullable_string(val):
+    """``argparse`` type for ``--parser``: an empty string means "unset".
+
+    Used as ``type=nullable_string`` so that ``--parser ''`` behaves the
+    same as omitting ``--parser`` (falls back to the default parser).
+    """
     if not val:
         return None
     return val
 
 
 def get_fasm_parser(name=None):
+    """ Import and return the ``fasm.parser.*`` module for ``name``.
+
+    ``name`` is one of :data:`fasm.parser.available` (``'rust'`` and/or
+    ``'textx'``), or ``None`` for the default parser (:mod:`fasm.parser`
+    itself, which re-exports the first available implementation).
+    ``'antlr'`` is also accepted, as long as the Rust parser is
+    available: there is no ``fasm.parser.antlr`` module any more (the
+    pre-rewrite ANTLR/setup.py build is gone), but ``'antlr'`` is aliased
+    to ``fasm.parser.rust``, which replaces it, so ``--parser antlr``
+    keeps working with a Rust-only install.
+
+    :raises Exception: if ``name`` names a parser that is not available.
+    """
     module_name = None
     if name is None:
         module_name = 'fasm.parser'
     elif name in fasm.parser.available:
         module_name = 'fasm.parser.' + name
     elif name == 'antlr' and 'rust' in fasm.parser.available:
-        # The Rust parser replaces the ANTLR parser (which is only built by
-        # the legacy setup.py build); keep --parser antlr working.
+        # The Rust parser replaces the pre-rewrite ANTLR parser (which no
+        # longer exists in this package); keep --parser antlr working.
         module_name = 'fasm.parser.rust'
     else:
         raise Exception("Parser '{}' is not available.".format(name))
@@ -45,6 +74,16 @@ def get_fasm_parser(name=None):
 
 
 def main():
+    """ Entry point for the ``fasm`` console script.
+
+    Parses ``sys.argv`` (see ``fasm --help``), parses the named file with
+    the selected parser, and prints the result via
+    :func:`fasm.fasm_tuple_to_string` (canonical form with
+    ``--canonical``). Any exception is caught and printed as
+    ``Error: <message>`` to stdout, with the process still exiting 0 (the
+    original tool's behaviour, kept for compatibility; see
+    ``docs/rewrite/COMPAT.md``).
+    """
     parser = argparse.ArgumentParser('FASM tool')
     parser.add_argument('file', help='Filename to process')
     parser.add_argument(

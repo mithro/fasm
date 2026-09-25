@@ -60,6 +60,7 @@ class FasmLookupError(Error):
     reference_exception = 'prjxray.fasm_assembler.FasmLookupError'
 
     def __init__(self, message='', messages=None):
+        """ Build the error; ``messages`` defaults to ``[message]``. """
         super().__init__(message)
         if messages is None:
             messages = [message]
@@ -89,6 +90,7 @@ class FasmParseError(Error, _CoreFasmParseError):
     reference_exception = 'Exception'
 
     def __init__(self, message='', line=0, column=0):
+        """ Build the error: message, 1-based line, 0-based column. """
         super().__init__(message)
         self.line = line
         self.column = column
@@ -100,6 +102,7 @@ class FrmError(Error, ValueError):
     reference_exception = 'ValueError'
 
     def __init__(self, message='', line=0):
+        """ Build the error with its message and 1-based .frm line. """
         super().__init__(message)
         self.line = line
 

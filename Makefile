@@ -40,7 +40,7 @@ install:
 # Run the Python tests (see tests/README.md for the two ways to run them;
 # this assumes an editable `maturin develop` install).
 test:
-	python3 -m pytest -s tests/test_simple.py tests/test_rust_parser.py tests/test_xilinx_python.py
+	python3 -m pytest -s tests/test_simple.py tests/test_rust_parser.py tests/test_xilinx_python.py tests/test_stubs.py
 
 .PHONY: test
 
