@@ -559,7 +559,9 @@ python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
   (`--parts-sample 1`: one part per family, different fabrics) takes
   about 2-3 minutes. The harness prints an estimate at the start and an
   ETA after each part.
-* Result of the first run: 2651 fasm2frames runs (2526 identical, 125
+* Result of the first run (generator version 1; version 2 fixed the
+  STEPDOWN units of the second `_SING` alias group and adds the alias
+  tiles' pseudo PIPs, see §8.9): 2651 fasm2frames runs (2526 identical, 125
   explained: the value range error of `errors/value_range.fasm`, rule 4
   of the `fasm2frames` section of `docs/rewrite/COMPAT.md`), 8814
   xc7frames2bit/bitread runs and 375 xcfasm runs, all identical; 0

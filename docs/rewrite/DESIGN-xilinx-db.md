@@ -2564,7 +2564,12 @@ deterministic for given `--tiles`, `--seed`, `--density`,
   `feature_addresses`; `TileSegbitsAlias`: the aliased type's tables,
   sites renamed, offset minus `start_offset`, the alias tile's own pseudo
   PIPs) for every segbits key and pseudo PIP of every tile type (and
-  alias) of the grid. Each result is a *unit* (`NAME` or `NAME[n]`) with
+  alias) of the grid, including the aliased type's pseudo PIPs under the
+  alias tile's names (e.g. `LIOB33_SING_*.IOB_DIFFI_IN0.IOB_PADOUT1` from
+  `ppips_liob33.db`: no bits on either side). The tiles of a type with
+  the same alias form a *group* (the bottom and top `_SING` IOB tiles of
+  a clock region are two groups of one type: `start_offset` 2 or 0,
+  different sites). Each result is a *unit* (`NAME` or `NAME[n]`) with
   its bits relative to the tile. Keys that no FASM feature reaches are
   listed in the manifest (`unreachable`: a `NAME[0]` shadowed by a plain
   `NAME`, a key of another type, a site the alias map renames away): none
@@ -2583,20 +2588,28 @@ deterministic for given `--tiles`, `--seed`, `--density`,
   their type (exclusive options of types with few tiles, e.g. the
   `CLK_BUFG_*` muxes or the `DRIVE`/`IOSTANDARD` options of the `*_SING`
   IOB tiles) go to further files: `features-2.fasm`, ... (fresh bit map
-  each), so **every reachable unit of every tile type of the part is set
-  at least once**, over 5 to 21 files per part.
+  each), so **every reachable unit of every group of the part is set at
+  least once**, except the STEPDOWN units below, over 5 to 22 files per
+  part. The generator asserts this at the end: per group, the distinct
+  units placed over all files plus those listed in `uncovered` are all
+  its units (manifest `coverage`; the tests check it too).
 * The part's `required_features.fasm` (zynq7) is stored first in every
   file's bit map. The PUDC_B tile is kept free (so `--emit_pudc_b_pullup`
-  adds its pull-up). STEPDOWN: each IOB type with a STEPDOWN feature gets
+  adds its pull-up). STEPDOWN: each group with a STEPDOWN feature gets
   a *bonded* host tile (a STEPDOWN feature of a tile without IO bank is a
   `KeyError` in `fasm2frames.py`), in as few banks as possible; the other
   tiles of those banks are kept free, and the model replays
   `fasm2frames.py`'s propagation (unused IOB sites of the banks get every
   tag of the bank, `HCLK_IOI3_<loc>` gets `STEPDOWN`, with and without the
   PUDC_B site in use) and moves any generated unit that would conflict
-  with it to the next file. The STEPDOWN features of `RIOB33_SING` (11
-  parts) and `LIOB33_SING` (3 parts) have no bonded tile in those parts
-  and are not placed (listed in `uncovered`).
+  with it to the next file. Groups without a bonded tile cannot have
+  their STEPDOWN units placed (listed in `uncovered`, 4 units per part):
+  both `RIOB33_SING` groups on xc7a35tcpg236 and xc7a50tcpg236 (4 speed
+  grades each) and xc7z010clg225 (3), both `LIOB33_SING` groups on
+  xc7z020clg400 (3): 14 parts. (Generator version 1 chose one STEPDOWN
+  host per tile type, so the other `_SING` group's STEPDOWN units were
+  neither placed nor listed: 2-6 units on 111 parts, found by the review;
+  fixed in version 2.)
 * Lines: plain units as `F`, `F = 1` or `F = 1'b1`; the addresses of a
   multi bit feature placed on a tile as ranges `F[hi:lo] = value` whose
   set bits are those addresses (0 bits are never looked up, so ranges may
@@ -2625,8 +2638,10 @@ deterministic for given `--tiles`, `--seed`, `--density`,
   `unreachable`, the STEPDOWN banks and hosts, PUDC_B. `--expected-frm`
   also writes the sparse `.frm` the model predicts for each features file.
 
-Default sizes (`sample 3`, density 0.5): 43-61 k lines per part (2.8 MiB
-for xc7a35tcsg324-1), 6.60 M lines and 2151 files over the 125 parts;
+Default sizes (`sample 3`, density 0.5; generator version 2): 43-62 k
+lines per part (52 k lines, 11 features files and 5 error files for
+xc7a35tcsg324-1), 6.71 M lines and 1752 files over the 125 parts
+(version 1: 6.60 M lines, 2151 files);
 generation takes 2-6 s per part.
 
 **What is compared, per part** (`tools/difftest-xilinx.py --families
@@ -2647,9 +2662,11 @@ reference wrappers, binaries and venv packages, the database commit), so
 a rerun only runs the Rust tools; large cached outputs (the `bitread`
 dumps) are kept as a SHA-256.
 
-**Run matrix** (default options, all 125 parts): 2151 FASM files, 6.60 M
-lines; 2651 fasm2frames runs, 8814 xc7frames2bit/bitread runs and 375
-xcfasm runs on each side:
+**Run matrix** of the first full run (default options, all 125 parts,
+generator version 1): 2151 FASM files, 6.60 M lines; 2651 fasm2frames
+runs, 8814 xc7frames2bit/bitread runs and 375 xcfasm runs on each side.
+Version 2 (above) has fewer, fuller files (1752 files, 6.71 M lines), so
+fewer runs; its full run against the reference is still to be made:
 
 | family | parts | files | lines | fasm2frames | bitstream tools | xcfasm |
 |---|---|---|---|---|---|---|
@@ -2706,10 +2723,15 @@ of `tests/oracle/setup-xilinx.sh`, prjxray
   packages as possible) runs 4 parts in about 2-3 minutes; the harness
   prints an up front estimate (130 s per part) and an ETA after each part.
 * `tests/cli/test_xilinx_corpus.py` compares the Rust `fasm2frames` with
-  golden reference results for xc7a35tcsg324-1 (`--tiles sample 3`, 24
-  files: 26 runs, with and without the database cache), recorded in
+  golden reference results for xc7a35tcsg324-1 (`--tiles sample 3`; one
+  run per file plus the dense run of `features.fasm`, with and without
+  the database cache: for generator version 1, 24 files and 25 runs
+  (`features.fasm` dense and sparse, 18 other features files, 5 error
+  files); for version 2, 16 files and 17 runs), recorded in
   `tests/corpus/xilinx/artix7/generated/xc7a35tcsg324-1-sample-3-s0.json`
-  with the reference commits above.
+  with the reference commits above. The test fails with the command to
+  regenerate the golden file when the generator or the fetched database
+  no longer match it.
 * The harness was also run over the whole matrix with the Rust tools on
   both sides (`--oracle target/release/fasm2frames ...`): 326 s wall time
   with `--jobs 4` (generation of all corpora included; 7-15 s per part);
@@ -2719,7 +2741,8 @@ of `tests/oracle/setup-xilinx.sh`, prjxray
   --sparse` output equals the generator model's `--expected-frm` for
   every features file of every part with three generator configurations
   (`sample 3` density 0.5 seed 0: 1563 files; `first`; `sample 5` density
-  0.8 seed 7) and for `--tiles all` on xc7a35tcsg324-1 (8.07 M lines, 19
+  0.8 seed 7), again with generator version 2 (`sample 3`, 1164 features
+  files, dense `--emit_pudc_b_pullup` runs without error too), and for `--tiles all` on xc7a35tcsg324-1 (8.07 M lines, 19
   files); every generated file assembles without error with the Rust
   tool, dense and `--sparse --emit_pudc_b_pullup`, on all 125 parts
   (including kintex7, whose PUDC_B features exist although
@@ -2729,7 +2752,7 @@ of `tests/oracle/setup-xilinx.sh`, prjxray
   test databases of `rust/fasm-xilinx/testdata` (and on xc7a35tcsg324-1
   `--tiles first` when fetched), without reference tools.
 * Database facts found on the way: no unreachable segbits key in the four
-  families; the most exclusive options per tile type need up to 21 files
+  families; the most exclusive options per tile type need up to 22 files
   for the parts with few `_SING` IOB tiles.
 
 ## 9. Open questions / risks
