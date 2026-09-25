@@ -70,7 +70,10 @@ test):
   architectures);
 * *not run*: more than 128 `.names`, twice what the 32 LUT6 slots can
   take (the largest netlist that fitted has 66 `.names`; `run-vtr-genfasm.sh
-  --no-size-filter` runs them anyway, to the same "does not fit" error).
+  --no-size-filter` runs them anyway, and VPR rejects them: with the "does
+  not fit" error, or first with `BLIF .names input size (N) greater than
+  .names model input size (6)` for a netlist with a wider `.names`, e.g.
+  the `s1196` / `s1494` circuits of `blif/7` and `blif/8`).
 
 The FASM files: `fasm-test/wire/genfasm.fasm`, `microbenchmarks/<c>/`,
 `tests/<c>/` and `blif/<c>/genfasm.fasm` hold one circuit each;

@@ -19,9 +19,11 @@
 """Writes a PCF that puts every top level port bit of a synthesised eblif
 on a package pin, in the pin map's order (T7.4): the VTR Verilog
 benchmarks come without pin constraints, and the f4pga flow's placer
-needs a PCF. Clock ports (a name containing `clk` or `clock`, any case)
-get clock capable pins first. Only IOB sites are used (not the
-XADC's analog input pads, which the pin map lists too).
+needs a PCF. Ports are assigned in the pin map's order, clock ports (a
+name containing `clk` or `clock`, any case) first, to pins the pin map
+marks `is_clock` (in the xc7a50t_test pin maps that is every pin, so this
+only puts the clocks first). Only IOB sites are used (not the XADC's
+analog input pads, which the pin map lists too).
 
   make-pcf.py EBLIF PINMAP.csv OUT.pcf
 

@@ -38,7 +38,8 @@
 #                              circuits, K = 2..8 and wiremap6 too)
 #   all with --route_chan_width 100, like the test. A circuit with more
 #   than 128 `.names` is not run (it cannot fit the layout's 32 FLEs;
-#   --no-size-filter runs it anyway); one VPR cannot implement on this
+#   --no-size-filter runs it anyway, VPR then rejects it: too large, or
+#   a .names wider than 6 inputs); one VPR cannot implement on this
 #   architecture (a primitive it has no model for, or too large) is
 #   recorded as such in its info.json.
 #   Output: $OUT/test_fasm_arch/<circuit>/{genfasm.fasm,info.json,*.log.xz}
@@ -330,7 +331,7 @@ run_test_arch() {
 reference_frames() {
   local out="$1" part="$2" family="$3"
   local db="$F4PGA_PRJXRAY_DB/$family"
-  xcfasm --db-root "$db" --part "$part" --part_file "$db/$part/part.yaml" \
+  timeout "$TIMEOUT" xcfasm --db-root "$db" --part "$part" --part_file "$db/$part/part.yaml" \
     --sparse --emit_pudc_b_pullup --fn_in "$out/top.fasm" \
     --frm_out "$out/top.frm" --bit_out "$out/top.bit" \
     --frm2bit xc7frames2bit > "$out/xcfasm.log" 2>&1
@@ -370,7 +371,11 @@ run_verilog() {
     r=$(cd "$out" && run_timed synth.log symbiflow_synth -t "$top" -v "${vfiles[@]}" -d "$family" -p "$part")
     synth_s=${r#* }
     if [[ ${r%% *} == 124 ]]; then
-      status="unimplementable: synthesis timed out ($TIMEOUT s)"
+      status="not run: resource limit (synthesis timed out after $TIMEOUT s)"
+    elif [[ ${r%% *} -gt 128 ]] || grep -q 'uncaught exception\|std::bad_alloc\|Out of memory' "$out/synth.log"; then
+      # Killed by a signal, or Yosys failing to allocate under the memory
+      # limit (it reports that as an "uncaught exception").
+      status="not run: resource limit (synthesis: $(grep -m1 -o 'ERROR: .*' "$out/synth.log" | cut -c1-150), $MEMORY_KB KB limit)"
     elif [[ ${r%% *} != 0 ]]; then
       status="unimplementable: synthesis: $(grep -m1 -o 'ERROR: .*' "$out/synth.log" | cut -c1-200)"
       [[ $status == "unimplementable: synthesis: " ]] && status="failed: synthesis exit ${r%% *}"
@@ -411,12 +416,14 @@ run_verilog() {
     fi
   fi
   if [[ $KEEP == 0 ]]; then
-    (cd "$out" && find . -maxdepth 1 -type f ! -name 'top.*' ! -name '*.log' ! -name '*.json' \
-      ! -name hard_blocks.txt ! -name vtr_hard_blocks.v -delete)
+    # Only the outputs stay (the flow's intermediates are named after the
+    # top module, which is often `top` itself: top.json, top.eblif, ...).
+    (cd "$out" && find . -maxdepth 1 -type f ! -name top.fasm ! -name top.frm ! -name top.bit \
+      ! -name top.pcf ! -name '*.log' ! -name hard_blocks.txt ! -name vtr_hard_blocks.v -delete)
   fi
   compress_logs "$out"
   write_info "$out" "$device" "$circuit" "$netlist" 500 "$status" "$pnr_s" "$genfasm_s" - "$board" "$part" "$family" no "$synth_s" "$top"
-  [[ $status == built || $status == unimplementable* ]]
+  [[ $status == built || $status == unimplementable* || $status == not\ run* ]]
 }
 
 run_xc7() {
@@ -515,6 +522,14 @@ if [[ $GROUP == test_fasm_arch || $GROUP == all ]]; then
     todo=$(test_arch_circuits | awk 'NR == FNR { want[$1] = 1; next } $1 in want' <(printf '%s\n' "${SELECT[@]}") -)
   else
     todo=$(test_arch_circuits)
+  fi
+  if [[ ${#SELECT[@]} -gt 0 && $GROUP != all ]]; then
+    for c in "${SELECT[@]}"; do
+      if ! grep -q "^$c " <<<"$todo"; then
+        log "unknown test_fasm_arch circuit $c (--list test_fasm_arch)"
+        exit 2
+      fi
+    done
   fi
   log "test_fasm_arch: $(echo "$todo" | grep -c .) circuits, $JOBS at a time"
   export -f run_test_arch run_timed vpr_error write_info compress_logs log

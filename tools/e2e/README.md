@@ -884,7 +884,10 @@ above: conda package `vtr-optimized 8.0.0_5699_g25e723a24`, `vpr
 installed. The VTR sources (test architecture, benchmarks, hard block
 models) are read from a VTR checkout at that commit: `$VTR_ROOT`
 (default `tools/e2e/build/vtr`, a blobless sparse clone of the
-directories used, about 130 MB, made on first use).
+directories used, about 60 MB, made on first use; `run-vtr-genfasm.sh`
+only clones into that default directory or into an empty or new
+`$VTR_ROOT`, and refuses any other directory that is not such a
+checkout).
 
 ### Which designs
 
@@ -919,7 +922,7 @@ directories used, about 130 MB, made on first use).
   constraints, and the f4pga placer fails without one: `ValueError: max()
   arg is an empty sequence` in `vpr_io_place.py`), made by
   `tools/e2e/vtr/make-pcf.py` (every port bit on a package pin, clocks on
-  clock capable pins first; only IOB sites, not the XADC's analog pads
+  first, in the pin map's order; only IOB sites, not the XADC's analog pads
   that the pin map lists too), and Verilog models of VTR's hard blocks
   (`single_port_ram`, `dual_port_ram`, `multiply`, `adder`, which VTR maps
   to its own architectures' blocks), made by
