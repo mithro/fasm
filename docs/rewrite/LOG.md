@@ -632,3 +632,12 @@ what happened, branch/commit references, open issues.
   REQUEST CHANGES: doc-only (COMPAT row for xcu(p)series part.yaml values
   that overflow the address fields: reference hangs/accepts, Rust
   rejects). T6.3 scope refined from the reviewer's coverage findings.
+* T6.2 done: doc fix d467739 merged with --no-ff (c7c5951). The merge
+  conflicted with T5.9 in Makefile, tools/difftest-xilinx.py and §8.9/8.10
+  (both sides appended); kept both sides and fixed three semantic
+  conflicts in the prjuray mode against T5.9's Runner API: `run()` now
+  takes the runner, `--seed` collided (prjuray option renamed
+  `--uray-seed`), `bit_time()` takes bytes. Merged tree: fmt/clippy
+  clean, 473 Rust tests, tests/cli 1708 passed / 12 skipped,
+  xilinx-difftest 107/60/6 identical, uray-difftest 220/220 + 5/5
+  identical. Worktree removed. Next: T6.3.
