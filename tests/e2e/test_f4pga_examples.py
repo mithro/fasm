@@ -189,6 +189,80 @@ def test_rust_fasm2frames_matches_the_flow(fasm, tmp_path):
         _readme(fasm), 'top.frm')
 
 
+CHECK_GENFASM = REPO_ROOT / 'tools' / 'e2e' / 'f4pga' / 'check-genfasm.sh'
+
+# A fake genfasm: writes its log like genfasm does, then ends as told.
+FAKE_GENFASM = """#!/bin/bash
+echo "VPR FPGA Placement and Routing." > vpr_stdout.log
+echo "Loading rr graph ..." >> vpr_stdout.log
+echo "CLBLM_R_X1Y1.SLICEM_X0.AFF.ZINI" > top.fasm
+case "$1" in
+  ok)
+    echo "Writing Implementation FASM: top.fasm" >> vpr_stdout.log
+    echo "The entire flow of VPR took 1.5 seconds." >> vpr_stdout.log ;;
+  error)
+    echo "Error 1: something failed" >> vpr_stdout.log
+    exit 1 ;;
+  *)
+    echo "Writing Implementation FASM: top.fasm" >> vpr_stdout.log
+    kill -"$1" $$ ;;
+esac
+"""
+
+
+@pytest.mark.parametrize('ending,ok', [('ok', True), ('KILL', False),
+                                       ('BUS', False), ('TERM', False),
+                                       ('SEGV', False), ('ABRT', False),
+                                       ('error', False)])
+@pytest.mark.parametrize('flow', ['write_fasm', 'f4pga_build'])
+def test_check_genfasm(tmp_path, ending, ok, flow):
+    """tools/e2e/f4pga/check-genfasm.sh on fake genfasm runs, run like
+    symbiflow_write_fasm runs genfasm (`/bin/bash -c` with more commands
+    after it, no `set -e`; fasm.log renamed from vpr_stdout.log when bash
+    returns 0) or like `f4pga build` does (vpr_stdout.log kept)."""
+    genfasm = tmp_path / 'genfasm'
+    genfasm.write_text(FAKE_GENFASM)
+    genfasm.chmod(0o755)
+    script = ("\n'%s' %s\nTOP=top\necho \"writing final fasm (extra: "
+              "${TOP}_fasm_extra.fasm)\"\n" % (genfasm, ending))
+    r = subprocess.run(['/bin/bash', '-c', script],
+                       cwd=str(tmp_path),
+                       stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT,
+                       timeout=60)
+    # The flow itself does not notice: bash returns 0 in every case.
+    assert r.returncode == 0, r.stdout
+    (tmp_path / 'build.log').write_bytes(r.stdout)
+    if flow == 'write_fasm':
+        (tmp_path / 'vpr_stdout.log').rename(tmp_path / 'fasm.log')
+    c = subprocess.run(
+        [str(CHECK_GENFASM),
+         str(tmp_path),
+         str(tmp_path / 'build.log')],
+        stdout=subprocess.PIPE,
+        timeout=60)
+    assert (c.returncode == 0) == ok, (r.stdout, c.stdout)
+    if not ok:
+        assert c.stdout.strip(), 'no reason given'
+
+
+def test_check_genfasm_reports_the_signal(tmp_path):
+    (tmp_path / 'vpr_stdout.log').write_text(
+        'Writing Implementation FASM: top.fasm\n'
+        'The entire flow of VPR took 1 seconds.\n')
+    (tmp_path / 'build.log').write_text(
+        "/bin/bash: line 2: 22904 Bus error               (core dumped) "
+        "'/x/bin/genfasm' ${ARCH_DEF} ${EBLIF}\n")
+    c = subprocess.run(
+        [str(CHECK_GENFASM),
+         str(tmp_path),
+         str(tmp_path / 'build.log')],
+        stdout=subprocess.PIPE,
+        timeout=60)
+    assert c.returncode == 1
+    assert c.stdout.decode().startswith('genfasm killed: Bus error'), c.stdout
+
+
 ARCH_A50T = F4PGA_ROOT / 'xc7' / 'share' / 'f4pga' / 'arch' / 'xc7a50t_test'
 need_flow = pytest.mark.skipif(
     not (F4PGA_ENV / 'bin' / 'vpr').exists() or not ARCH_A50T.is_dir(),
@@ -197,10 +271,11 @@ need_flow = pytest.mark.skipif(
 
 
 @need_flow
-def test_flow_tools_run():
+def test_flow_tools_run(tmp_path):
     for argv in (['yosys', '-V'], ['vpr', '--version'],
                  ['xcfasm', '--help'], ['xc7frames2bit', '--helpshort']):
         r = subprocess.run([str(F4PGA_ENV / 'bin' / argv[0])] + argv[1:],
+                           cwd=str(tmp_path),
                            stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT,
                            timeout=60)
