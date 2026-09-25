@@ -567,3 +567,21 @@ what happened, branch/commit references, open issues.
   kept); resumed from its transcript. T5.9 (per database synthetic
   corpus generator + all-parts difftest over artix7/kintex7/spartan7/
   zynq7) started (Opus) in the slot freed by the T5.3 merge.
+* T5.9 implemented on branch `worktree-agent-a0b441475f0044a50` (8 commits:
+  tools/gen-xilinx-corpus.py, all-parts mode of tools/difftest-xilinx.py,
+  `make xilinx-difftest-all`, tests/cli/test_xilinx_corpus.py and
+  test_gen_xilinx_corpus.py, §8.9). The agent's permission classifier
+  refused to run the reference tools, so the orchestrator ran
+  `make xilinx-difftest-all` (artix7, kintex7, spartan7, zynq7 fetched):
+  125 parts, 2151 FASM files, 6.6 M lines; fasm2frames 2651 runs = 2526
+  identical + 125 explained (value-range error message, one per part) + 0
+  different; xc7frames2bit+bitread 8814 runs and xcfasm 375 runs all
+  identical; wall time 4114 s with 4 jobs. Golden for xc7a35t committed
+  (be7df9b); the agent is finishing the golden header, docs with the real
+  numbers and a quick mode before review.
+* A second container restart killed the T6.2 agent again; it had hung on
+  the same tar extraction both times and never committed. Its worktree
+  (agent-a9a575d5bcc2c6743, clean at 57e7d1f) could not be removed (the
+  auto mode classifier refused) and is left in place. T6.2 relaunched
+  fresh (Opus) with a brief pointing at the reference tools and warning
+  about the hang.
