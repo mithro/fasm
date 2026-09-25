@@ -145,13 +145,20 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T6.2 UltraScale / UltraScale+ bitstream writer and reader (prjuray
       `frames2bit`), CLI flags (`--architecture`), tests vs prjuray tools
       (after T6.1, T5.6).
-- [r] T6.3 Differential tests for every part in prjuray-db (after T6.2):
+- [x] T6.3 Differential tests for every part in prjuray-db (after T6.2):
       per the T6.2 review the `--prjuray` corpus reaches only 17 of 27
       segbits tile types (~1.6k of 54.5k features); add an every-feature
       mode through `uray-fasm2frames` (reuse tools/gen-xilinx-corpus.py),
       discover every family in prjuray-db instead of hard coding zynqusp,
       an all-parts JSON report, and record that prjuray-db has no native
       UltraScale parts (covered by ToolsTestData and synthetic parts only).
+
+- [ ] T6.3b Small follow-ups from the T6.3 review: `--expected-frm` help
+      text mentions only the prjxray model; `oracle_identity` package
+      filter matches `/fasm` in absolute paths (hashes the whole venv);
+      `--prjuray --list` fetches the database first; `--db-cache` fallback
+      to `<uray-oracle-dir>/build/db`; tests/corpus/README.md directory
+      table lacks `prjuray/` and `xilinx/*/generated/` (after T6.3).
 
 ## Phase 7: Toolchain end-to-end compatibility
 

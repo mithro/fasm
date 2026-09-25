@@ -661,3 +661,13 @@ what happened, branch/commit references, open issues.
   explained (value_range) + 0 different; 7617 bitstream tool runs and 375
   xcfasm runs identical; 7039 s with 3 jobs. Recorded in §8.9,
   tests/oracle/README.md and COMPAT.md.
+* T6.3 review (Opus): independent coverage checker confirmed 54542/54542
+  reachable keys and the 34 digit-leading unreachable names (rejected by
+  both parsers), model matches prjuray fasm2frames.py and the oracle,
+  full --prjuray run reproduced (268 runs, 0 different, 247 s; cache
+  rerun 71 s), prjxray mode byte identical to before, determinism across
+  Python 3.10-3.13. APPROVE, optional notes only (help text, venv hash
+  filter, --list fetching, tests/corpus/README table): recorded as T6.3b.
+  Merged with --no-ff; merged tree: 473 Rust tests, xilinx-difftest and
+  uray-difftest identical, tests/cli suite green. Worktree removed.
+  Phase 6 (UltraScale/UltraScale+) is complete.
