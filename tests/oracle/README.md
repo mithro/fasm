@@ -546,11 +546,24 @@ error corpus):
 
 ```sh
 make xilinx-difftest-all                       # 4 families, all parts, 4 jobs
+make xilinx-difftest-quick                     # one part per family
 make xilinx-difftest-all XILINX_DIFFTEST_ALL_ARGS="--parts 'xc7a35t*'"
 python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
     --oracle tests/oracle/fasm2frames-oracle ...   # one part
 ```
 
+* Wall time (first run, `--jobs 4`, this container): **68.6 minutes** for
+  the 125 parts (46-271 s per part, mean 130 s, almost all of it in the
+  reference tools; xc7a200t parts are the slowest); a rerun from the
+  result cache takes a few minutes. `make xilinx-difftest-quick`
+  (`--parts-sample 1`: one part per family, different fabrics) takes
+  about 2-3 minutes. The harness prints an estimate at the start and an
+  ETA after each part.
+* Result of the first run: 2651 fasm2frames runs (2526 identical, 125
+  explained: the value range error of `errors/value_range.fasm`, rule 4
+  of the `fasm2frames` section of `docs/rewrite/COMPAT.md`), 8814
+  xc7frames2bit/bitread runs and 375 xcfasm runs, all identical; 0
+  unexplained differences.
 * Families missing from `$FASM_DB_CACHE` (default `tests/oracle/build/db`)
   are fetched with `tools/fetch-db.sh` (after a free space check; the
   four families take about 400 MiB checked out). `--db-cache` also takes
@@ -558,10 +571,11 @@ python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
 * Everything else goes to `XILINX_DIFFTEST_WORK` (default
   `tests/oracle/build/difftest-xilinx`): `corpus/<family>/<part>/<opts>/`
   (the generated files, reused while the generator, its options and the
-  database commit are unchanged; about 365 MiB for all parts with the
+  database commit are unchanged; about 365 MB for all parts with the
   default `--tiles sample 3`), `results/` (the reference results, keyed by
   command line, input file contents, the reference tools and the database
-  commit; about 1.4 MiB per part; a rerun only runs the Rust tools; delete
+  commit; about 1.4 MB per part, 549 MB for the whole work directory
+  of a full run; a rerun only runs the Rust tools; delete
   it or pass `--no-result-cache` after changing the oracle in a way its
   key does not see) and `run/` (per part scratch, removed when the part is
   done, including the part's Rust `FASM_XDB_CACHE` directory).

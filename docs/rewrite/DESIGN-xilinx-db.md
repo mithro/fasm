@@ -2658,25 +2658,63 @@ xcfasm runs on each side:
 | spartan7 | 9 | 213 | 447 912 | 249 | 810 | 27 |
 | zynq7 | 12 | 270 | 610 462 | 318 | 1044 | 36 |
 
-**Results.**
+**Results** (`make xilinx-difftest-all`, `ORACLE_DIR` the shared oracle
+of `tests/oracle/setup-xilinx.sh`, prjxray
+`c9f02d8576042325425824647ab5555b1bc77833`, f4pga-xc-fasm
+`25dc605c9c0896204f0c3425b52a332034cf5e5c`, prjxray-db
+`0a0addedd73e7e4139d52a6d8db4258763e0f1f3`; default corpus, `--jobs 4`,
+2026-09-24/25, run by the orchestrator):
 
-* The reference side of this matrix has **not been run yet**: in the
-  session that implemented T5.9 the implementing agent was not permitted
-  to execute the reference tools of the shared oracle
-  (`tests/oracle/{fasm2frames,xc7frames2bit,bitread,xcfasm}-oracle`), so
-  the golden file of `tests/cli/test_xilinx_corpus.py` (which skips
-  without it) and the table of reference differences are still to be
-  made with `make xilinx-difftest-all` and `python3
-  tests/cli/test_xilinx_corpus.py --write-goldens`. Estimated reference
-  cost from the measurements of §8.6 (about 0.4 s per start plus 28 us per
-  line for `fasm2frames`, 7 runs of each part's large file): about 55 CPU
-  minutes, 15-25 minutes of wall time with `--jobs 4` on this machine.
-* The harness itself was run over the whole matrix with the Rust tools on
+* **0 unexplained differences.** fasm2frames: 2651 runs, 2526 identical,
+  125 explained, 0 different; xc7frames2bit + bitread: 8814 runs, all
+  identical; xcfasm: 375 runs, all identical. 11840 reference runs and
+  11840 Rust runs.
+* The 125 explained runs are exactly one per part: `errors/value_range.fasm
+  [sparse]` (a feature value that does not fit its range, e.g. `F = 2` on
+  a one bit feature). This is the value range error already listed in the
+  `fasm2frames` section of `COMPAT.md` (rule 4): the reference's ANTLR
+  parser fails its assertion inside a ctypes callback and the tool dies
+  with `TypeError: 'NoneType' object is not iterable`, the Rust tool
+  reports `Exception: Parse error at L:C - value 2 does not fit ...`; both
+  exit with 1 and write an empty `.frm`. No other rule 3 or 4 case
+  occurred. Rule 1 (the reference's traceback dropped, the last line
+  compared exactly) applied 588 times, to every other error file:
+  `lookup_errors.fasm` (125, `FasmLookupError` with every message in
+  order), `absent_tile.fasm` (125, `KeyError`), `inconsistent.fasm` (125,
+  `FasmInconsistentBits`) and `stepdown_unbonded.fasm` (88: the parts that
+  have an unbonded IOB tile with a STEPDOWN feature, `KeyError`), plus the
+  125 `value_range.fasm` runs. Rule 2 did not apply (no syntax errors in
+  the generated corpus).
+* No Rust bug and no new reference quirk was found: the reference
+  behaviours the corpus reaches (lookup, alias tiles, wrapped and dropped
+  `_SING` bits with their `frame_set` warnings, pseudo PIPs, block RAM,
+  STEPDOWN propagation, PUDC_B pull-up including kintex7, required
+  features of zynq7, sparse zero filling, `--debug`, the bitstream writer
+  and reader on 125 parts) were already reproduced.
+* **Wall time 4114 s (68.6 min)** with `--jobs 4`. Per part (generation,
+  reference and Rust runs of that part in sequence) 46-271 s, median 91 s,
+  mean 130 s (16214 s in total); the Rust side and the generation are
+  7-15 s of it, so the reference costs about 40-260 s per part: the
+  xc7a200t parts (61 k lines, dense frames of 24 k addresses) take the
+  longest, 271 s. The earlier estimate from the §8.6 numbers (15-25 min)
+  was low because each part's large file goes through the reference
+  `fasm2frames` seven times (four variants, three `xcfasm` runs) and the
+  bitstream tools 3 x 12 times. A rerun with the result cache
+  (`<work-dir>/results`; the whole work directory, with the generated
+  corpora, was 549 MB) only runs the Rust tools: a few minutes. For a quick check, `make xilinx-difftest-quick` (or
+  `--parts-sample N`: N parts per family over as many fabrics and
+  packages as possible) runs 4 parts in about 2-3 minutes; the harness
+  prints an up front estimate (130 s per part) and an ETA after each part.
+* `tests/cli/test_xilinx_corpus.py` compares the Rust `fasm2frames` with
+  golden reference results for xc7a35tcsg324-1 (`--tiles sample 3`, 24
+  files: 26 runs, with and without the database cache), recorded in
+  `tests/corpus/xilinx/artix7/generated/xc7a35tcsg324-1-sample-3-s0.json`
+  with the reference commits above.
+* The harness was also run over the whole matrix with the Rust tools on
   both sides (`--oracle target/release/fasm2frames ...`): 326 s wall time
-  with `--jobs 4` (generation of all corpora included; 7-15 s per part),
-  all identical; a rerun from the result cache compares in about a third
-  of the time; corrupted cache entries (a changed `.frm`, a changed digest
-  of a `bitread` dump) are reported as differences.
+  with `--jobs 4` (generation of all corpora included; 7-15 s per part);
+  corrupted cache entries (a changed `.frm`, a changed digest of a
+  `bitread` dump) are reported as differences.
 * Model cross check (no reference involved): the Rust `fasm2frames
   --sparse` output equals the generator model's `--expected-frm` for
   every features file of every part with three generator configurations
