@@ -21,7 +21,7 @@ name = "fasm"
 # Pre-release version of the eventual 0.1.0, kept in step by hand with the
 # Cargo workspace's `0.1.0-dev` (PEP 440's spelling of the same semver
 # pre-release; see [workspace.package] in the root Cargo.toml and
-# docs/rewrite/RELEASING.md for the release process and where every
+# docs/RELEASING.md for the release process and where every
 # version string lives). The legacy setup.py build derived this from `git
 # describe` (update_version.py, generating fasm/version.py); that build is
 # gone (docs/rewrite/DESIGN-python.md), so it is static and bumped by hand

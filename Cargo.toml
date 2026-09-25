@@ -51,7 +51,7 @@ exclude = ["rust/fasm/fuzz"]
 # pre-release identifier. The Python package's `version` in pyproject.toml
 # is kept in step by hand (`0.1.0.dev0`, the PEP 440 spelling of the same
 # pre-release; PEP 440 and semver pre-release syntax differ, so the two
-# strings cannot be made byte-identical) -- see docs/rewrite/RELEASING.md.
+# strings cannot be made byte-identical) -- see docs/RELEASING.md.
 version = "0.1.0-dev"
 edition = "2021"
 license = "Apache-2.0"

@@ -22,10 +22,14 @@ make capi-install PREFIX=/some/prefix
 ```
 
 `capi-install` installs `fasm.h`, `fasm.hpp`, `libfasm_capi.{so,a}`
-(release profile) and a generated `lib/pkgconfig/fasm.pc` into
+(release profile), a generated `lib/pkgconfig/fasm.pc` and a CMake
+package config (`lib/cmake/fasm/{fasmConfig,fasmConfigVersion}.cmake`,
+`rust/fasm-capi/cmake/fasmConfig.cmake.in`) into
 `PREFIX/{include/fasm,lib}`. `rust/fasm-capi/examples/cpp/` is a minimal
 example project that finds the installed library with pkg-config or
-CMake's `PkgConfig` module.
+CMake's `PkgConfig` module (both shown below); a project built entirely
+with CMake will more often want `find_package(fasm CONFIG)` instead (see
+"With CMake's `find_package(fasm CONFIG)`" below).
 
 ## Linking
 
@@ -44,7 +48,7 @@ g++ -std=c++17 $(pkg-config --cflags fasm) example.cpp \
     -o example_static
 ```
 
-With CMake:
+With CMake's `PkgConfig` module:
 
 ```cmake
 find_package(PkgConfig REQUIRED)
@@ -54,6 +58,52 @@ target_link_libraries(my_target PRIVATE PkgConfig::fasm)
 
 For C, drop `-std=c++17` for your C compiler's flag (C99 is enough); the
 library is usable from C alone with just `fasm.h`.
+
+### With CMake's `find_package(fasm CONFIG)`
+
+`make capi-install` also installs a CMake package config, so a project
+built entirely with CMake can skip pkg-config and use `find_package`
+directly. It defines two imported targets, one per library kind (there
+is no default: pick whichever `fasm.pc`'s pkg-config flags would give
+you above):
+
+* `fasm::fasm_capi` — the shared library (`libfasm_capi.so`/`.dylib`/`.dll`
+  at run time, resolved through `LD_LIBRARY_PATH`/rpath/ldconfig, an
+  install name on macOS, or PATH on Windows, same as the pkg-config
+  dynamic case above).
+* `fasm::fasm_capi_static` — the static library (`libfasm_capi.a`/`.lib`);
+  no run time dependency on `libfasm_capi.so` at all (adds the system
+  libraries the Rust standard library needs and the `FASM_STATIC`
+  compile definition automatically, same as the `-Wl,-Bstatic` pkg-config
+  recipe above).
+
+```cmake
+cmake_minimum_required(VERSION 3.13)
+project(fasm_example CXX)
+
+find_package(fasm 0.1.0 CONFIG REQUIRED)
+
+add_executable(fasm_example example.cpp)
+set_target_properties(fasm_example PROPERTIES
+    CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
+target_link_libraries(fasm_example PRIVATE fasm::fasm_capi)        # or:
+# target_link_libraries(fasm_example PRIVATE fasm::fasm_capi_static)
+```
+
+```sh
+cmake -S . -B build -Dfasm_DIR=/some/prefix/lib/cmake/fasm
+cmake --build build
+LD_LIBRARY_PATH=/some/prefix/lib ./build/fasm_example    # only for fasm::fasm_capi
+```
+
+(`-Dfasm_DIR=...` is only needed when `/some/prefix` is not already on
+`CMAKE_PREFIX_PATH`/a default search path such as `/usr/local`.) Verified
+against `rust/fasm-capi/examples/cpp/example.cpp` (T8.4): both targets
+build and run correctly, and — because the installed `libfasm_capi.so`
+has no SONAME, which `fasmConfig.cmake.in` accounts for with
+`IMPORTED_NO_SONAME` — the resulting binary's ELF `NEEDED` entry for it
+is a plain `libfasm_capi.so`, not an unmovable absolute build-tree path
+(`readelf -d build/fasm_example | grep NEEDED` to check).
 
 ## The error pattern
 

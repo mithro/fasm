@@ -28,8 +28,8 @@ full, dated history.
   VTR's `genfasm`).
 * Command line tools (crate `fasm-cli`): a `fasm` binary command-line
   compatible with the original Python `fasm/tool.py`, plus
-  `fasm2frames`, `xcfasm`, `xc7frames2bit`, `bitread`,
-  `uray-xcframes2bit`, `uray-bitread`, `uray-fasm2frames` and a
+  `fasm2frames`, `xcfasm`, `xc7frames2bit`, `bitread`, prjuray's own
+  `xcframes2bit`, `uray-bitread`, `uray-fasm2frames` and a
   `fasm-db-cache` database cache tool.
 * A C ABI and header-only C++17 wrapper (crate `fasm-capi`,
   `include/fasm/fasm.h` / `fasm.hpp`) covering parsing, the data model,
@@ -43,7 +43,8 @@ full, dated history.
   textX fallback.
 * Benchmarks (`docs/rewrite/BENCHMARKS.md`) showing the Rust parser well
   above the Python/ANTLR and textX implementations, and `fasm2frames`
-  30-40x faster than the Python oracle on real designs.
+  11-29x faster than the Python oracle per real design (up to ~36x on a
+  full flow run).
 * Documentation: a rewritten front-page README, `docs/PYTHON.md` and
   `docs/CAPI.md` user guides (every example in them is executed by the
   test suite/CI), `docs/rewrite/COMPAT.md` (every known behavioural
