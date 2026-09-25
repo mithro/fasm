@@ -930,3 +930,15 @@ what happened, branch/commit references, open issues.
   in the background (difftest.py, tests/cli, tests/e2e, xilinx-difftest,
   uray-difftest). Worktree removed. 447 VTR genfasm designs in the
   corpus/index.
+* T8.4 review (Opus): packaging verified end to end (cargo package of all
+  four crates works with cargo >= 1.90, sdist/wheel/twine, CMake install
+  both ways, actionlint, audit) but REQUEST CHANGES: LICENSE missing
+  from the crate packages, workspace documentation URL points at the
+  unrelated crates.io `fasm`, cdylib has no SONAME (absolute NEEDED path
+  via find_package), version compatibility too loose for 0.x, CAPI.md
+  lacks the find_package section, RELEASING.md errors (PyPI `fasm`
+  exists under chipsalliance, crates.io has trusted publishing, missing
+  version locations, wrong path), macOS wheel test uses the x86_64 wheel
+  on an arm64 runner, wrong binary names/speed-ups in CHANGELOG and the
+  fasm-cli README. Fixes requested.
+* T7.5 (RapidWright capability study and cross-checks) started (Opus).
