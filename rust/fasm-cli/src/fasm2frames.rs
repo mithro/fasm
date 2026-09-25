@@ -37,6 +37,13 @@
 //! `prjxray.fasm_assembler.FasmLookupError: Segment DB ...`), and exits
 //! with 1. See the `fasm2frames` section of `docs/rewrite/COMPAT.md`.
 //!
+//! A prjuray-db (UltraScale+) part, which xc_fasm cannot open (it has no
+//! `mapping/`), is assembled like prjuray's `utils/fasm2bit.py` does
+//! ([`fasm_xilinx::uray_fasm2frames`]: no IO bank, STEPDOWN or PUDC_B
+//! handling, `--emit_pudc_b_pullup` ignored) and written as 32-bit words,
+//! the `.frm` of `xcframes2bit` (an extension; `uray-fasm2frames` is
+//! prjuray's own `fasm2frames.py` with its 16-bit words).
+//!
 //! The database is opened through the binary cache of
 //! [`fasm_xilinx::cache`] as configured by the environment
 //! (`FASM_XDB_CACHE`, `FASM_XDB_CACHE_VERBOSE`; no command line flag, the
