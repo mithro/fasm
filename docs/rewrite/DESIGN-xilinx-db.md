@@ -3605,6 +3605,7 @@ without RapidWright (`difftest-xilinx.py --corpus-root` over just these:
 possible without Vivado (no DCP with a bitstream is readable, and
 RapidWright cannot make frames from a design).
 
+## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+
    algorithm with its own parameters (48 bits in word 60 and the low half

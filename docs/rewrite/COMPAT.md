@@ -19,6 +19,7 @@ through the oracle (`tests/oracle/dump.py --parser antlr|textx`).
 * [`uray-fasm2frames`](#uray-fasm2frames-prjurays-utilsfasm2framespy-rustfasm-clisrcuray_fasm2framesrs-t62)
 * [The f4pga flow's outputs](#the-f4pga-flows-outputs-f4pga-examples-t73)
 * [The openXC7 snap's tools](#the-openxc7-snaps-tools-nextpnr-xilinx-examples-t76)
+* [Bitstream readers compared with RapidWright](#bitstream-readers-compared-with-rapidwright-t75)
 * [C API (`libfasm_capi`)](#c-api-libfasm_capi-rustfasm-capi-t41)
   * [C++ wrapper](#c-wrapper-includefasmfasmhpp-t42)
 * [Python bindings](#python-bindings-fasmparserrust-rustfasm-python-t31-t33)
@@ -841,6 +842,7 @@ UltraScale+) are identical: no difference.
 | A `.bit` with an empty part name (`xc7frames2bit` without `--part_name`) | read with the `--part_file` given | `ArrayIndexOutOfBoundsException` (the part comes from the header) |
 | Writing frames | `xc7frames2bit`'s packet sequence (§6.3 of `DESIGN-xilinx-db.md`, no CRC) | Vivado's sequence with CRC writes; the `FDRI` payload (frames, pad frames, ECC) is byte identical to the Rust writer's |
 
+## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);
 where C cannot express the Python behaviour exactly:
