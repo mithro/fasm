@@ -258,6 +258,11 @@ def install_generic(out):
                          'genfasm-rr-metadata.fasm'))
         line = next(i + 1 for i, text in enumerate(data.split(b'\n'))
                     if text[:1].isdigit())
+        # The Rust parser's error (tools/difftest.py checks it exactly):
+        # the first routing feature starts with a digit, at column 0.
+        first = data.split(b'\n')[line - 1][:1].decode()
+        rust = ("%d:0 - unexpected '%s', expected a feature name, '{', '#' "
+                "or end of line" % (line, first))
         with open(
                 os.path.join(GENERIC, 'fasm-test', 'wire',
                              'expected-errors.json'), 'w') as f:
@@ -266,6 +271,8 @@ def install_generic(out):
                     'genfasm-rr-metadata.fasm': {
                         'line':
                         line,
+                        'rust':
+                        rust,
                         'source':
                         'VTR genfasm with test_fasm.cpp\'s rr edge metadata '
                         '(<src>_<sink>_<switch> features start with a digit, '

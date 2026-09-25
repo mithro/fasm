@@ -61,14 +61,18 @@ other "plain" corpus file -- this directory is never blanket-skipped.
 
 A second such class, `all_three_reject`, applies only to the files a
 corpus directory lists in its `expected-errors.json` (a map from the
-file's name in that directory to `{"line": N, "source": "..."}`): FASM
-that a real tool wrote but that is not valid FASM, e.g. VTR genfasm's
-output for its own test architecture with the rr graph edge metadata of
-`test_fasm.cpp` (T7.4: features such as `533_557_0` that start with a
-digit). Such a file is `all_three_reject`, not `unexplained`, only when
-Rust, the ANTLR oracle and the textX oracle all report a parse error on
-exactly the listed line (the messages and columns are not compared); a
-listed file that parses, or fails elsewhere, is `unexplained`.
+file's name in that directory to `{"line": N, "rust": "L:C - <message>",
+"source": "..."}`): FASM that a real tool wrote but that is not valid
+FASM, e.g. VTR genfasm's output for its own test architecture with the
+rr graph edge metadata of `test_fasm.cpp` (T7.4: features such as
+`533_557_0` that start with a digit). Such a file is `all_three_reject`,
+not `unexplained`, only when the Rust parser reports exactly the
+recorded error (`Parse error at <rust>`: position and message) and the
+ANTLR and the textX oracle both report a parse error on the listed line
+(their messages and columns are not compared); a listed file that
+parses, or fails elsewhere or otherwise, is `unexplained`. A listed file
+that does not exist, or an entry without `line` and `rust`, is an error
+of the manifest (`load_expected_errors` raises).
 
 Requires the oracle venv (`tests/oracle/setup.sh`, or point `--oracle-python`
 at another one, e.g. the main checkout's) and the `fasm-dump` example binary
@@ -185,17 +189,27 @@ def _class_xilinx_error_corpus(rust, antlr, textx):
 EXPECTED_ERRORS_NAME = "expected-errors.json"
 
 
-def load_expected_errors():
-    """{repo relative file path: {"line": N, ...}} from every
-    `tests/corpus/**/expected-errors.json`."""
+def load_expected_errors(root=None):
+    """{repo relative file path: {"line": N, "rust": "L:C - msg", ...}}
+    from every `tests/corpus/**/expected-errors.json` under `root`
+    (default: this repository). Raises ValueError for an entry whose file
+    does not exist or that lacks `line` or `rust`."""
+    root = REPO_ROOT if root is None else root
     result = {}
-    pattern = os.path.join(REPO_ROOT, "tests", "corpus", "**",
+    pattern = os.path.join(root, "tests", "corpus", "**",
                            EXPECTED_ERRORS_NAME)
     for manifest in glob.glob(pattern, recursive=True):
-        base = os.path.relpath(os.path.dirname(manifest), REPO_ROOT)
+        base = os.path.relpath(os.path.dirname(manifest), root)
         with open(manifest) as f:
             for name, entry in json.load(f).items():
                 rel = os.path.join(base, name).replace(os.sep, "/")
+                if not os.path.isfile(os.path.join(root, rel)):
+                    raise ValueError("{}: {} does not exist".format(
+                        manifest, name))
+                if not isinstance(entry.get("line"), int) or \
+                        not isinstance(entry.get("rust"), str):
+                    raise ValueError("{}: {} needs an integer `line` and "
+                                     "a `rust` error".format(manifest, name))
                 result[rel] = entry
     return result
 
@@ -212,8 +226,12 @@ def _error_line(doc):
     return int(m.group(1)) if m else None
 
 
-def _class_all_three_reject(rust, antlr, textx, line):
-    return all(_error_line(d) == line for d in (rust, antlr, textx))
+def _class_all_three_reject(rust, antlr, textx, line, rust_error):
+    """Rust reports exactly `Parse error at <rust_error>`; ANTLR and textX
+    report a parse error on `line` (message and column not compared)."""
+    return _err(rust) and rust["error"] == "Parse error at " + rust_error \
+        and _error_line(rust) == line \
+        and all(_error_line(d) == line for d in (antlr, textx))
 
 
 CLASSES = {
@@ -468,7 +486,8 @@ def process_plain(rel, path, rust_dump, oracle_python, result,
 
     if expected_error is not None:
         line = expected_error["line"]
-        if _class_all_three_reject(rust, antlr, textx, line):
+        if _class_all_three_reject(rust, antlr, textx, line,
+                                   expected_error["rust"]):
             result.status = "all_three_reject"
         else:
             result.status = "unexplained"

@@ -210,16 +210,40 @@ def test_difftest_discovers_the_generic_corpus():
     expected = dt.load_expected_errors()
     key = rel + '/fasm-test/wire/genfasm-rr-metadata.fasm'
     assert expected[key]['line'] > 1
-    assert dt._class_all_three_reject(
-        {'error': 'Parse error at 334:0 - x'},
-        {'error': 'Parse error at 334:0 - y'},
-        {'error': '/a/b.fasm:334:1: Expected z'}, 334)
-    assert not dt._class_all_three_reject(
-        {'error': 'Parse error at 334:0 - x'},
-        {'error': 'Parse error at 335:0 - y'},
-        {'error': '/a/b.fasm:334:1: Expected z'}, 334)
-    assert not dt._class_all_three_reject({'lines': []}, {'lines': []},
-                                          {'lines': []}, 334)
+    assert expected[key]['rust'].startswith('%d:0 - ' % expected[key]['line'])
+    rust = {'error': 'Parse error at 334:0 - x'}
+    antlr = {'error': 'Parse error at 334:0 - y'}
+    textx = {'error': '/a/b.fasm:334:1: Expected z'}
+    check = dt._class_all_three_reject
+    assert check(rust, antlr, textx, 334, '334:0 - x')
+    # Rust must match exactly: position and message.
+    assert not check(rust, antlr, textx, 334, '334:1 - x')
+    assert not check(rust, antlr, textx, 334, '334:0 - other')
+    # ANTLR and textX: the line only.
+    assert check(rust, {'error': 'Parse error at 334:7 - q'}, textx, 334,
+                 '334:0 - x')
+    assert not check(rust, {'error': 'Parse error at 335:0 - y'}, textx,
+                     334, '334:0 - x')
+    assert not check({'lines': []}, antlr, textx, 334, '334:0 - x')
+
+
+def test_expected_errors_loader_rejects_bad_entries(tmp_path):
+    dt = _load('difftest', REPO_ROOT / 'tools' / 'difftest.py')
+    d = tmp_path / 'tests' / 'corpus' / 'x'
+    d.mkdir(parents=True)
+    (d / 'a.fasm').write_text('1a\n')
+    manifest = d / 'expected-errors.json'
+    good = {'line': 1, 'rust': "1:0 - unexpected '1'"}
+    manifest.write_text(json.dumps({'a.fasm': good}))
+    assert dt.load_expected_errors(str(tmp_path)) == {
+        'tests/corpus/x/a.fasm': good
+    }
+    manifest.write_text(json.dumps({'missing.fasm': good}))
+    with pytest.raises(ValueError, match='does not exist'):
+        dt.load_expected_errors(str(tmp_path))
+    manifest.write_text(json.dumps({'a.fasm': {'line': 1}}))
+    with pytest.raises(ValueError, match='needs'):
+        dt.load_expected_errors(str(tmp_path))
 
 
 def test_xilinx_corpus_not_empty():
@@ -277,8 +301,8 @@ def test_rust_fasm_parses_the_generic_corpus(tmp_path):
         # `Error: Parse error at L:C - ...` (exit status 0).
         out = (r.stdout + r.stderr).decode()
         if path.name in expected:
-            line = expected[path.name]['line']
-            assert out.startswith('Error: Parse error at %d:' % line), path
+            rust = expected[path.name]['rust']
+            assert out == 'Error: Parse error at %s\n' % rust, (path, out)
         else:
             assert r.returncode == 0 and not out.startswith('Error'), \
                 (path, out[:500])
