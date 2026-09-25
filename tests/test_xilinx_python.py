@@ -1010,6 +1010,7 @@ ORACLE_DIR = os.environ.get(
 ORACLE_PYTHON = os.path.join(ORACLE_DIR, 'venv-xilinx', 'bin', 'python')
 
 ORACLE_SCRIPT = """
+import sys
 from xc_fasm.fasm2frames import fasm2frames, dump_frm
 frames = fasm2frames(
     db_root=sys.argv[1], part=sys.argv[2], filename_in=sys.argv[3],
