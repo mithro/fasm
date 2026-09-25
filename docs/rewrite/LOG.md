@@ -768,3 +768,18 @@ what happened, branch/commit references, open issues.
   not controlled; missing rows (picosoc, linux_litex_demo, 1M line
   parser, canonical 1M lines 9.7 s / 2.4 GiB); several factual errors;
   README pointer placement. Fixes requested.
+* T7.6 implemented on branch `worktree-agent-a64c002dea262a71e` (6
+  commits): OPENXC7_E2E_BUILD, tools/e2e/run-nextpnr-examples.sh (+
+  compare/install scripts), 2.5 MB corpus of 20 designs from
+  nextpnr-xilinx 0.8.2 examples, openXC7/demo-projects and
+  primitive-tests (blinky, attosoc, litex-ddr 196k lines, regression and
+  primitive tests on xc7a35t/xc7a100t/xc7a200t), test_nextpnr_examples.py
+  (104 tests), §8.13, COMPAT section on the snap's tools. All 20 byte
+  identical vs the snap tools and the oracle; 4 designs fail identically
+  on the pinned db (STARTUPE2/BSCANE2 cfg centre ppips and a GTP refclk
+  bit exist only in the snap db). difftest-xilinx over the corpus 80/80 +
+  60/60 + 576/720 bitstream runs identical; Rust fasm2frames 66x faster
+  summed. Skipped: other families (zynq7, kintex7, spartan7, UltraScale+
+  produce no FASM), 12 designs nextpnr 0.8.2 cannot place/route. Snap
+  quirks: --emit_pudc_b_pullup always fails (old IN_ONLY name), fasm falls
+  back to textX (libffi.so.7). Independent review (Opus) started.
