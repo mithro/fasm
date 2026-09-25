@@ -21,6 +21,12 @@ f4pga-examples designs). `genfasm.frm.xz` is the reference frames (`xz -9e`), co
   `symbiflow_write_fasm` 21.6 s
 * FASM: 49080 lines, 1809033 bytes
 
+## Source and licence
+
+* Design: VTR `vtr_flow/benchmarks/verilog/sha.v`: the OpenCores `sha_core` (SHA-160) by marsgod.
+* Licence: "Copyright (C) 2002-2004 marsgod": "This source file may be used and distributed without restriction provided that this copyright statement is not removed from the file and that any derivative work contains the original copyright notice and the associated disclaimer" (OpenCores notice in the source header, with an AS IS disclaimer).
+* The FASM, frames and bitstream are tool output (VPR/genfasm, xcfasm) of this design.
+
 ## Tools
 
 * VPR and genfasm: vtr-optimized 8.0.0_5699_g25e723a24 (conda, f4pga toolchain), `vpr --version` 8.1.0-dev+25e723a24-dirty (revision 8.0.0-5699-g25e723a24-dirty)

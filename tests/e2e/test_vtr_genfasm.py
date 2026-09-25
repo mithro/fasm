@@ -260,6 +260,10 @@ def test_xilinx_entry_metadata(fasm):
     assert _recorded(readme, 'top.fasm') == _sha(_read(fasm))
     assert _recorded(readme, 'top.frm') is not None
     assert _recorded(readme, 'top.bit') is not None
+    # Where the design comes from and its licence (VTR's LICENSE.md leaves
+    # benchmark circuits to their own terms).
+    section = readme.split('## Source and licence\n', 1)[1].split('\n## ')[0]
+    assert '* Design: ' in section and '* Licence: ' in section
 
 
 def test_difftest_xilinx_covers_the_corpus():

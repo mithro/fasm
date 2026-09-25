@@ -21,6 +21,13 @@ f4pga-examples designs). `genfasm.frm.xz` is the reference frames (`xz -9e`), co
   `symbiflow_write_fasm` 24.7 s
 * FASM: 27993 lines, 1124042 bytes
 
+## Source and licence
+
+* Design: VTR `vtr_flow/benchmarks/verilog/spree.v`: a MIPS I soft processor (SPREE).
+* Licence: no author or licence notice in the source; distributed with VTR as a benchmark circuit.
+* The VTR hard block models (`vtr_hard_blocks.v`) are VTR's own `vtr_flow/primitives.v` (MIT, VTR `LICENSE.md`), the RAMs rewritten by `tools/e2e/vtr/hard-block-models.py` (Apache-2.0, this repository).
+* The FASM, frames and bitstream are tool output (VPR/genfasm, xcfasm) of this design.
+
 ## Tools
 
 * VPR and genfasm: vtr-optimized 8.0.0_5699_g25e723a24 (conda, f4pga toolchain), `vpr --version` 8.1.0-dev+25e723a24-dirty (revision 8.0.0-5699-g25e723a24-dirty)

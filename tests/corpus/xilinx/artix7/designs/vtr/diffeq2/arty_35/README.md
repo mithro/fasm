@@ -15,9 +15,17 @@ f4pga-examples designs). The reference frames are not committed (99900 bytes aft
 
 * Board: Digilent Arty A7-35T (`arty_35`), part `xc7a35tcsg324-1` (family `artix7`),
   VPR device `xc7a50t_test`
+* VTR hard blocks given Verilog models (`tools/e2e/vtr/hard-block-models.py`):
+  none
 * Synthesis 25 s, pack + place + route 125 s,
   `symbiflow_write_fasm` 22.8 s
 * FASM: 76667 lines, 2882497 bytes
+
+## Source and licence
+
+* Design: VTR `vtr_flow/benchmarks/verilog/diffeq2.v`: a differential equation solver by P. Sridhar, University of Cincinnati (1991, from the High-Level Synthesis Workshop repository; HardwareC original by Rajesh Gupta, Stanford).
+* Licence: no licence in the source header, only a disclaimer ("This comes with absolutely no guarantees of any kind"); distributed with VTR as a benchmark circuit.
+* The FASM, frames and bitstream are tool output (VPR/genfasm, xcfasm) of this design.
 
 ## Tools
 

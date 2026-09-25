@@ -111,8 +111,21 @@ Rust, ANTLR and textX all stop at its first routing line (334).
   `genfasm test_fasm_arch.xml <netlist> --route_chan_width 100` (genfasm
   loads VPR's `.net`, `.place` and `.route` and writes
   `<netlist model>.fasm`).
-* Licence: MIT (VTR's `LICENSE.md`, which notes that the benchmark
-  circuits it distributes may be under other licences).
+* Licences. VTR's `LICENSE.md` (at `25e723a24`) puts VTR's own code
+  under MIT, but not the benchmark circuits: "The benchmark circuits are
+  all open source but each have their own individual terms and conditions
+  which are listed in the source code of each benchmark." So:
+  * `test_fasm_arch.xml` and `fasm-test/wire` (`utils/fasm/test/`, VTR's
+    genfasm test and its netlist): VTR's own code, MIT;
+  * `blif/<K>/` and `blif/multiclock/`: the MCNC (LGSynth93) benchmark
+    circuits (`vtr_flow/benchmarks/blif/README`: optimised with SIS and
+    technology mapped); the netlists carry no licence or author notice;
+  * `blif/clock_aliases`, `blif/clock_set_delay_aliases` (Yosys output),
+    `microbenchmarks/*` and `tests/*`: VTR's small test netlists; no
+    licence or author notice in them.
+
+  None of these files states terms beyond being distributed with VTR as
+  open source benchmarks. The FASM here is genfasm's output for them.
 
 Every file here parses identically with Rust, ANTLR and textX, prints
 identically with `fasm_tuple_to_string` (both modes) and round trips
@@ -142,7 +155,8 @@ and how any placeholder was substituted.
   blob-less checkout at session time; `git -C <checkout> rev-parse HEAD`).
 * Licence: MIT (see `LICENSE.md` in that repository; VTR itself notes ABC,
   benchmark circuits and some libraries are under other licences, none of
-  which are involved here -- `utils/fasm/` is VTR's own MIT licensed code).
+  which are involved in this file -- `utils/fasm/` is VTR's own MIT
+  licensed code).
 * Paths: `utils/fasm/test/test_fasm.cpp`, `utils/fasm/test/test_fasm_arch.xml`.
 
 No files from that checkout are copied verbatim; `vtr_test_fasm_literals.fasm`

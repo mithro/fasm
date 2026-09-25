@@ -15,9 +15,17 @@ f4pga-examples designs). `genfasm.frm.xz` is the reference frames (`xz -9e`), co
 
 * Board: Digilent Arty A7-35T (`arty_35`), part `xc7a35tcsg324-1` (family `artix7`),
   VPR device `xc7a50t_test`
+* VTR hard blocks given Verilog models (`tools/e2e/vtr/hard-block-models.py`):
+  none
 * Synthesis 11 s, pack + place + route 29 s,
   `symbiflow_write_fasm` 19.7 s
 * FASM: 51 lines, 2601 bytes
+
+## Source and licence
+
+* Design: VTR `vtr_flow/benchmarks/verilog/single_wire.v`, one of VTR's small test designs.
+* Licence: no licence or author notice in the source (VTR's `LICENSE.md` leaves benchmark circuits to the terms in their source, and this one states none); distributed with VTR.
+* The FASM, frames and bitstream are tool output (VPR/genfasm, xcfasm) of this design.
 
 ## Tools
 
