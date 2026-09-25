@@ -48,7 +48,10 @@ import threading
 
 import pytest
 
-xilinx = pytest.importorskip('fasm.xilinx')
+try:
+    import fasm.xilinx as xilinx
+except ImportError as e:  # the extension without its "xilinx" feature
+    pytest.skip(str(e), allow_module_level=True)
 
 from fasm.model import FasmLine, SetFasmFeature  # noqa: E402
 

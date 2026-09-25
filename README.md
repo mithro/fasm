@@ -73,10 +73,12 @@ the Cargo workspace under `rust/`:
 * `rust/fasm-xilinx`: Xilinx database loading (prjxray-db, prjuray-db),
   FASM -> frames, and the Series7, UltraScale and UltraScale+ bitstream
   writer and reader (see `docs/rewrite/DESIGN-xilinx-db.md`).
-* `rust/fasm-capi`: the C ABI (`libfasm_capi`), with a generated header at
-  `include/fasm/fasm.h` (see `docs/rewrite/DESIGN-capi.md`).
+* `rust/fasm-capi`: the C ABI (`libfasm_capi`) of `fasm` and `fasm-xilinx`,
+  with a generated header at `include/fasm/fasm.h` (see
+  `docs/rewrite/DESIGN-capi.md`).
 * `rust/fasm-python`: the pyo3 extension module behind the Python package
-  above (see `docs/rewrite/DESIGN-python.md`).
+  above, including the `fasm.xilinx` bindings of `fasm-xilinx` (see
+  `docs/rewrite/DESIGN-python.md`).
 
 ```
 cargo build --workspace
@@ -116,6 +118,68 @@ of the reference tools):
 the cache ahead of time; `verify` re-hashes every source file, `info`,
 `list` and `clear` do what they say (`fasm-db-cache --help`). See
 `docs/rewrite/DESIGN-xilinx-db.md` §8.8.
+
+### Xilinx bitstreams from Python, C and C++
+
+The same FASM -> frames -> `.bit` flow is available as a library. From
+Python (`fasm.xilinx`, part of the `fasm` package; no database is needed
+to install or import it):
+
+```python
+import fasm.xilinx as fx
+
+db = fx.Database.open('prjxray-db/artix7', 'xc7a35tcsg324-1')  # cached like the CLI
+asm = fx.FasmAssembler(db)
+asm.parse_fasm_filename('top.fasm')
+asm.add_required_features()
+asm.propagate_stepdown()
+frames = asm.get_frames(sparse=True)       # a mapping: address -> words
+frames.write_frm('top.frm')                # byte for byte fasm2frames' output
+fx.write_bitstream(frames, db, 'top.bit')  # byte for byte xc7frames2bit's
+
+# Or in one step, like xc_fasm's fasm2frames() / the xcfasm tool:
+frames = fx.fasm2frames('prjxray-db/artix7', 'xc7a35tcsg324-1', 'top.fasm')
+fx.fasm2bit('prjxray-db/artix7', 'xc7a35tcsg324-1', 'top.fasm', 'top.bit')
+back = fx.read_bitstream('top.bit', db)    # like bitread --frm_out
+```
+
+prjuray-db (UltraScale+) parts work the same way (`format=` selects the
+UltraScale / UltraScale+ bitstream variants). Errors are
+`fasm.xilinx.Error` subclasses (`DbError`, `FasmLookupError`,
+`FasmInconsistentBits`, ...) with the messages of the command line tools.
+See `docs/rewrite/DESIGN-python.md`.
+
+From C (`include/fasm/fasm.h`, `libfasm_capi`; error handling shortened):
+
+```c
+fasm_xilinx_database *db = NULL;
+fasm_xilinx_frames *frames = NULL;
+fasm_xilinx_part *part = NULL;
+fasm_error *err = NULL;
+fasm_xilinx_fasm2frames_options options = {0};
+options.sparse = true;
+if (fasm_xilinx_database_open_cached("prjxray-db/artix7", "xc7a35tcsg324-1", NULL, &db, &err) ||
+    fasm_xilinx_fasm2frames_file(db, "top.fasm", &options, &frames, &err) ||
+    fasm_xilinx_part_from_database(db, &part, &err) ||
+    fasm_xilinx_bitstream_write_file(part, frames, NULL, "top.bit", &err)) {
+    fprintf(stderr, "%s: %s\n", fasm_error_kind(err), fasm_error_message(err));
+    fasm_error_free(err);
+}
+fasm_xilinx_part_free(part);
+fasm_xilinx_frames_free(frames);
+fasm_xilinx_database_free(db);
+```
+
+and from C++ (`include/fasm/fasm.hpp`, `namespace fasm::xilinx`):
+
+```cpp
+namespace fx = fasm::xilinx;
+auto db = fx::Database::open_cached("prjxray-db/artix7", "xc7a35tcsg324-1");
+fx::Frames frames = fx::fasm2frames(db, "top.fasm");
+fx::write_bitstream_file(fx::Part::from_database(db), frames, "top.bit");
+```
+
+See `docs/rewrite/DESIGN-capi.md` ("Xilinx").
 
 ## What changed in this rewrite
 

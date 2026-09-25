@@ -49,6 +49,17 @@ directory from shadowing the installed package. The tests use absolute
 paths, and run their subprocesses (`python -m fasm.tool`) in a temporary
 directory, so they import the installed package.
 
+`test_xilinx_python.py` tests `fasm.xilinx` (the bindings of the
+`fasm-xilinx` crate, T5.10; it is skipped when the extension was built
+without its `xilinx` feature). Its comparisons with the Rust command line
+tools need them built (`cargo build -p fasm-cli`; they are found in
+`$FASM_CLI_DIR`, else `target/release` or `target/debug`); with
+`FASM_DB_CACHE` pointing at the directory holding `prjxray-db/` and
+`prjuray-db/` (`tools/fetch-db.sh`) it also runs counter_test on
+xc7a35tcsg324-1 and a design on xczu3eg, and with the f4pga-xc-fasm
+oracle venv (`tests/oracle/setup-xilinx.sh`, or `ORACLE_DIR`) it compares
+with `xc_fasm.fasm2frames` itself. Those parts are skipped otherwise.
+
 The other test directories have their own instructions: `cli/` (Rust
 `fasm` CLI vs. the original, `make cli-difftest`), `oracle/` (the original
 package, `oracle/README.md`) and `e2e/` (toolchain end-to-end tests).

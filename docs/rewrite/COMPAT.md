@@ -769,3 +769,19 @@ namedtuples, with the field types of the ANTLR parser (a `list` of lines,
 | Cyclic garbage collector while building a result of 256 lines or more | runs | paused, then restored (`gc.callbacks` do not fire meanwhile) |
 | `fasm.output.merge_and_sort`'s `zero_function`/`sort_key` calls, when the fast path runs (T3.3) | called lazily, as the caller consumes the returned generator | called eagerly, at the `merge_and_sort(...)` call itself (same count, arguments and order, just sooner) — the fast path returns a materialised `list` wrapped in `iter()`, not a generator; see `DESIGN-python.md`'s "Eager vs. lazy evaluation" |
 | `fasm.output.merge_and_sort`'s `sort_key` result's `__lt__` call count for a **tied** pair of group ids (neither `a < b` nor `b < a`), when the fast path runs (T3.3) | `sorted(..., key=sort_key)` calls `__lt__` once per comparison decision (CPython's sort only ever tests one direction) | the fast path's comparator calls `__lt__` up to twice per pair (`a < b`, then, only if that is `False`, `b < a`, to build a 3-way `Ordering` for `Vec::sort_by`) — the resulting sorted order is identical (a tied pair keeps its original relative order either way), but a `sort_key` whose `__lt__` has a call-count-dependent side effect (e.g. raises on its Nth call) can behave differently between the two paths; see `DESIGN-python.md`'s "`sort_key`'s `__lt__` call count can differ for tied keys" and its regression test in `tests/test_fast_paths.py` |
+
+### `fasm.xilinx` (T5.10)
+
+`fasm.xilinx` produces the same frames, `.frm` and `.bit` files as the
+command line tools (and so as the reference Python tools), and its
+exceptions carry the tools' messages (`DESIGN-python.md`, "`fasm.xilinx`").
+
+| Case | Reference Python API (`xc_fasm`, `prjxray`) | `fasm.xilinx` |
+|---|---|---|
+| Result of `fasm2frames()` / `get_frames()` | a `dict` of address to `list` of words | `Frames`, a read only mapping that compares equal to that `dict` (`to_dict()` gives one) |
+| Exceptions | `FasmLookupError`, `FasmInconsistentBits`, `KeyError`, `AssertionError`, a bare `Exception` for parse errors, ... | `fasm.xilinx.Error` subclasses with the same `str()` (`FasmKeyError` is also a `KeyError`, `FasmParseError` a `fasm.parser.rust.FasmParseError`); OS errors and the internal Python errors are the same builtins; `reference_exception` names the reference exception |
+| Warnings (a bit beyond its frame) | printed to stderr as they happen | `fasm2frames()` prints them to `sys.stderr` after the assembly; `FasmAssembler` keeps them in `.warnings` |
+| Value range error followed by a syntax error | the syntax error (ANTLR) | the first error in file order (like `fasm.parse_fasm_string`, see above); the command line tools report the syntax error |
+| `FasmAssembler.feature_callback` | called with the `SetFasmFeature` | the same (a `fasm.model.SetFasmFeature`); it may not call its own assembler (`RuntimeError`) |
+| PUDC_B handling on a `FasmAssembler` | inline in `fasm2frames()` | only through `fasm2frames()` / `fasm2bit()` (the assembler has the ROI, required feature and STEPDOWN steps) |
+| `xcfasm` | runs `xc7frames2bit` in a shell, leaves a temporary `.frm` | `fasm2bit()` writes the bitstream in process (like the Rust `xcfasm`), the header names `frm_out`, else `fn_in` |

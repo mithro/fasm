@@ -56,6 +56,9 @@ dev = [
     "yapf==0.24.0",
 ]
 
+# The extension includes the fasm.xilinx bindings (the `xilinx` cargo
+# feature of rust/fasm-python, on by default); `maturin build
+# --no-default-features` builds the parser-only module.
 [tool.maturin]
 manifest-path = "rust/fasm-python/Cargo.toml"
 python-source = "."

@@ -1,4 +1,4 @@
-# Design notes: Python bindings (`rust/fasm-python`, T3.1)
+# Design notes: Python bindings (`rust/fasm-python`, T3.1, T5.10)
 
 Design record for the `fasm._fasm_rs` extension module and its use by the
 `fasm` Python package. The module's own doc comments
@@ -387,3 +387,136 @@ the pure Python parser:
 On CPython 3.13 (same abi3 wheel) the 100k line file takes 66 ms too. For
 comparison the Rust `fasm` CLI parses, formats and writes the same file in
 66 ms, so building the Python objects costs about as much as parsing.
+
+## `fasm.xilinx`: bindings of `fasm-xilinx` (T5.10)
+
+### Layout: a cargo feature of the one extension module
+
+The bindings are a `xilinx` cargo feature of `rust/fasm-python` (on by
+default), which adds the submodule `fasm._fasm_rs.xilinx`
+(`rust/fasm-python/src/xilinx/`: `database.rs`, `assembler.rs`,
+`frames.rs`, `bitstream.rs`, `mod.rs` for the errors and helpers). The
+Python package `fasm/xilinx/` re-exports it (`__init__.py`), defines the
+exceptions and namedtuples (`_types.py`, imported by the extension on
+first use, like `fasm.model`) and the convenience functions
+`fasm2frames()` / `fasm2bit()`, and has type stubs (`__init__.pyi`).
+
+Rejected: a second extension module (`fasm._fasm_xilinx_rs` in its own
+crate). maturin builds one extension module per `pyproject.toml`, so a
+second module means a second distribution (for example `fasm-xilinx` on
+PyPI) installing a file into the `fasm` package directory of another
+distribution, two wheels to keep in step, and two copies of the `fasm`
+crate (and of its feature name interner, so `IdString`s could not be
+shared). With the feature:
+
+* `pip install fasm` still needs no database (databases are only read by
+  `Database.open` at run time) and nothing beyond what it needed before
+  (a Rust toolchain for a source build);
+* importing `fasm` does not import `fasm.xilinx` (the submodule only
+  registers classes and functions; nothing is loaded until
+  `Database.open`);
+* the cost is the size of the extension: 1.88 MB stripped instead of
+  0.72 MB (`x86_64`, release, `maturin develop --release` with and
+  without `--no-default-features`); a parser-only build is
+  `maturin build --no-default-features`, and `fasm.xilinx` then raises an
+  `ImportError` naming the feature (the tests skip).
+
+### API
+
+| Python | Reference it mirrors |
+|---|---|
+| `Database.open(db_root, part=None, cache=True)` (also `Database(...)`); `.root`, `.part`, `.layout`, `.architecture`, `.words_per_frame`, `.idcode`, `.tile_types()`, `.tile_type_features(t)`, `.pseudo_pips(t)`, `.tiles()` (`Tile` namedtuples), `.required_features()`, `.frame_addresses()`, `.lookup_feature(feature, address=0)` (a `FeatureBits` namedtuple, bits as `(frame, word, bit, value)` tuples) | `prjxray.db.Database`, `Grid`, `TileSegbits.feature_to_bits` |
+| `FasmAssembler(db, prjuray=None)`: `parse_fasm_filename(f, extra_features=None)`, `parse_fasm_string`, `parse_fasm_bytes`, `add_fasm_line(line, missing_features=None)`, `add_fasm_lines`, `add_required_features()`, `mark_roi_frames(roi)`, `propagate_stepdown()`, `set_feature_callback(fn)`, `get_frames(sparse=False)`, `.warnings`, `take_warnings()`, `len()` | `prjxray.fasm_assembler.FasmAssembler` (prjuray's with `prjuray=True`, the default for UltraScale(+) databases); the ROI / required features / STEPDOWN steps of `xc_fasm.fasm2frames` |
+| `Frames`: a read only `collections.abc.Mapping` of address to a `list` of words; `words_per_frame`, `to_dict()`, `frame_bytes(a)`, `to_bytes()`, `set_bits()`, `to_frm()`, `write_frm(path_or_file)`, `Frames.from_frm(text)`, `Frames.read_frm(path_or_file)`, `Frames(mapping, words_per_frame=None)`, `==` with any mapping, pickling | the `dict` `get_frames` returns, `dump_frm`, `xc7frames2bit`'s `.frm` reader |
+| `write_bitstream(frames, part, output=None, *, format=None, part_name=None, design_name=None, generator=None, source_date_epoch=None)`, `read_bitstream(source, part, *, format=None, clear_ecc=True, skip_zero=False)` | `xc7frames2bit`, `xcframes2bit`, `bitread --frm_out` |
+| `fasm2frames(db_root, part=None, filename_in=None, f_out=None, sparse=False, roi=None, debug=False, emit_pudc_b_pullup=False, fasm_text=None, cache=True)`, `fasm2bit(db_root, part, fn_in, bit_out, part_file=None, frm_out=None, ...)` | `xc_fasm.fasm2frames.fasm2frames` (same positional order), `xcfasm` |
+| `read_roi_design(path)`, `dump_frames_sparse(frames)`, `ARCHITECTURES` | `xc_fasm.fasm2frames` |
+
+`format` is `None` (the part's architecture), `'Series7'`,
+`'UltraScale'`, `'UltraScalePlus'` (prjuray-tools' implementation, also
+`'native:<arch>'`) or `'prjxray:UltraScale'` / `'prjxray:UltraScalePlus'`
+(the plain prjxray `xc7frames2bit --architecture=...`: Series7 part
+type, frame addresses and ECC). `part` is a `Database` (its part data,
+and its part name for the header) or the path of a `part.yaml` (read like
+`--part_file`). An UltraScale(+) database uses prjuray's `fasm2frames`
+flow in `fasm2frames()`, like the `fasm2frames` tool.
+
+`cache=True` (or `None`) opens the database through the binary cache
+with the settings of the command line tools (`FASM_XDB_CACHE`, else
+`$XDG_CACHE_HOME/fasm/db`, else `~/.cache/fasm/db`; `FASM_XDB_CACHE=0`
+disables it), `False` without it, a path uses that directory.
+
+### Errors
+
+`fasm.xilinx.Error` is the base class; `DbError`, `FasmLookupError`
+(`messages`: one per missing feature bit), `FasmInconsistentBits`,
+`FasmKeyError` (also a `KeyError`: unknown tile or tile type, missing ROI
+key), `FasmParseError` (also `fasm.parser.rust.FasmParseError`, with
+`line` / `column`), `FrmError` (also a `ValueError`) and `BitstreamError`
+derive from it. A file that cannot be opened is the builtin `OSError`
+subclass Python's `open()` raises, with its message (`[Errno 2] No such
+file or directory: '...'`), and the few internal Python exceptions of
+the reference (`AssertionError`, `IndexError`, `ValueError` for a
+malformed ROI JSON, ...) are the builtins. `str()` is always the message
+the command line tools print, and every raised exception has a
+`reference_exception` attribute naming the reference's exception, so
+`f'{e.reference_exception}: {e}'` is the tool's stderr line (tested).
+The classes are Python (`_types.py`) rather than `create_exception!` so
+that they can inherit from two bases.
+
+The one known difference from the tools' messages: for a FASM text with
+a value range error followed by a later syntax error, the tools report
+the syntax error (the ANTLR precedence, `fasm_cli::tool::error_to_report`)
+and the bindings the first error in file order, like
+`fasm.parse_fasm_string` (see `COMPAT.md`).
+
+### Ownership and threads
+
+`Database` holds an `Arc<Database>`; `FasmAssembler` holds a
+`FasmAssembler<'static>` built with `FasmAssembler::new_shared` (added to
+`fasm-xilinx` for the bindings, instead of a self-referential struct with
+`unsafe`) plus a reference to the `Database` object. pyo3 classes must be
+`Send + Sync`, so the assembler's feature callback type became `Send`
+(`fasm-xilinx`'s own PUDC_B callback uses an `AtomicBool`) and the
+assembler sits in a mutex (`Locked`), which is taken with the GIL
+released: a thread waiting for it never blocks the thread that holds it,
+whose feature callback may need the GIL. A feature callback calling back
+into its own assembler gets a `RuntimeError` (detected by thread id)
+instead of a deadlock. `Frames` is immutable (`Arc<Frames>`).
+
+### GIL and buffers
+
+Opening a database, parsing and assembling (the feature callback
+re-acquires the GIL per feature, only when one is set), `get_frames`,
+`fasm2frames`, `.frm` writing/reading and bitstream writing/reading run
+with the GIL released. The abi3 (3.9) build cannot use the buffer
+protocol (it is in the limited API from 3.11 on), so `Frames` cannot be a
+zero copy `memoryview`: `to_bytes()` / `frame_bytes()` and
+`write_bitstream()` build their `bytes` with a single copy
+(`PyBytes::new_with` writes the words straight into the new object), and
+`read_bitstream` / `Frames.from_frm` borrow a `bytes` argument
+(`PyBackedBytes`). Output to a path is written from Rust without the GIL.
+
+### Tests and performance
+
+`tests/test_xilinx_python.py`: the API on the three test databases; the
+mini database fixtures against the oracle `.frm` goldens of
+`rust/fasm-xilinx/testdata/mini-db-golden`; equality of the step by step
+assembler, text input and file input; byte identical `.frm`, `.bit` and
+`bitread --frm_out` output and identical error lines against the Rust
+command line tools (taken from `$FASM_CLI_DIR` or the checkout's
+`target/`; skipped without them); with `FASM_DB_CACHE`, counter_test on
+xc7a35tcsg324-1 (against the corpus' reference `.frm` files and
+`xcfasm`) and a design of one feature of every tile type on xczu3eg;
+with the oracle venv (`$ORACLE_DIR`), `xc_fasm.fasm2frames.fasm2frames`
+itself on the mini database.
+
+counter_test (`top.fasm`, xc7a35tcsg324-1), best of several runs in one
+process, release build, wall time:
+
+| | dense | sparse |
+|---|---:|---:|
+| `xc_fasm.fasm2frames.fasm2frames` (reference, opens the database each call) | 289 ms | 172 ms |
+| `fasm.xilinx.fasm2frames` + `to_frm()`, opening the database each call without the cache | 60 ms | 54 ms |
+| the same through the binary cache | 13 ms | 8 ms |
+| database already open: `fasm2frames` + `write_bitstream` | 2.3 ms | |
