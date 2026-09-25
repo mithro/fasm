@@ -223,8 +223,17 @@ impl Interner {
     /// so the result is the canonical handle.
     #[inline]
     fn find_levels(&self, state: &RandomState, s: &[u8]) -> Option<IdString> {
+        // The body of `find_pieces`, repeated: calling it from here made
+        // the hit path of `intern` measurably slower (T8.2).
         let (pieces, count) = split_levels(s);
-        self.find_pieces(state, pieces, count)
+        let first = pieces[0];
+        let pos0 = self.levels[0].find(hash(state, first), first)?;
+        let mut fields = [0u32; LEVELS - 1];
+        for (level, field) in fields.iter_mut().enumerate().take(count - 1) {
+            let piece = pieces[level + 1];
+            *field = self.levels[level + 1].find(hash(state, piece), piece)? + 1;
+        }
+        Some(IdString::from_raw(encode_levels(pos0, fields)))
     }
 
     /// [`Interner::find_levels`] for a string already split into its
