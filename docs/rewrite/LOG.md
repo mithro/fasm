@@ -866,3 +866,10 @@ what happened, branch/commit references, open issues.
   suites 1710 passed against a fresh maturin build. Worktree removed;
   follow-ups recorded as T8.2b.
 * T8.3 (documentation pass) started (Sonnet); T7.4 under review.
+* T8.3 first pass on branch `worktree-agent-aed2d965dc1a11931` (5
+  commits): README front page (binaries and env var tables, layout,
+  verification numbers, test suites), docs/PYTHON.md and docs/CAPI.md
+  user guides, COMPAT.md table of contents, PLAN.md status section and
+  design doc index, Python module/function docstrings. Rust crates already
+  had 0 missing_docs; 9 doctests. Asked to close the remaining output.py /
+  _types.py docstring gaps and add a stub audit test before review.
