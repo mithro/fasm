@@ -123,6 +123,16 @@ pub(crate) fn assembler_error(error: &AssemblerError) -> CapiError {
     base.with_kind(kind)
 }
 
+/// `FASM_ERR_IO` for a file that cannot be read or written, with the
+/// message and kind of the Python `OSError` (`FileNotFoundError: [Errno
+/// 2] No such file or directory: '<path>'`), like the assembler's.
+pub(crate) fn io_error(path: &std::path::Path, source: std::io::Error) -> CapiError {
+    assembler_error(&AssemblerError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 /// The error of a database that cannot be opened.
 pub(crate) fn db_error(error: &DbError) -> CapiError {
     CapiError::new(fasm_status::FASM_ERR_DB, error.to_string()).with_kind("fasm_xilinx.DbError")

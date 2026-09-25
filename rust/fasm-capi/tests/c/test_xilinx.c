@@ -651,6 +651,10 @@ static void test_frames(void) {
     err = NULL;
     status = fasm_xilinx_frames_read_frm(work("missing.frm"), 4, NULL, NULL, &parsed, &err);
     CHECK(status == FASM_ERR_IO, "missing file");
+    CHECK(strcmp(fasm_error_kind(err), "FileNotFoundError") == 0, "kind %s", fasm_error_kind(err));
+    CHECK(strstr(fasm_error_message(err), "[Errno 2] No such file or directory: '") ==
+              fasm_error_message(err),
+          "message %s", fasm_error_message(err));
     fasm_error_free(err);
     fasm_xilinx_frames_free(frames);
 }

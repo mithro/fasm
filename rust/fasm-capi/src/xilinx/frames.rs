@@ -283,9 +283,7 @@ pub unsafe extern "C" fn fasm_xilinx_frames_write_frm(
         run_status(err, || {
             let frames = frames_arg(frames)?;
             let path = path_arg(path, "path")?;
-            let io_error = |e: std::io::Error| {
-                CapiError::new(fasm_status::FASM_ERR_IO, format!("{}: {e}", path.display()))
-            };
+            let io_error = |e: std::io::Error| super::io_error(&path, e);
             let file = std::fs::File::create(&path).map_err(io_error)?;
             let mut out = std::io::BufWriter::with_capacity(1 << 16, file);
             frames.write_frm(&mut out).map_err(io_error)?;
@@ -382,9 +380,7 @@ pub unsafe extern "C" fn fasm_xilinx_frames_read_frm(
                 return Err(CapiError::null("out"));
             }
             let path = path_arg(path, "path")?;
-            let data = std::fs::read(&path).map_err(|e| {
-                CapiError::new(fasm_status::FASM_ERR_IO, format!("{}: {e}", path.display()))
-            })?;
+            let data = std::fs::read(&path).map_err(|e| super::io_error(&path, e))?;
             read_into(&data, words_per_frame, warning, user, out)
         })
     }

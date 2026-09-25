@@ -350,9 +350,7 @@ pub unsafe extern "C" fn fasm_xilinx_bitstream_write_file(
         run_status(err, || {
             let path = path_arg(path, "path")?;
             let data = write(part, frames, options)?;
-            std::fs::write(&path, data).map_err(|e| {
-                CapiError::new(fasm_status::FASM_ERR_IO, format!("{}: {e}", path.display()))
-            })
+            std::fs::write(&path, data).map_err(|e| super::io_error(&path, e))
         })
     }
 }
@@ -449,9 +447,7 @@ pub unsafe extern "C" fn fasm_xilinx_bitstream_read_file(
                 return Err(CapiError::null("out"));
             }
             let path = path_arg(path, "path")?;
-            let data = std::fs::read(&path).map_err(|e| {
-                CapiError::new(fasm_status::FASM_ERR_IO, format!("{}: {e}", path.display()))
-            })?;
+            let data = std::fs::read(&path).map_err(|e| super::io_error(&path, e))?;
             read_into(part, &data, format, clear_ecc, skip_zero, out)
         })
     }

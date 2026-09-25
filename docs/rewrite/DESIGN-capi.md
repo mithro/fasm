@@ -243,6 +243,12 @@ fails the test (checked by removing a `fasm_file_free` call).
   values do not change (a new struct field needs a new function or a
   versioned struct).
 * Handles are opaque, so their representation can change freely.
+* The public structs of the Xilinx functions (T5.10:
+  `fasm_xilinx_fasm2frames_options`, `fasm_xilinx_bitstream_options`,
+  `fasm_xilinx_feature_info`, `fasm_xilinx_bit`) have no size or version
+  field, like `fasm_set_feature_spec`: once the ABI is stable, a new
+  field means a new struct and new functions taking it, never a change
+  of these.
 * Enums are `repr(C)` (C `int`); functions take `bool` (C99 `_Bool`),
   fixed width integers and `size_t` (Rust `usize`).
 * `FASM_API` marks every function: `__declspec(dllimport)` on Windows
@@ -556,7 +562,9 @@ Design choices:
   C test checks it against the tool). For errors of the core functions
   `fasm_error_kind` is `fasm_status_string` of the status. The new status
   codes follow the Python exceptions of `fasm.xilinx`; syntax errors are
-  `FASM_ERR_PARSE` with their position, unreadable files `FASM_ERR_IO`.
+  `FASM_ERR_PARSE` with their position, files that cannot be read or
+  written `FASM_ERR_IO` with the kind and message of Python's `OSError`
+  (`FileNotFoundError`, `[Errno 2] No such file or directory: '...'`).
 * **Sharing.** A `fasm_xilinx_database` is immutable (an
   `Arc<Database>`); assemblers and parts made from it hold a reference,
   so the database may be freed first. The assembler is
