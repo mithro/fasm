@@ -236,6 +236,12 @@ build_one() {
   if [[ $status == built && ( -z "$fasm" || -z "$bit" ) ]]; then
     status="failed (no FASM/bitstream)"
   fi
+  # symbiflow_write_fasm ignores genfasm's exit status: a genfasm killed
+  # (e.g. by the OOM killer) leaves a truncated FASM, and the flow goes on
+  # to write a bitstream of it and "succeeds".
+  if [[ $status == built ]] && grep -qE '(Killed|Segmentation fault|Aborted).*(genfasm|vpr)' "$out/build.log"; then
+    status="failed ($(grep -oE '(Killed|Segmentation fault|Aborted).*(genfasm|vpr)' "$out/build.log" | head -1 | sed -E 's/ +/ /g; s/^(Killed|Segmentation fault|Aborted).*(genfasm|vpr)$/\2 \1/'))"
+  fi
   if [[ -n "$fasm" ]]; then
     cp "$fasm" "$out/top.fasm"
   fi
