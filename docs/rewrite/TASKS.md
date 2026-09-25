@@ -196,7 +196,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       `find_pieces` instead of the duplicated `find_levels` body; cheaper
       hasher for `CanonicalLines::index`; library `fasm_tuple_to_string`
       canonical path still sorts formatted Strings (after T8.2).
-- [~] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
+- [r] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
 - [ ] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
       install for the C API, release notes.

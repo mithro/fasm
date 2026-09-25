@@ -873,3 +873,9 @@ what happened, branch/commit references, open issues.
   design doc index, Python module/function docstrings. Rust crates already
   had 0 missing_docs; 9 doctests. Asked to close the remaining output.py /
   _types.py docstring gaps and add a stub audit test before review.
+* T8.3 complete on its branch (8 commits: + remaining docstrings, yapf
+  fixes, tests/test_stubs.py auditing the fasm.xilinx stub, 25/25
+  checks). Found pre-existing: fasm/__init__.py binds a string to
+  `__dir__` so dir(fasm) raises TypeError (also in the original
+  package?); to be judged by the reviewer. Independent review (Opus)
+  started.
