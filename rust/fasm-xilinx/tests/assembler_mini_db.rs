@@ -478,14 +478,13 @@ fn stepdown() {
 /// can abort.
 #[test]
 fn feature_callback() {
-    use std::cell::RefCell;
-    use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
     let db = open();
-    let seen = Rc::new(RefCell::new(Vec::new()));
+    let seen = Arc::new(Mutex::new(Vec::new()));
     let mut assembler = FasmAssembler::new(&db).unwrap();
-    let log = Rc::clone(&seen);
+    let log = Arc::clone(&seen);
     assembler.set_feature_callback(Box::new(move |f| {
-        log.borrow_mut().push(f.feature.to_string());
+        log.lock().unwrap().push(f.feature.to_string());
         if f.feature.to_string().starts_with("STOP") {
             return Err(AssemblerError::KeyError("stop".to_owned()));
         }
@@ -499,7 +498,7 @@ fn feature_callback() {
         .unwrap_err();
     assert_eq!(e.traceback_line(), "KeyError: 'stop'");
     assert_eq!(
-        *seen.borrow(),
+        *seen.lock().unwrap(),
         ["A_X0Y0.B", "CLBLM_L_X10Y102.SLICEM_X0.A5FF.ZINI", "STOP.X"]
     );
 }

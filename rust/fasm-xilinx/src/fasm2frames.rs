@@ -18,10 +18,10 @@
 //! `xc_fasm.fasm2frames.fasm2frames` (f4pga-xc-fasm): ROI, required
 //! features, PUDC_B pullup, STEPDOWN propagation over IO banks.
 
-use std::cell::Cell;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use fasm::idstring::IdString;
 use fasm::FasmLine;
@@ -301,10 +301,10 @@ fn run(
     } else {
         None
     };
-    let pudc_in_use = Rc::new(Cell::new(false));
+    let pudc_in_use = Arc::new(AtomicBool::new(false));
     if let Some((tile, site)) = &pudc {
         let (tile, site) = (tile.to_string(), site.clone());
-        let in_use = Rc::clone(&pudc_in_use);
+        let in_use = Arc::clone(&pudc_in_use);
         assembler.set_feature_callback(Box::new(move |set_feature| {
             set_feature.feature.with_str(|feature| {
                 let mut parts = feature.split('.');
@@ -316,7 +316,7 @@ fn run(
                                 message: "list index out of range".to_owned(),
                             })
                         }
-                        Some(s) if s == site => in_use.set(true),
+                        Some(s) if s == site => in_use.store(true, Ordering::Relaxed),
                         Some(_) => {}
                     }
                 }
@@ -338,7 +338,10 @@ fn run(
 
     fasm.parse(assembler, extra_features)?;
 
-    if let Some((tile, site)) = pudc.as_ref().filter(|_| !pudc_in_use.get()) {
+    if let Some((tile, site)) = pudc
+        .as_ref()
+        .filter(|_| !pudc_in_use.load(Ordering::Relaxed))
+    {
         let mut text = String::from("\n");
         for feature in PUDC_B_FEATURES {
             text.push_str(&format!("{tile}.{site}.{feature}\n"));

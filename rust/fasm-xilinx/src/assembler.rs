@@ -240,8 +240,11 @@ pub(crate) fn py_repr(s: &str) -> String {
 }
 
 /// A callback run on every `SetFasmFeature` the assembler sees, before
-/// its bits are looked up (`FasmAssembler.feature_callback`).
-pub type FeatureCallback<'a> = Box<dyn FnMut(&SetFasmFeature) -> Result<(), AssemblerError> + 'a>;
+/// its bits are looked up (`FasmAssembler.feature_callback`). It is
+/// `Send` so that an assembler can move between threads (the Python
+/// binding's objects must be `Send`).
+pub type FeatureCallback<'a> =
+    Box<dyn FnMut(&SetFasmFeature) -> Result<(), AssemblerError> + Send + 'a>;
 
 /// Bias of the word field of a packed bit key: prjxray keys its bits by
 /// the *unwrapped* word (`absolute bit // 32`, negative for the `_SING`
@@ -419,6 +422,11 @@ impl<'db> FasmAssembler<'db> {
     /// [`FasmAssembler::add_fasm_line`].
     pub fn set_feature_callback(&mut self, callback: FeatureCallback<'db>) {
         self.callback = Some(callback);
+    }
+
+    /// Removes the feature callback, if any.
+    pub fn clear_feature_callback(&mut self) {
+        self.callback = None;
     }
 
     /// The warnings printed so far by the reference (dropped bits beyond
@@ -828,6 +836,12 @@ impl Roi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn assembler_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<FasmAssembler<'static>>();
+    }
 
     #[test]
     fn key_packing_round_trips() {
