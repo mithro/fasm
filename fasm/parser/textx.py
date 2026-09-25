@@ -16,7 +16,6 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-
 """The pure Python, textX based FASM parser (`fasm.parser.textx`).
 
 Always installed and importable (no compiled extension needed), used as

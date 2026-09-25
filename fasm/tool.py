@@ -16,7 +16,6 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-
 """The ``fasm`` command line tool.
 
 Implements the ``fasm`` console script: parses a FASM file with the
