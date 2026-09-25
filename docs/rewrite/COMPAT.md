@@ -19,6 +19,7 @@ through the oracle (`tests/oracle/dump.py --parser antlr|textx`).
 * [`uray-fasm2frames`](#uray-fasm2frames-prjurays-utilsfasm2framespy-rustfasm-clisrcuray_fasm2framesrs-t62)
 * [The f4pga flow's outputs](#the-f4pga-flows-outputs-f4pga-examples-t73)
 * [The openXC7 snap's tools](#the-openxc7-snaps-tools-nextpnr-xilinx-examples-t76)
+* [Bitstream readers compared with RapidWright](#bitstream-readers-compared-with-rapidwright-t75)
 * [C API (`libfasm_capi`)](#c-api-libfasm_capi-rustfasm-capi-t41)
   * [C++ wrapper](#c-wrapper-includefasmfasmhpp-t42)
 * [Python bindings](#python-bindings-fasmparserrust-rustfasm-python-t31-t33)
@@ -816,6 +817,30 @@ change was needed.
 | Value forms | genfasm writes every value as a sized binary literal `<width>'b<bits>`, in two forms. With a bit range, `F[hi:lo]=<w>'b<bits>`: LUT contents (`fasm_lut`: `LUT[63:0]=64'b...` on the test architecture, `INIT[31:0]` / `INIT[63:32]` halves on `xc7a50t_test`) and multi bit `fasm_params` (`INIT[255:0]=256'b...`). Without a range, `F=1'b0` / `F=1'b1`: the one bit `fasm_params` of `xc7a50t_test`, zeros included (e.g. `BRAM_L_X6Y115.RAMB18_Y0.ZINV_RSTREGARSTREG=1'b0`, `RIOB33_X43Y87.IOB_Y1.PULLTYPE.PULLDOWN=1'b0`): 2,664 such lines in `picosoc_basys3_full_50` (2,456 `=1'b0`, 208 `=1'b1`), 34,359 in the 16 committed Xilinx files (26,787 / 7,572; the 9 Verilog ones include the few lines of the synthesis' extra FASM that `symbiflow_write_fasm` appends). The test architecture's output has only the ranged form | parsed and printed like the oracle: the printer writes the binary value without its leading zeros (`4'b0101` -> `4'b101`), the canonical form drops the zero values and writes one line per set bit (`F=1'b1` becomes `F`) |
 | Repeated features | a feature can be written more than once, always with the same value: in `picosoc_basys3_full_50` 211 distinct features appear more than once, 282 extra lines (`BRAM_L_X6Y115.CASCOUT_ARD_ACTIVE`, `...BLUT.DI1MUX.DI_CMC31`, ...); 1,212 features / 1,884 extra lines in the 16 committed Xilinx files | kept as separate lines by the parser and the printer, written once by the canonical form, set once by `fasm2frames`, like the oracle |
 | Nothing else | no comments, annotations, blank lines, `{...}` blocks or placeholders (`fasm_placeholders` are substituted by genfasm; an empty substitution such as the test architecture's `SING=NULL` leaves no trace) | -- |
+
+## Bitstream readers compared with RapidWright (T7.5)
+
+### Rule
+
+RapidWright (`v2026.1.0-beta`, `com.xilinx.rapidwright.bitstream`) is an
+independent reader and writer of bitstreams and an independent source of
+every part's frame layout (`docs/rewrite/DESIGN-rapidwright.md`,
+`DESIGN-xilinx-db.md` §8.15). The Rust tools follow the **prjxray /
+prjuray-tools reference** wherever the two disagree; the checks of
+`tools/e2e/rapidwright/rwcheck.py` verify each disagreement below exactly
+(a model of it must match every frame), so that anything else is a
+difference. The frame layouts of all 128 parts (Series7, UltraScale,
+UltraScale+) are identical: no difference.
+
+### Differences between RapidWright and the prjxray reader
+
+| Case | prjxray / prjuray-tools reader (and the Rust port) | RapidWright |
+|---|---|---|
+| A bitstream with per frame CRC (Vivado `PerFrameCRC`: a `FAR`, one frame of `FDRI` and a `CRC` write per frame, `CTL1` bit 21 set; all ToolsTestData bitstreams, prjxray's `configuration_test.perframecrc.bit`) | the `FAR` written before each 1-frame `FDRI` holds the *previous* frame's address (a progress marker: `FAR=0, FDRI, FAR=0, FDRI, FAR=1, ...`); with `CTL1` bit 21 set the reader does not restart the write on it and keeps counting from the first `FAR`, which gives each frame its address (the same design without per frame CRC, `configuration_test.bit`, reads identically with both tools and equals this reading) | applies each `FAR` to the frame that follows it: every frame of a row one frame address early; the last frame of the row gets the first pad frame (zero) |
+| The last frame of the part in such a bitstream | lost: the part walk has no address after it, so the trailing pad frame is stored over it (`Series7/bram.bit`: frame 0x00C0017F is zero, RapidWright has non-zero contents for it). The reference `bitread` does the same, so the Rust reader keeps it (`tests/e2e/test_rapidwright.py::test_per_frame_crc_last_frame_quirk`) | kept (at 0x00C0017E, row above) |
+| `.bit` header field `a` (`top;UserID=...;Version=2019.2`) | one string | split at the first `;`: design name `top` and options `;UserID=...` |
+| A `.bit` with an empty part name (`xc7frames2bit` without `--part_name`) | read with the `--part_file` given | `ArrayIndexOutOfBoundsException` (the part comes from the header) |
+| Writing frames | `xc7frames2bit`'s packet sequence (§6.3 of `DESIGN-xilinx-db.md`, no CRC) | Vivado's sequence with CRC writes; the `FDRI` payload (frames, pad frames, ECC) is byte identical to the Rust writer's |
 
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 

@@ -3507,6 +3507,108 @@ produce FASM, and why:
   architecture does not model (`Failed to find matching architecture model
   for 'LDCE'` in packing).
 
+### 8.15 RapidWright cross-checks (T7.5)
+
+RapidWright `v2026.1.0-beta` (no Vivado) as an independent reference:
+what it can do is in `docs/rewrite/DESIGN-rapidwright.md` (it has no FASM
+writer and no bit database; it has a bitstream reader/writer and every
+part's configuration array; its FPGA interchange output plus
+python-fpga-interchange gives FASM for Series7 designs it can read or
+build). Tools: `tools/e2e/setup-rapidwright.sh [--with-interchange]`,
+`tools/e2e/run-rapidwright-checks.sh` (`tools/e2e/rapidwright/
+rwcheck.py`), `tests/e2e/test_rapidwright.py`; usage in
+`tools/e2e/README.md`. Full run of 2026-09-25 (`layout bits fasm`, the
+pinned databases, the reference sources of `tests/oracle/setup-xilinx.sh`
+and the f4pga / openXC7 flow outputs of T7.1-T7.3; about 15 minutes):
+**0 unexplained differences, no Rust bug**.
+
+**Frame layout** (`layout`, 128 parts: RapidWright's `ConfigArray` walk
+and columns against the Rust `Part` walk read back from an empty
+`xc7frames2bit` / `xcframes2bit` bitstream, `part.json`, IDCODE, words
+per frame, FDRI size = (frames + 2 pad frames per row) x words):
+
+| family | device (RapidWright) | parts | frames | columns | words/frame | FDRI words | result |
+|---|---|---|---|---|---|---|---|
+| artix7 | xc7a35t | 20 | 5408 | 134 | 101 | 547420 | identical |
+| artix7 | xc7a50t | 20 | 5408 | 134 | 101 | 547420 | identical |
+| artix7 | xc7a100t | 16 | 9448 | 234 | 101 | 955864 | identical |
+| artix7 | xc7a200t | 32 | 24060 | 575 | 101 | 2432080 | identical |
+| kintex7 | xc7k70t | 16 | 7432 | 178 | 101 | 752248 | identical |
+| spartan7 | xc7s50 | 9 | 5408 | 134 | 101 | 547420 | identical |
+| zynq7 | xc7z010 | 6 | 5144 | 122 | 101 | 520352 | identical |
+| zynq7 | xc7z020 | 6 | 9996 | 240 | 101 | 1010808 | identical |
+| zynqusp (prjuray-db) | xczu3eg | 2 | 14952 | 330 | 93 | 1391652 | identical |
+| kintexu (ToolsTestData `UltraScale/part.yaml`) | xcku035 | 1 | 32510 | 1050 | 123 | 4001190 | identical |
+
+prjxray-db's xc7a35t parts use the xc7a50t fabric; RapidWright's own
+xc7a35t device has exactly that layout too (same walk SHA-256), with the
+xc7a35t IDCODE `0x0362D093`. RapidWright has no tile type for a few
+xcku035 blocks (`Block.getSubType()` fails; stored as `"?"`). The
+layouts are committed (`tests/corpus/*/*/rapidwright/*.json`, 180 KB) and
+checked against every part by `tests/e2e/test_rapidwright.py` without
+RapidWright.
+
+**Bitstreams** (`bits`, 104 cases). Checks per reference bitstream: (1)
+RapidWright reader vs Rust reader, every frame with ECC; (2) header
+fields and the whole packet list; (3) Rust writer (the frames read) ->
+RapidWright reader, frames and packets; (4) RapidWright writer (same
+frames, its own ECC) -> Rust reader; (5) RapidWright rewrite of the
+original -> Rust reader; (6) FDRI payload of the Rust writer = of the
+RapidWright writer. Per corpus `.frm`: (3), (4), (6).
+
+| source | parts | cases | (1) | (2) | (3) | (4) | (5) | (6) |
+|---|---|---|---|---|---|---|---|---|
+| Vivado: prjxray-db harness `design.bit` (4), prjxray `configuration_test{,.debug}.bit` | xc7a35t, xc7a50t | 6 | identical | identical | identical | identical | identical | identical |
+| Vivado, per frame CRC: prjxray `configuration_test.perframecrc.bit`, ToolsTestData Series7 `design.bit`, `bram.bit` | xc7a50t | 3 | explained (a) (+ (b) for `bram.bit`) | identical | identical | identical | identical (c) | identical |
+| Vivado, per frame CRC: ToolsTestData UltraScale `design.bit` | xcku035 | 1 | explained (a) | identical | identical | identical | identical (c) | identical |
+| Vivado, per frame CRC: ToolsTestData UltraScale+ `design.bit`, `test.bit` | xczu3eg (sfvc784, sbva484) | 2 | explained (a) | identical | identical | identical | identical (c) | identical |
+| `xc7frames2bit`: corpus `smoke_x1y0.bit` | xc7a35t | 1 | identical | identical | identical | identical | identical | identical |
+| f4pga / openXC7 flow `top.bit` (T7.1-T7.3: 30 f4pga-examples on arty_35/arty_100/basys3/nexys4ddr/zybo, the counter) | xc7a35t, xc7a100t, xc7z010 | 31 | identical | identical | identical | identical | identical | identical |
+| corpus `.frm` (all `tests/corpus/xilinx/*/designs/**` frames of T7.1-T7.6 and `smoke_x1y0.frm`) | xc7a35t, xc7a50t, xc7a100t, xc7a200t, xc7z010, xc7z020 | 60 | | | identical | identical | | identical |
+
+(a) RapidWright reads the frames of each row of a per frame CRC
+bitstream one frame address early; the model is verified on every
+frame. (b) The prjxray reader, reference and Rust alike, loses the last
+frame of the part in such a bitstream (overwritten by the trailing pad
+frame; non-zero in `bram.bit`). (c) `readBitstream` + `writeBitstream` writes
+the original packets back (the per frame CRC layout included), so the
+Rust reader reads the same frames as from the original. Both are in
+`COMPAT.md`, "Bitstream readers compared with RapidWright"; the Rust
+reader keeps the reference behaviour. Also found: RapidWright splits
+header field `a` at the first `;`, and needs a part name in the header.
+For bitstreams without per frame CRC, the FDRI payload of the Rust
+writer equals the original's (Vivado and flow bitstreams) and
+RapidWright's writer reproduces a Vivado bitstream's packet list
+exactly; the Rust writer's packet list is `xc7frames2bit`'s (equal for
+the flow and corpus bitstreams, which were written by `xc7frames2bit`).
+
+**FASM via the FPGA interchange** (`fasm`, 13 cases): the Rust
+`fasm2frames` against the reference, dense and sparse, byte for byte.
+
+| design | part | FASM lines | result |
+|---|---|---|---|
+| RapidWright-built ring (60 LUT6 + FF stages, `router.Router`), seed 1 | xc7a35tcsg324-1 | 5479 | identical (3324 sparse frames) |
+| same, seed 2 | xc7a35tcsg324-1 | 5521 | identical (3040) |
+| same, seed 1 | xc7z010clg400-1 | 4969 | identical (2014) |
+| RapidWrightDCP `routethru_luts` (Vivado) | xc7a35tcpg236-1 | 47 | identical (106) |
+| RapidWrightDCP `routethru_pip` (Vivado) | xc7a35tcpg236-1 | 136 | identical (106) |
+| RapidWrightDCP `bug226`, `bug635` (Vivado) | xc7a35tcpg236-1, xc7a200tsbg484-1 | 85400, 710 | identical rejection: the same `FasmLookupError` lines (RAMB18 / BUFG features prjxray-db lacks) |
+| RapidWrightDCP `ramb18`, `bug349`, `bug709`, `verilog_ethernet` | xc7a35t, xc7a200t | | not possible: python-fpga-interchange's generator fails (BRAM properties, Verilog-style LUT INIT, LUTRAM macros, `VCC` cell) |
+| RapidWrightDCP `bug701` | xczu3eg | | not possible: no UltraScale+ FASM generator |
+| prjxray-db harness DCP (the only DCPs with a bitstream) | xc7a35t | | not possible: encrypted EDIF, needs Vivado `write_edif` |
+
+The three RapidWright-built designs are stored with their reference
+sparse frames in `tests/corpus/xilinx/{artix7,zynq7}/designs/rapidwright/`
+(660 KB), so `tools/difftest-xilinx.py` and `tests/e2e/test_rapidwright.py`
+use them without RapidWright (`difftest-xilinx.py --corpus-root` over the
+three and the two DCP designs: 5 files, 20 fasm2frames runs with its four
+flag sets, all identical). The DCP-derived FASM is not committed
+(RapidWrightDCP has no licence file); `rwcheck.py` pins the SHA-256 of
+its FASM and reference frames and the expected outcome and error of every
+DCP. Comparing against an original bitstream is not
+possible without Vivado (no DCP with a bitstream is readable, and
+RapidWright cannot make frames from a design).
+
 ## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+
