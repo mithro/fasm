@@ -202,5 +202,5 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       (inherited from the original package, `dir(fasm)` raises TypeError);
       decide: fix with a COMPAT.md row (recommended, nothing relies on the
       crash) or keep for 1:1 compatibility and document (after T8.3).
-- [r] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
+- [x] T8.4 Packaging: crates.io metadata, maturin wheels workflow, CMake
       install for the C API, release notes.

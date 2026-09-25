@@ -961,3 +961,12 @@ what happened, branch/commit references, open issues.
 * T5.3b (cache follow-ups: fingerprint in the file name, skip payload
   hash on stat hits, faster cached open via bulk interning / lazy tile
   type decode) started (Opus); T7.5 running.
+* T7.4 merged tree, remaining checks: xilinx-difftest 93 files 375/375 +
+  261/261 xcfasm + 6/6 bitread identical; uray-difftest 268 runs 0
+  different.
+* T8.4 done: merged tree passes capi-header-check, capi-test 20/20 (a
+  first run under heavy concurrent load had one valgrind test fail on
+  time; the clean rerun passed), 487 Rust tests. Worktree removed. Two
+  load-related transient failures were seen today (one e2e test, one
+  valgrind ctest); both pass when rerun alone; keep verification runs
+  sequential in future.
