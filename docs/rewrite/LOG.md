@@ -824,3 +824,18 @@ what happened, branch/commit references, open issues.
   fast-forward to upstream ffafe82 (50 commits); on the user's
   instruction it is pushed as `origin/claude/master` (not `master`), which
   local `master` now tracks.
+* T8.2 implemented on branch `worktree-agent-ad96d03561f44665a` (5
+  commits): 8-byte name scanner with dot positions + `intern_split`
+  (UTF-8 checked only on a miss, whole buffer check lazy), streaming
+  `fasm --canonical` with a counting sort (1M lines: 12 s / 2.4 GiB ->
+  2.1 s / 490 MiB, byte identical; errors still raised before any
+  output), `sort_by_string` (1.8x faster than Ord) used by merge_and_sort
+  and the Python fast path, inlining regression fix, BENCHMARKS "After
+  T8.2". Parser now above 200 MB/s for pips/mixed/lut/annotated; stress
+  cold 120-129 MB/s remains below (new tile name insertion ~175 ns).
+  Interner hit path not improved: six approaches measured and rejected
+  (documented in DESIGN-idstring.md); the level-0 probe is memory bound.
+  Identity: difftest.py 0 unexplained, tests/cli 1928 passed,
+  xilinx-difftest and uray-difftest identical, fuzz 300k runs clean. The
+  agent's classifier refused a callgrind profile and reading the foldhash
+  source. Independent review (Opus) started.
