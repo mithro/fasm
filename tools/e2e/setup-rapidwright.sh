@@ -25,16 +25,24 @@
 # cannot do here.
 #
 # Usage:
-#   tools/e2e/setup-rapidwright.sh [--force]
+#   tools/e2e/setup-rapidwright.sh [--force] [--with-interchange]
 #
-#   --force   delete tools/e2e/build/rapidwright and set it up again.
+#   --force              delete tools/e2e/build/rapidwright and set it up
+#                        again.
+#   --with-interchange   also set up the FPGA interchange route to FASM
+#                        (rwcheck.py fasm): a venv with
+#                        python-fpga-interchange, the interchange schema
+#                        RapidWright is built with, and capnproto-java's
+#                        java.capnp (imported by that schema).
 #
 # Layout (gitignored, tools/e2e/build/rapidwright):
 #   rapidwright-2026.1.0-standalone-lin64.jar
 #   data/parts.db, data/devices/<family>/<device>_db.dat (+ .md5, the file
 #       RapidWright itself checks: with it in place RapidWright does not
 #       download anything; RAPIDWRIGHT_PATH points here)
-#   classes/RwCheck.class
+#   classes/RwCheck.class, classes/RwDesign.class
+#   venv-interchange/, fpga-interchange-schema/, capnp-include/ (with
+#       --with-interchange)
 #   status.json
 #
 # Requires: java/javac >= 11 (Java 21 used), curl, sha256sum, md5sum.
@@ -53,6 +61,20 @@
 #   src/com/xilinx/rapidwright/util/DataVersions.java (the URL scheme of
 #   FileTools.downloadDataFile); the sha256 sums below were recorded on
 #   the first download.
+#
+#   --with-interchange:
+#     chipsalliance/python-fpga-interchange
+#       04a02101d1f7f03a2d33716192fb478e1e8605af (its last commit, 0.0.18),
+#       installed without its pins: pycapnp==1.3.0 (1.1.0 does not build
+#       with Cython 3; the 1.x API; rapidwright/pfi_run.py adapts
+#       from_bytes's context manager), python-sat==1.9.dev15,
+#       PyYAML==6.0.3 (its "pyyaml" patch format; the "yaml" one needs a
+#       rapidyaml fork that is not installed)
+#     chipsalliance/fpga-interchange-schema
+#       c985b4648e66414b250261c1ba4cbe45a2971b1c (RapidWright's
+#       interchange/fpga-interchange-schema submodule at the tag)
+#     capnproto/capnproto-java v0.1.16 compiler/src/main/schema/capnp/java.capnp
+#       sha256 abc48d859ffa06ac26c7dfe6020374fb0ee5efa4936707abc35bdac2233aefab
 
 set -euo pipefail
 
@@ -82,9 +104,11 @@ DATA_FILES=(
 )
 
 FORCE=0
+INTERCHANGE=0
 for arg in "$@"; do
     case "$arg" in
         --force) FORCE=1 ;;
+        --with-interchange) INTERCHANGE=1 ;;
         -h|--help) sed -n '18,40p' "$0"; exit 0 ;;
         *) echo "unknown argument: $arg" >&2; exit 2 ;;
     esac
@@ -134,8 +158,35 @@ done
 
 mkdir -p "$BUILD/classes"
 javac -nowarn -d "$BUILD/classes" -cp "$BUILD/$RW_JAR" \
-    "$REPO_ROOT/tools/e2e/rapidwright/RwCheck.java" 2>&1 | grep -v '^Picked up' || true
+    "$REPO_ROOT/tools/e2e/rapidwright/RwCheck.java" \
+    "$REPO_ROOT/tools/e2e/rapidwright/RwDesign.java" 2>&1 | grep -v '^Picked up' || true
 test -f "$BUILD/classes/RwCheck.class"
+test -f "$BUILD/classes/RwDesign.class"
+
+PFI_COMMIT="04a02101d1f7f03a2d33716192fb478e1e8605af"
+SCHEMA_COMMIT="c985b4648e66414b250261c1ba4cbe45a2971b1c"
+JAVA_CAPNP_URL="https://raw.githubusercontent.com/capnproto/capnproto-java/v0.1.16/compiler/src/main/schema/capnp/java.capnp"
+JAVA_CAPNP_SHA256="abc48d859ffa06ac26c7dfe6020374fb0ee5efa4936707abc35bdac2233aefab"
+if [ "$INTERCHANGE" = 1 ]; then
+    if [ ! -x "$BUILD/venv-interchange/bin/python" ]; then
+        python3 -m venv "$BUILD/venv-interchange"
+    fi
+    V="$BUILD/venv-interchange/bin/pip"
+    timeout 1800 "$V" install -q --only-binary=:all: pycapnp==1.3.0 \
+        python-sat==1.9.dev15 PyYAML==6.0.3
+    timeout 1800 "$V" install -q --no-deps \
+        "git+https://github.com/chipsalliance/python-fpga-interchange.git@${PFI_COMMIT}"
+    if [ ! -d "$BUILD/fpga-interchange-schema/.git" ]; then
+        timeout 600 git clone -q https://github.com/chipsalliance/fpga-interchange-schema.git \
+            "$BUILD/fpga-interchange-schema"
+    fi
+    git -C "$BUILD/fpga-interchange-schema" checkout -q "$SCHEMA_COMMIT"
+    fetch "$JAVA_CAPNP_URL" "$BUILD/capnp-include/capnp/java.capnp" "$JAVA_CAPNP_SHA256"
+    PFI_RAW="https://raw.githubusercontent.com/chipsalliance/python-fpga-interchange/${PFI_COMMIT}/test_data"
+    fetch "$PFI_RAW/series7_constraints.yaml" "$BUILD/pfi-data/series7_constraints.yaml" \
+        "c105d3f9f0d09dce5a78179fcc0a46dbcb4bcba66cafa42289f63133a55f4961"
+    fetch "$PFI_RAW/series7_luts.yaml" "$BUILD/pfi-data/series7_luts.yaml" "5208272cccc3bf1a5a44a86a691f02d41da7079ef97f4f918daa48f0cfbe4a50"
+fi
 
 cat > "$BUILD/status.json" <<EOF
 {

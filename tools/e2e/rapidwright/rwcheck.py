@@ -1059,6 +1059,247 @@ def compare_frm_case(c, status):
     return res
 
 
+# ------------------------------------------ FASM via the interchange route
+
+# (family, part, stages, seed) of the RwDesign ring designs.
+FASM_DESIGNS = (
+    ('artix7', 'xc7a35tcsg324-1', 60, 1),
+    ('artix7', 'xc7a35tcsg324-1', 60, 2),
+    ('zynq7', 'xc7z010clg400-1', 60, 1),
+)
+ORACLE_DIR = Path(
+    os.environ.get('FASM_ORACLE_DIR', REPO_ROOT / 'tests' / 'oracle'))
+PFI_PYTHON = RW_BUILD / 'venv-interchange' / 'bin' / 'python'
+SCHEMA_DIR = RW_BUILD / 'fpga-interchange-schema' / 'interchange'
+CAPNP_INCLUDE = RW_BUILD / 'capnp-include'
+PFI_COMMIT = '04a02101d1f7f03a2d33716192fb478e1e8605af'
+
+
+def interchange_available():
+    return (
+        PFI_PYTHON.is_file() and SCHEMA_DIR.is_dir()
+        and (CAPNP_INCLUDE / 'capnp' / 'java.capnp').is_file()
+        and (RW_BUILD / 'classes' / 'RwDesign.class').is_file())
+
+
+def java(cls, *args, cwd=None):
+    env = dict(os.environ, RAPIDWRIGHT_PATH=str(RW_BUILD))
+    return run(
+        [
+            'java', '-Xmx4g', '-cp',
+            '%s:%s' % (RW_JAR, RW_BUILD / 'classes'), cls
+        ] + list(args),
+        env=env,
+        cwd=cwd,
+        stdout=subprocess.PIPE)
+
+
+def pfi(*args):
+    env = dict(os.environ, CAPNP_PATH=str(CAPNP_INCLUDE))
+    run(
+        [PFI_PYTHON,
+         Path(__file__).resolve().parent / 'pfi_run.py'] + list(args),
+        env=env)
+
+
+def pfi_data(name):
+    """python-fpga-interchange's test_data/series7_NAME.yaml (pip does
+    not install test_data: setup-rapidwright.sh fetches them)."""
+    return RW_BUILD / 'pfi-data' / ('series7_%s.yaml' % name)
+
+
+def device_resources(part, work):
+    """RapidWright's interchange device resources of PART, patched with
+    python-fpga-interchange's Series7 constraints and LUT definitions."""
+    d = work / 'interchange'
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / ('%s.patched.device' % part)
+    if out.is_file():
+        return out
+    java(
+        'com.xilinx.rapidwright.interchange.DeviceResourcesExample',
+        part,
+        cwd=d)
+    raw = d / ('%s.device' % part)
+    tmp = d / ('%s.constraints.device' % part)
+    pfi(
+        'patch', '--schema_dir', SCHEMA_DIR, '--schema', 'device',
+        '--patch_path', 'constraints', '--patch_format', 'pyyaml', raw,
+        pfi_data('constraints'), tmp)
+    raw.unlink()
+    pfi(
+        'patch', '--schema_dir', SCHEMA_DIR, '--schema', 'device',
+        '--patch_path', 'lutDefinitions', '--patch_format', 'pyyaml', tmp,
+        pfi_data('luts'), out)
+    tmp.unlink()
+    return out
+
+
+def fasm2frames(tool, family, part, fasm, frm, sparse):
+    cmd = [tool, '--db-root', DB_CACHE / 'prjxray-db' / family, '--part', part]
+    if sparse:
+        cmd.append('--sparse')
+    p = subprocess.run(
+        [str(c) for c in cmd + [fasm, frm]],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=1800)
+    return p.returncode, p.stdout + p.stderr
+
+
+def design_dir(family, name, part):
+    return (
+        CORPUS / 'xilinx' / family / 'designs' / 'rapidwright' / name / part)
+
+
+def check_fasm(args, work):
+    results = []
+    d = work / 'fasm'
+    d.mkdir(parents=True, exist_ok=True)
+    for family, part, stages, seed in FASM_DESIGNS:
+        name = 'ring%d-s%d' % (stages, seed)
+        res = {'design': '%s/%s' % (name, part), 'checks': {}}
+        results.append(res)
+        try:
+            dev = device_resources(part, work)
+            prefix = d / ('%s-%s' % (name, part))
+            p = java('RwDesign', part, prefix, str(stages), str(seed))
+            log = p.stdout.decode(errors='replace')
+            res['unrouted_site_pins'] = log.count('FAILED TO ROUTE')
+            res['rwdesign'] = [
+                line for line in log.splitlines()
+                if line.startswith('RwDesign:')
+            ]
+            fasm = prefix.with_suffix('.fasm')
+            pfi(
+                'fasm_generator', '--schema_dir', SCHEMA_DIR, '--family',
+                'xc7', dev, prefix.with_suffix('.netlist'),
+                prefix.with_suffix('.phys'), fasm)
+        except (RuntimeError, subprocess.SubprocessError) as e:
+            _step(res, 'generate', 'different', str(e)[-1000:])
+            res['status'] = 'different'
+            continue
+        data = fasm.read_bytes()
+        res['fasm_lines'] = data.count(b'\n')
+        res['fasm_sha256'] = hashlib.sha256(data).hexdigest()
+        for sparse in (True, False):
+            label = 'sparse' if sparse else 'dense'
+            ours = d / ('%s.%s.rust.frm' % (name, label))
+            ref = d / ('%s.%s.ref.frm' % (name, label))
+            rc1, out1 = fasm2frames(
+                RUST / 'fasm2frames', family, part, fasm, ours, sparse)
+            rc2, out2 = fasm2frames(
+                ORACLE_DIR / 'fasm2frames-oracle', family, part, fasm, ref,
+                sparse)
+            same = (rc1 == rc2 == 0 and ours.read_bytes() == ref.read_bytes())
+            _step(
+                res, 'fasm2frames %s rust = reference' % label,
+                'identical' if same else 'different', '' if same else
+                'exit %d / %d: %s / %s' % (rc1, rc2, out1[-300:], out2[-300:]))
+            if sparse and same:
+                res['sparse_frames'] = len(read_frm(ref))
+                if args.install:
+                    install_fasm_design(
+                        family, name, part, stages, seed, fasm, ref, res)
+            ours.unlink(missing_ok=True)
+            ref.unlink(missing_ok=True)
+        stored = design_dir(family, name, part) / 'rw.fasm'
+        if stored.is_file() and not args.install:
+            same = stored.read_bytes() == data
+            _step(
+                res, 'regenerated FASM = committed',
+                'identical' if same else 'different',
+                '' if same else 'sha256 %s' % res['fasm_sha256'])
+        res['status'] = overall(res)
+    return results
+
+
+def install_fasm_design(family, name, part, stages, seed, fasm, frm, res):
+    out = design_dir(family, name, part)
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(fasm, out / 'rw.fasm')
+    (out / 'rw.sparse.frm.xz').write_bytes(
+        lzma.compress(frm.read_bytes(), preset=9))
+    (out / 'difftest.json'
+     ).write_text(json.dumps({
+         'family': family,
+         'part': part
+     }) + '\n')
+    frm_sha = hashlib.sha256(frm.read_bytes()).hexdigest()
+    (out / 'README.md').write_text(
+        FASM_README.format(
+            name=name,
+            part=part,
+            family=family,
+            stages=stages,
+            seed=seed,
+            lines=res['fasm_lines'],
+            fasm_sha=res['fasm_sha256'],
+            frm_sha=frm_sha,
+            frames=res['sparse_frames'],
+            unrouted=res['unrouted_site_pins'],
+            rwdesign='; '.join(res['rwdesign']),
+            tag=RW_TAG,
+            pfi=PFI_COMMIT))
+
+
+FASM_README = """\
+# rapidwright/{name}/{part} -- RapidWright + FPGA interchange FASM (T7.5)
+
+`rw.fasm` is FASM for a design placed and routed by RapidWright alone (no
+Vivado): `tools/e2e/rapidwright/RwDesign.java` (a ring of {stages} LUT6 +
+flip-flop stages on random slices, seed {seed}; routed by RapidWright's
+`router.Router`, since RWRoute refuses 7 series parts), written as an FPGA
+interchange logical and physical netlist and turned into FASM by
+python-fpga-interchange's xc7 FASM generator with RapidWright's device
+resources for the part (patched with python-fpga-interchange's Series7
+constraints and LUT definitions). `rw.sparse.frm.xz` is the reference
+`fasm2frames --sparse` (f4pga-xc-fasm, prjxray-db) of it: the Rust
+`fasm2frames` gives the same bytes (`tests/e2e/test_rapidwright.py`).
+
+There is no independent reference bitstream for this design (that would
+need Vivado); what it adds is FASM from a third producer (RapidWright's
+placement and routing, python-fpga-interchange's feature emission) that
+both assemblers must agree on.
+
+* Part: `{part}` (family `{family}`)
+* FASM: {lines} lines, sha256 `{fasm_sha}`
+* Sparse frames: {frames}, `.frm` sha256 `{frm_sha}`
+* RapidWright: {rwdesign}; `FAILED TO ROUTE` lines of `Router`:
+  {unrouted}
+
+## Tools
+
+* RapidWright `{tag}` (`tools/e2e/setup-rapidwright.sh`)
+* python-fpga-interchange `{pfi}` with pycapnp 1.3.0
+  (`setup-rapidwright.sh --with-interchange`, `rapidwright/pfi_run.py`)
+* Database: the pinned prjxray-db of `tools/fetch-db.sh`
+
+## Commands
+
+```
+python3 tools/e2e/rapidwright/rwcheck.py fasm --install
+```
+
+which runs
+
+```
+java RwDesign {part} <prefix> {stages} {seed}
+java com.xilinx.rapidwright.interchange.DeviceResourcesExample {part}
+pfi_run.py patch --patch_path constraints --patch_format pyyaml ...
+pfi_run.py patch --patch_path lutDefinitions --patch_format pyyaml ...
+pfi_run.py fasm_generator --family xc7 <device> \\
+    <prefix>.netlist <prefix>.phys rw.fasm
+fasm2frames-oracle --db-root <prjxray-db>/{family} --part {part} \\
+    --sparse rw.fasm rw.sparse.frm
+```
+
+## Licence
+
+Generated from this repository's own driver (Apache-2.0); no third party
+design sources.
+"""
+
 # ------------------------------------------------------------------- main
 
 
@@ -1084,8 +1325,10 @@ def summarize(kind, results, key):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     ap.add_argument(
-        'what', nargs='*', help='layout and/or bits (default: '
-        'both)')
+        'what',
+        nargs='*',
+        help='layout, bits and/or fasm (default: '
+        'layout and bits)')
     ap.add_argument(
         '--work-dir',
         default=str(
@@ -1109,13 +1352,17 @@ def main(argv=None):
         help='store the RapidWright layouts in tests/corpus')
     ap.add_argument('--report', help='write the results as JSON here')
     ap.add_argument(
+        '--install',
+        action='store_true',
+        help='fasm: store the designs in tests/corpus')
+    ap.add_argument(
         '--chunk',
         type=int,
         default=4,
         help='bitstream cases per RapidWright run (disk use)')
     args = ap.parse_args(argv)
     args.what = args.what or ['layout', 'bits']
-    if set(args.what) - {'layout', 'bits'}:
+    if set(args.what) - {'layout', 'bits', 'fasm'}:
         ap.error('unknown check: %s' % ' '.join(args.what))
     if not rapidwright_available():
         print(
@@ -1133,6 +1380,15 @@ def main(argv=None):
     if 'bits' in args.what:
         report['bits'] = check_bits(args, work)
         summarize('bits', report['bits'], 'case')
+    if 'fasm' in args.what:
+        if not interchange_available():
+            print(
+                'the interchange route is not set up: run '
+                'tools/e2e/setup-rapidwright.sh --with-interchange',
+                file=sys.stderr)
+            return 2
+        report['fasm'] = check_fasm(args, work)
+        summarize('fasm', report['fasm'], 'design')
     if args.report:
         Path(args.report).write_text(json.dumps(report, indent=1) + '\n')
     bad = [
