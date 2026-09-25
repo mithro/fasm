@@ -121,6 +121,16 @@ declare -A ARCH_SHA256=(
   [xc7z010_test]=784976422428ab8f26c0e63414692cc7a4bdd29f0161141147ae78bd97ed666d
 )
 
+# Sizes in MiB of the archives and of the extracted packages.
+declare -A ARCH_XZ_MIB=(
+  [install-xc7]=1 [xc7a50t_test]=98 [xc7a100t_test]=178
+  [xc7a200t_test]=385 [xc7z010_test]=56
+)
+declare -A ARCH_MIB=(
+  [install-xc7]=1 [xc7a50t_test]=2685 [xc7a100t_test]=4958
+  [xc7a200t_test]=10752 [xc7z010_test]=1527
+)
+
 DEVICES=xc7a50t_test,xc7z010_test
 REMOVE=
 BIG_DIR=
@@ -134,7 +144,7 @@ while [[ $# -gt 0 ]]; do
     --big-files-dir) BIG_DIR="$2"; shift 2 ;;
     --big-files-dir=*) BIG_DIR="${1#*=}"; shift ;;
     --force) FORCE=1; shift ;;
-    -h|--help) sed -n '19,60p' "$0"; exit 0 ;;
+    -h|--help) awk 'NR >= 19 { if (!/^#/) exit; sub(/^# ?/, ""); print }' "$0"; exit 0 ;;
     *) echo "setup-f4pga: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -187,7 +197,7 @@ if [[ ! -f "$ROOT/.env-done" ]]; then
   git -C "$src" checkout -q "$F4PGA_COMMIT"
   log "installing the PyPI packages"
   PATH="$ENV_DIR/bin:$PATH" timeout 1800 "$ENV_DIR/bin/python" -m pip \
-    install -q --no-cache-dir -r "$LOCK_DIR/xc7-pip-freeze.txt"
+    install -q --no-cache-dir --no-deps -r "$LOCK_DIR/xc7-pip-freeze.txt"
   PATH="$ENV_DIR/bin:$PATH" timeout 900 "$ENV_DIR/bin/python" -m pip \
     install -q --no-cache-dir --no-deps "$src/f4pga"
   rm -rf "$ROOT/src"
@@ -221,6 +231,28 @@ install_pkg() {
     exit 2
   fi
   local file="symbiflow-arch-defs-$pkg-$ARCH_HASH.tar.xz"
+  # Room for the archive and the extracted package (+ 256 MiB).
+  local dest="$ROOT"
+  if [[ -n "$BIG_DIR" && $pkg != install-* ]]; then
+    mkdir -p "$BIG_DIR"
+    dest="$BIG_DIR"
+  fi
+  local need=$((ARCH_MIB[$pkg] + 256)) free
+  free=$(df -Pm "$dest" | awk 'NR == 2 { print $4 }')
+  if [[ -n "$BIG_DIR" && $pkg != install-* ]]; then
+    local free_root
+    free_root=$(df -Pm "$ROOT" | awk 'NR == 2 { print $4 }')
+    if (( free_root < ARCH_XZ_MIB[$pkg] + 64 )); then
+      log "not enough space for $file in $ROOT: ${free_root} MiB free"
+      exit 1
+    fi
+    need=$((need - ARCH_XZ_MIB[$pkg]))
+  fi
+  if (( free < need )); then
+    log "not enough space to install $pkg: ${need} MiB needed in $dest," \
+      "${free} MiB free (--remove-devices, --big-files-dir)"
+    exit 1
+  fi
   download "$ARCH_BASE/$file" "$file" "${ARCH_SHA256[$pkg]}"
   log "extracting $file"
   if [[ $pkg != install-* ]]; then
