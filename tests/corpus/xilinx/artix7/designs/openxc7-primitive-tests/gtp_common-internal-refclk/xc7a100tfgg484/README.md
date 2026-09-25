@@ -7,7 +7,7 @@
 * Part: `xc7a100tfgg484-1` (family `artix7`)
 * Chip database: `xc7a100tfgg484-2.bin` (built from the snap's prjxray-db; the same package and database files, the speed grade does not change a chipdb)
 * FASM: 301 lines, 14609 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.73, fasm2frames 5.12, pnr 2.25, synth 2.74, xc7frames2bit 0.12
+* Flow times on this machine (4 cores, s): buf_fix 0.7, fasm2frames 5.33, pnr 2.34, synth 2.77, xc7frames2bit 0.12
 
 * Note: $buf cells removed with techmap (yosys workaround)
 
@@ -29,10 +29,10 @@
 
 ```
 yosys -p "hierarchy; synth_xilinx -flatten -abc9 -arch xc7  -top gtp_common; write_json gtp_common.json;" gtp_common.v
+yosys -p 'read_json gtp_common.json; techmap -map +/techmap.v t:$buf; write_json gtp_common.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb <chipdb dir>/xc7a100tfgg484.bin --xdc gtp_common.xdc  --json gtp_common.json --write gtp_common_routed.json --fasm gtp_common.fasm  --freq 100 --verbose --debug
 fasm2frames --part xc7a100tfgg484-1 --db-root <snap prjxray-db>/artix7 gtp_common.fasm > gtp_common.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a100tfgg484-1/part.yaml --part_name xc7a100tfgg484-1 --frm_file gtp_common.frames --output_file gtp_common.bit
-yosys -p 'read_json gtp_common.json; techmap -map +/techmap.v t:$buf; write_json gtp_common.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -40,10 +40,10 @@ yosys -p 'read_json gtp_common.json; techmap -map +/techmap.v t:$buf; write_json
 ```
 sha256  top.fasm  17a3dc7b4567554ce5054def8b51626851bf18e7f2edaecdc9a87ec1a8059e69
 sha256  top.frm   5de3f16fca8fe30807125bbe9501f5d554c56b735814489ea47df21ac75d79ba  (10111464 bytes)
-sha256  top.bit   5c1bab2d87dc2ec228a193c72ae7e954d3bf0d44d91b3fd8951b5677855247a6  (3825897 bytes)
+sha256  top.bit   294f7bd7b32bb57e3308ba7c7c9e6cb19d751a9596ef6c3687d7439dcc1a0eb8  (3825897 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 

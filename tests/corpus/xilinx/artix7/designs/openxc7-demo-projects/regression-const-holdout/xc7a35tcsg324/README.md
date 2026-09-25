@@ -7,9 +7,19 @@
 * Part: `xc7a35tcsg324-1` (family `artix7`)
 * Chip database: `xc7a35tcsg324-1.bin` (built from the snap's prjxray-db; the design's part)
 * FASM: 29125 lines, 982587 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.76, fasm2frames 5.71, pnr 7.2, synth 4.38, xc7frames2bit 0.11
+* Flow times on this machine (4 cores, s): buf_fix 0.83, fasm2frames 5.94, pnr 7.12, synth 4.18, xc7frames2bit 0.08
 
 * Note: $buf cells removed with techmap (yosys workaround); regression run.sh criteria: check.sh ok
+
+* The case's `check.sh` against this nextpnr-xilinx (`check.log`):
+
+```
+  stage[6].mem.0.0         SLICE_X2Y63    A5=gnd B5=gnd C5=gnd D5=gnd   -> OK
+  stage[7].mem.0.0         SLICE_X2Y61    A5=gnd B5=gnd C5=gnd D5=gnd   -> OK
+  stage[8].mem.0.0         SLICE_X2Y58    A5=gnd B5=gnd C5=gnd D5=gnd   -> OK
+  stage[9].mem.0.0         SLICE_X2Y46    A5=gnd B5=gnd C5=gnd D5=gnd   -> OK
+48 RAM32M slices, 0 broken
+```
 
 ## Tools
 
@@ -29,10 +39,10 @@
 
 ```
 yosys -q -p "read_verilog top.v; synth_xilinx -flatten -abc9 -nocarry -nodsp -nobram -family xc7 -top top; write_json top.json"
+yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb xc7a35tcsg324-1.bin --xdc top.xdc --json top.json --write top_routed.json --fasm top.fasm --seed 1  --timing-allow-fail
 fasm2frames --part xc7a35tcsg324-1 --db-root <snap prjxray-db>/artix7 top.fasm > top.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a35tcsg324-1/part.yaml --part_name xc7a35tcsg324-1 --frm_file top.frames --output_file top.bit
-yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -40,10 +50,10 @@ yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.js
 ```
 sha256  top.fasm  c00c68e1b5ff26750df7e3f43ff29102cd1d65e5a2bcd010b211c64a7f14295e
 sha256  top.frm   c6aaffe490f5adc91fdcf3aea2dc99d2bd8e3afd39bd93ceae19c637d36e6b2a  (5580828 bytes)
-sha256  top.bit   39d4568ac796e2d4f5588991388281bdcfc9853375bc196f5c8b8e4c5ba31d38  (2192113 bytes)
+sha256  top.bit   f2fc2350b9b5f6b1241179bb86fa21ffc036452c3647aaa4decb6f7cb49f1636  (2192113 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 

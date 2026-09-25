@@ -231,7 +231,7 @@ def test_rust_fasm2frames_pinned_db(fasm, tmp_path):
             (fasm.parent / 'top.frm.xz').read_bytes())
         if code != 0:
             last = err.strip().splitlines()[-1]
-            assert last.split(':')[0] in readme, last
+            assert 'pinned db: exit code %d, %s' % (code, last) in readme, last
 
 
 SNAP_BIN = E2E_BUILD / 'openxc7' / 'bin'

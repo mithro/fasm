@@ -7,7 +7,7 @@
 * Part: `xc7a35tcsg324-1` (family `artix7`)
 * Chip database: `xc7a35tcsg324-1.bin` (built from the snap's prjxray-db; the design's part)
 * FASM: 738 lines, 26596 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.68, fasm2frames 0.7, pnr 1.5, synth 2.83, xc7frames2bit 0.08
+* Flow times on this machine (4 cores, s): buf_fix 0.71, fasm2frames 0.7, pnr 1.6, synth 2.86, xc7frames2bit 0.08
 
 * Note: $buf cells removed with techmap (yosys workaround)
 
@@ -29,10 +29,10 @@
 
 ```
 yosys -p "synth_xilinx -flatten -abc9  -arch xc7 -top blinky; write_json blinky.json" blinky.v
+yosys -p 'read_json blinky.json; techmap -map +/techmap.v t:$buf; write_json blinky.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb <chipdb dir>/xc7a35tcsg324.bin --xdc blinky.xdc --json blinky.json --fasm blinky.fasm
 fasm2frames --part xc7a35tcsg324-1 --db-root <snap prjxray-db>/artix7 blinky.fasm > blinky.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a35tcsg324-1/part.yaml --part_name xc7a35tcsg324-1 --frm_file blinky.frames --output_file blinky.bit
-yosys -p 'read_json blinky.json; techmap -map +/techmap.v t:$buf; write_json blinky.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -40,10 +40,10 @@ yosys -p 'read_json blinky.json; techmap -map +/techmap.v t:$buf; write_json bli
 ```
 sha256  top.fasm  6b40aa69ac27f6481fbdd837cd4c16a5ac4c60e6af30bb4cd582766c41a7512b
 sha256  top.frm   ef90e12affd2576ee71b2a066d568cc9e13fa830e757b28d2ffc88d064134a3b  (5580828 bytes)
-sha256  top.bit   f74f36679e1ec25a361dbd9f9826b8698439d2ab8adbf6149752edbe92ef454a  (2192116 bytes)
+sha256  top.bit   1321df58bf748cd8aeffcd86be5b1538677ad9b35b897a68d9ff146f80bcaac2  (2192116 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 

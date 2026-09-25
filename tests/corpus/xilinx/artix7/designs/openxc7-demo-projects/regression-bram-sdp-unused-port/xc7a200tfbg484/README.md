@@ -7,7 +7,7 @@
 * Part: `xc7a200tfbg484-2` (family `artix7`)
 * Chip database: `xc7a200tfbg484-3.bin` (built from the snap's prjxray-db; the same package and database files, the speed grade does not change a chipdb)
 * FASM: 1522 lines, 76304 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.67, fasm2frames 2.12, pnr 5.14, synth 3.35, xc7frames2bit 0.26
+* Flow times on this machine (4 cores, s): buf_fix 0.76, fasm2frames 2.28, pnr 5.46, synth 3.34, xc7frames2bit 0.26
 
 * Note: $buf cells removed with techmap (yosys workaround)
 
@@ -29,10 +29,10 @@
 
 ```
 yosys -q -p "read_verilog top.v; synth_xilinx -flatten -abc9 -nocarry -nodsp -family xc7 -top top; write_json top.json"
+yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb xc7a200tfbg484-3.bin --xdc top.xdc --json top.json --write top_routed.json --fasm top.fasm   --timing-allow-fail
 fasm2frames --part xc7a200tfbg484-2 --db-root <snap prjxray-db>/artix7 top.fasm > top.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a200tfbg484-2/part.yaml --part_name xc7a200tfbg484-2 --frm_file top.frames --output_file top.bit
-yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -40,10 +40,10 @@ yosys -p 'read_json top.json; techmap -map +/techmap.v t:$buf; write_json top.js
 ```
 sha256  top.fasm  d38b9b1feaffe7477f82bf136577eea91f161c5b88111f2ba3854301ba4f8a55
 sha256  top.frm   e27b0d8b635774c87f6695f688edf59214eb2af2a9a5585a77f70a6a2f54e9ac  (22698060 bytes)
-sha256  top.bit   3e570f1eb707a52c4161f10023b51e539114f7ef2387961de10bdbb233ee9f04  (9730754 bytes)
+sha256  top.bit   df0c518f988baab6c1703ad844a82e7c8ac9f4b5e1812a0cab3696d2ab748bf5  (9730754 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 

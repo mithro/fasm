@@ -7,7 +7,7 @@
 * Part: `xc7a35tcsg324-1` (family `artix7`)
 * Chip database: `xc7a35tcsg324-1.bin` (built from the snap's prjxray-db; the design's part)
 * FASM: 25718 lines, 908013 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.72, fasm2frames 4.87, pnr 6.28, synth 4.66, xc7frames2bit 0.06
+* Flow times on this machine (4 cores, s): buf_fix 0.81, fasm2frames 5.15, pnr 6.83, synth 4.8, xc7frames2bit 0.06
 
 * Note: $buf cells removed with techmap (yosys workaround)
 
@@ -29,10 +29,10 @@
 
 ```
 yosys -p "synth_xilinx -flatten -nowidelut -abc9 -arch xc7 -top top; write_json attosoc.json" ../attosoc/attosoc.v attosoc_top.v
+yosys -p 'read_json attosoc.json; techmap -map +/techmap.v t:$buf; write_json attosoc.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb xc7a35tcsg324-1.bin --xdc arty.xdc --json attosoc.json --write attosoc_routed.json --fasm attosoc.fasm
 fasm2frames --db-root <snap prjxray-db>/artix7 --part xc7a35tcsg324-1 attosoc.fasm > attosoc.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a35tcsg324-1/part.yaml --part_name xc7a35tcsg324-1 --frm_file attosoc.frames --output_file attosoc.bit
-yosys -p 'read_json attosoc.json; techmap -map +/techmap.v t:$buf; write_json attosoc.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -40,10 +40,10 @@ yosys -p 'read_json attosoc.json; techmap -map +/techmap.v t:$buf; write_json at
 ```
 sha256  top.fasm  dd4bf11781003871e49fdf8a4aab2725bbca3458cc4cc9a2ccc11338add98d28
 sha256  top.frm   dfca1faca62dfcdc8ea0914240fd259a8916c8d3e1f59160fa086aa326b3e5cf  (5580828 bytes)
-sha256  top.bit   5d61da5b9667cc30b1cb1cddf181bf57977e3d52496ed16ed2a95c71b1c2dae3  (2192117 bytes)
+sha256  top.bit   538e0d7154f174c76d2eba5faadb654a5ac675f2f27aea5f793bad8200baf552  (2192117 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 

@@ -102,7 +102,7 @@ def commands(lines):
     return out
 
 
-def readme(info, compare, fasm_name):
+def readme(info, compare, fasm_name, check_log=None):
     src = info['source']
     source = info['id'].split('/')[0]
     path = src['path']
@@ -121,7 +121,8 @@ def readme(info, compare, fasm_name):
         (fasm_name, title, url, src['commit'], info['id'], {
             'nx-script': 'script',
             'make': 'Makefile',
-            'regression': 'regression runner (`regression/run.sh`)'
+            'regression': 'regression runner (`regression/run.sh`)',
+            'litex-build': 'LiteX build script (`build_top.sh`)',
         }[info['kind']]), '', '## Target', '',
         '* Part: `%s` (family `%s`)' % (info['part'], info['family']),
         '* Chip database: `%s.bin` (built from the snap\'s prjxray-db; %s)'
@@ -135,6 +136,13 @@ def readme(info, compare, fasm_name):
     ]
     if info.get('note'):
         lines += ['* Note: %s' % info['note'], '']
+    if check_log:
+        # The case's own check (regression/run.sh's strongest criterion),
+        # against nextpnr-xilinx 0.8.2: most cases guard later fixes.
+        lines += [
+            '* The case\'s `check.sh` against this nextpnr-xilinx '
+            '(`check.log`):', '', '```'
+        ] + check_log.strip().splitlines()[-5:] + ['```', '']
     lines += ['## Tools', '', SNAP.format(
         nextpnr=info['tools']['nextpnr-xilinx'],
         yosys=info['tools']['yosys']), '## Commands', '', '```']
@@ -144,10 +152,10 @@ def readme(info, compare, fasm_name):
         'sha256  top.fasm  %s' % info['top.fasm']['sha256'],
         'sha256  top.frm   %s  (%d bytes)' %
         (info['top.frm']['sha256'], info['top.frm']['bytes']),
-        'sha256  top.bit   %s  (%d bytes)' %
+        'sha256  top.bit   %s  (%d bytes; header with the build time)' %
         (info['top.bit']['sha256'], info['top.bit']['bytes']), '```', '',
-        '`top.bit` is not committed: its header holds the build date and '
-        'time and the `.frm` path.', ''
+        '`top.bit` is not committed and its sha256 is not reproducible: its '
+        'header holds the build date and time and the `.frm` path.', ''
     ]
     if compare:
         lines += ['## Comparison (`tools/e2e/compare-nextpnr-examples.py`)',
@@ -189,6 +197,11 @@ def main():
             continue
         if info['status'] != 'built':
             continue
+        if not all(k in info for k in ('top.fasm', 'top.frm', 'top.bit')):
+            # e.g. a placement-only regression case: nothing to compare.
+            print('not installing %s: no FASM, frames and bitstream' %
+                  info['id'])
+            continue
         dest = os.path.join(args.corpus, info['family'], 'designs',
                             info['id'])
         os.makedirs(dest, exist_ok=True)
@@ -215,7 +228,12 @@ def main():
             json.dump({'family': info['family'], 'part': info['part']}, f)
             f.write('\n')
         with open(os.path.join(dest, 'README.md'), 'w') as f:
-            f.write(readme(info, compare.get(info['id']), fasm_name))
+            check_log = None
+            if os.path.exists(os.path.join(dirpath, 'check.log')):
+                with open(os.path.join(dirpath, 'check.log')) as g:
+                    check_log = re.sub(r'/\S*/work/', '<work>/', g.read())
+            f.write(
+                readme(info, compare.get(info['id']), fasm_name, check_log))
         installed += 1
         print('installed %s' % os.path.relpath(dest, REPO_ROOT))
     print('%d entries' % installed)

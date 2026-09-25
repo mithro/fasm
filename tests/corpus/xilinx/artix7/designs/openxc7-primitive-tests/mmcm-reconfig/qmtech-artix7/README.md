@@ -7,7 +7,7 @@
 * Part: `xc7a100tfgg676-1` (family `artix7`)
 * Chip database: `xc7a100tfgg676-1.bin` (built from the snap's prjxray-db; the design's part)
 * FASM: 4927 lines, 177100 bytes
-* Flow times on this machine (4 cores, s): buf_fix 0.71, fasm2frames 1.78, pnr 3.49, synth 3.48, xc7frames2bit 0.11
+* Flow times on this machine (4 cores, s): buf_fix 0.72, fasm2frames 1.79, pnr 3.54, synth 3.72, xc7frames2bit 0.14
 
 * Note: $buf cells removed with techmap (yosys workaround)
 
@@ -29,12 +29,12 @@
 
 ```
 yosys  -p "synth_xilinx -flatten -abc9  -arch xc7 -top mmcm_reconfig; write_json mmcm_reconfig.json" mmcm_reconfig.v xilinx7_mmcm_reconfig.v
+yosys -p 'read_json mmcm_reconfig.json; techmap -map +/techmap.v t:$buf; write_json mmcm_reconfig.json'   # after synthesis: the $buf workaround
 nextpnr-xilinx --chipdb <chipdb dir>/xc7a100tfgg676.bin --xdc mmcm_reconfig.xdc --pack-only --json mmcm_reconfig.json --write mmcm_reconfig.pack.json
 nextpnr-xilinx --chipdb <chipdb dir>/xc7a100tfgg676.bin --xdc mmcm_reconfig.xdc --no-pack --no-route --json mmcm_reconfig.pack.json --write mmcm_reconfig.place.json
 nextpnr-xilinx --chipdb <chipdb dir>/xc7a100tfgg676.bin --xdc mmcm_reconfig.xdc --no-pack --no-place --json mmcm_reconfig.place.json --fasm mmcm_reconfig.fasm --write mmcm_reconfig.route.json
 fasm2frames --part xc7a100tfgg676-1 --db-root <snap prjxray-db>/artix7 mmcm_reconfig.fasm > mmcm_reconfig.frames
 xc7frames2bit --part_file <snap prjxray-db>/artix7/xc7a100tfgg676-1/part.yaml --part_name xc7a100tfgg676-1 --frm_file mmcm_reconfig.frames --output_file mmcm_reconfig.bit
-yosys -p 'read_json mmcm_reconfig.json; techmap -map +/techmap.v t:$buf; write_json mmcm_reconfig.json'   # after synthesis: the $buf workaround
 ```
 
 ## Reference outputs of the flow
@@ -42,10 +42,10 @@ yosys -p 'read_json mmcm_reconfig.json; techmap -map +/techmap.v t:$buf; write_j
 ```
 sha256  top.fasm  dcb7c7fc3cf65cff5ef60cc9245d6a7bfb3b16531d104810786c4daba3f6f1ae
 sha256  top.frm   ef9260e5a21f37675277f42215692b3ec58b5b8ffd48d1c5bcda67ebb409b407  (10111464 bytes)
-sha256  top.bit   8302a7549ba141a161687a9c84ec5fb7bc508a437e61b1d1c51d993cf079cc25  (3825900 bytes)
+sha256  top.bit   2ad54b36dabb5268a48a837c9d9d6739b0c0224af1669d27e377cb1f2308a886  (3825900 bytes; header with the build time)
 ```
 
-`top.bit` is not committed: its header holds the build date and time and the `.frm` path.
+`top.bit` is not committed and its sha256 is not reproducible: its header holds the build date and time and the `.frm` path.
 
 ## Comparison (`tools/e2e/compare-nextpnr-examples.py`)
 
