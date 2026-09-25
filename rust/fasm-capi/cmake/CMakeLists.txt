@@ -109,7 +109,7 @@ string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" FASM_NUMERIC_VERSION "${FASM_VERS
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/fasmConfigVersion.cmake"
     VERSION "${FASM_NUMERIC_VERSION}"
-    COMPATIBILITY SameMajorVersion
+    COMPATIBILITY SameMinorVersion
     ARCH_INDEPENDENT)
 set(FASM_INCLUDE_DIR "${CMAKE_INSTALL_FULL_INCLUDEDIR}")
 set(FASM_LIB_DIR "${CMAKE_INSTALL_FULL_LIBDIR}")

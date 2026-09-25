@@ -53,19 +53,30 @@ endif()
 set(FASM_INCLUDE_DIR "${FASM_PREFIX}/include")
 set(FASM_LIB_DIR "${FASM_PREFIX}/lib")
 
+# SameMinorVersion, not SameMajorVersion: while the major version is 0
+# (semver's "anything can break" range, which every 0.x version here is
+# until a 1.0), SameMajorVersion would accept a `find_package(fasm
+# 0.1.0)` request from an installed 0.0.x, which is wrong -- 0.x treats
+# the minor version the way >=1 treats the major. Revisit when this
+# reaches 1.0.0 (switch to SameMajorVersion then).
 write_basic_package_version_file(
     "${FASM_OUT_DIR}/fasmConfigVersion.cmake"
     VERSION "${FASM_NUMERIC_VERSION}"
-    COMPATIBILITY SameMajorVersion
+    COMPATIBILITY SameMinorVersion
     ARCH_INDEPENDENT)
 
-# configure_package_config_file needs a *relative* template path when
-# INSTALL_DESTINATION is absolute in some CMake versions; pass the
-# absolute template path (supported) and compute PACKAGE_INIT's relative
-# prefix from INSTALL_DESTINATION vs INSTALL_PREFIX.
+# INSTALL_DESTINATION is where fasmConfig.cmake will live *relative to
+# INSTALL_PREFIX at run time* (it is pure path arithmetic: configure_
+# package_config_file does not need either directory to exist), so it
+# must be the final, unstaged path ("${FASM_PREFIX}/lib/cmake/fasm"), not
+# FASM_OUT_DIR -- which, for a staged/DESTDIR install (`make capi-install
+# DESTDIR=... PREFIX=...`), has an extra DESTDIR prefix that does not
+# mirror FASM_PREFIX's own depth and would throw off the relative offset
+# @PACKAGE_INIT@ later uses to find FASM_PREFIX from the installed file's
+# own location.
 configure_package_config_file(
     "${FASM_SOURCE_DIR}/fasmConfig.cmake.in"
     "${FASM_OUT_DIR}/fasmConfig.cmake"
-    INSTALL_DESTINATION "${FASM_OUT_DIR}"
+    INSTALL_DESTINATION "${FASM_PREFIX}/lib/cmake/fasm"
     INSTALL_PREFIX "${FASM_PREFIX}"
     PATH_VARS FASM_INCLUDE_DIR FASM_LIB_DIR)

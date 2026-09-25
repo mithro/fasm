@@ -50,7 +50,19 @@ if(NOT TARGET fasm::fasm_capi)
     add_library(fasm::fasm_capi SHARED IMPORTED)
     set_target_properties(fasm::fasm_capi PROPERTIES
         IMPORTED_LOCATION "${FASM_LIB_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}fasm_capi${CMAKE_SHARED_LIBRARY_SUFFIX}"
-        INTERFACE_INCLUDE_DIRECTORIES "${FASM_INCLUDE_DIR}")
+        INTERFACE_INCLUDE_DIRECTORIES "${FASM_INCLUDE_DIR}"
+        # The Rust cdylib is built with no SONAME (there is no versioned
+        # libfasm_capi.so.N to claim); without IMPORTED_NO_SONAME, CMake
+        # assumes ELF shared libraries always have one and records this
+        # target's *build tree path* as the executable's NEEDED entry,
+        # which breaks as soon as the library moves or LD_LIBRARY_PATH is
+        # used instead (see rust/fasm-capi/tests/c/CMakeLists.txt, which
+        # sets the same property for the same reason against a debug
+        # build). Set the same way here so a `find_package(fasm CONFIG)`
+        # consumer links `-lfasm_capi` (a plain NEEDED "libfasm_capi.so",
+        # resolved at run time through rpath/LD_LIBRARY_PATH/ldconfig)
+        # instead.
+        IMPORTED_NO_SONAME TRUE)
     if(WIN32)
         # Rust's cdylib import library, if present (not built/tested on
         # Windows by this repository's CI, see rust/fasm-capi/tests/c/CMakeLists.txt).
