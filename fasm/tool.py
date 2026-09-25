@@ -48,13 +48,14 @@ def nullable_string(val):
 def get_fasm_parser(name=None):
     """Import and return the ``fasm.parser.*`` module for ``name``.
 
-    ``name`` is one of :data:`fasm.parser.available` (``'rust'``,
-    ``'textx'``, and ``'antlr'`` when a legacy ANTLR build is present),
-    or ``None`` for the default parser (:mod:`fasm.parser` itself, which
-    re-exports the first available implementation). ``'antlr'`` is
-    accepted even when no ANTLR build exists, as long as the Rust parser
-    is available: it is aliased to ``fasm.parser.rust``, which replaces
-    it, so ``--parser antlr`` keeps working with a Rust-only install.
+    ``name`` is one of :data:`fasm.parser.available` (``'rust'`` and/or
+    ``'textx'``), or ``None`` for the default parser (:mod:`fasm.parser`
+    itself, which re-exports the first available implementation).
+    ``'antlr'`` is also accepted, as long as the Rust parser is
+    available: there is no ``fasm.parser.antlr`` module any more (the
+    pre-rewrite ANTLR/setup.py build is gone), but ``'antlr'`` is aliased
+    to ``fasm.parser.rust``, which replaces it, so ``--parser antlr``
+    keeps working with a Rust-only install.
 
     :raises Exception: if ``name`` names a parser that is not available.
     """
@@ -64,8 +65,8 @@ def get_fasm_parser(name=None):
     elif name in fasm.parser.available:
         module_name = 'fasm.parser.' + name
     elif name == 'antlr' and 'rust' in fasm.parser.available:
-        # The Rust parser replaces the ANTLR parser (which is only built by
-        # the legacy setup.py build); keep --parser antlr working.
+        # The Rust parser replaces the pre-rewrite ANTLR parser (which no
+        # longer exists in this package); keep --parser antlr working.
         module_name = 'fasm.parser.rust'
     else:
         raise Exception("Parser '{}' is not available.".format(name))

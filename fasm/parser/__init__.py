@@ -21,10 +21,13 @@
 Imports and re-exports the best available FASM parser implementation as
 ``parse_fasm_filename``/``parse_fasm_string``, tried in the order
 ``'rust'`` (``fasm.parser.rust``, backed by the ``fasm._fasm_rs``
-extension module), ``'antlr'`` (only present for a legacy ``setup.py``
-build) and ``'textx'`` (``fasm.parser.textx``, pure Python, always
-available). See :data:`available` and :data:`implementation` below, and
-``docs/PYTHON.md`` for how to pick a parser explicitly.
+extension module) and ``'textx'`` (``fasm.parser.textx``, pure Python,
+always available); there is no ``fasm.parser.antlr`` module (the legacy
+ANTLR/setup.py build this package used before the Rust rewrite is gone),
+but ``fasm.tool``'s ``--parser antlr`` keeps working as an alias for
+``'rust'``, since the Rust parser replaces it. See :data:`available` and
+:data:`implementation` below, and ``docs/PYTHON.md`` for how to pick a
+parser explicitly.
 """
 
 import importlib

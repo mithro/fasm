@@ -90,7 +90,7 @@ class FasmParseError(Error, _CoreFasmParseError):
     reference_exception = 'Exception'
 
     def __init__(self, message='', line=0, column=0):
-        """ Build the error with its message and 1-based line/column. """
+        """ Build the error: message, 1-based line, 0-based column. """
         super().__init__(message)
         self.line = line
         self.column = column

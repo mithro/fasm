@@ -162,9 +162,12 @@ class MergeModel(object):
 
         Requires that the model is currently in a comment group (call
         start_comment_group first). A further comment extends the group; an
-        annotation extends it and switches to an annotation group; anything
-        else (a feature, or a blank line) closes the group and returns the
-        model to MergeModel.State.NoGroup.
+        annotation extends it and switches to an annotation group; a blank
+        line closes the group without being added to it (comment groups
+        attach to the next entry, and a blank line ends the group with
+        nothing to attach to); anything else (e.g. a feature) is appended
+        to the group before it closes, returning the model to
+        MergeModel.State.NoGroup.
 
         """
         assert self.state == MergeModel.State.InCommentGroup
