@@ -10,15 +10,19 @@ the progress log. See `WORKFLOW.md` for the agent workflow rules.
 See `TASKS.md` for the authoritative, up to date task list (this section
 is a pointer, not a duplicate — do not edit `TASKS.md`/`LOG.md` from here).
 As of the T8.3 documentation pass, Phases 0-6 are complete (`[x]`) except
-two optional/deferred follow-up tasks (T0.4b, T5.3b, T6.3b, T8.2b — small,
-logged improvements, not blockers). Phase 7 (toolchain end-to-end
-compatibility) is complete except T7.4 (VTR, implemented and in review)
-and T7.5 (RapidWright, not started). Phase 8 (performance/docs/packaging):
-T8.1 and T8.2 are done, T8.3 (this documentation pass) is in progress, and
-T8.4 (packaging: crates.io metadata, maturin wheels workflow, CMake
-install, release notes) has not started. See `LOG.md` for the detailed,
-dated history behind every one of these (branch names, commit hashes,
-review verdicts, measured numbers).
+four small, deferred follow-up tasks logged from their task's review
+(not blockers): T0.4b (ANTLR oracle build flakiness), T5.3b (database
+cache follow-ups), T5.8b (`fetch-db.sh openxc7`'s bundled prjxray-db),
+T6.3b (small T6.3 review follow-ups). Phase 7 (toolchain end-to-end
+compatibility) is complete except T7.4 (VTR: implemented, `[r]` in
+review, not yet merged into this tree) and T7.5 (RapidWright, `[ ]` not
+started). Phase 8 (performance/docs/packaging): T8.1 and T8.2 are done,
+T8.2b (T8.2 performance follow-ups) is `[ ]` not started, T8.3 (this
+documentation pass) is `[~]` in progress, and T8.4 (packaging: crates.io
+metadata, maturin wheels workflow, CMake install, release notes) is
+`[ ]` not started. See `LOG.md` for the detailed, dated history behind
+every one of these (branch names, commit hashes, review verdicts,
+measured numbers).
 
 ### Design docs index
 
