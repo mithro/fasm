@@ -727,3 +727,12 @@ what happened, branch/commit references, open issues.
   needed. The two nexys_video (xc7a200t) pairs remain unbuilt here.
 * T7.6 (nextpnr-xilinx example designs via the installed openXC7
   toolchain) started (Opus); T5.10 under review.
+* T5.10 review (Opus): wheel built and 539 Python tests pass, byte
+  identical vs xc_fasm, 20/20 ctest under valgrind, adversarial C/Python
+  cases clean, synthetic-db read-back oddity explained (fixture part.yaml
+  rows have gaps vs the tilegrid; reference tools identical).
+  REQUEST CHANGES: a Python feature callback referencing its own
+  assembler is a GC-invisible cycle (no __traverse__/__clear__), leaking
+  the assembler and database. Fix requested plus small optionals. The
+  reviewer was refused deleting its own scratch/target by its classifier;
+  those are removed with the worktree after the merge.
