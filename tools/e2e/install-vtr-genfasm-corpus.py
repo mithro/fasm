@@ -137,6 +137,8 @@ f4pga-examples designs). {frm_note}
 
 * Board: {board_name} (`{board}`), part `{part}` (family `{family}`),
   VPR device `{device}`
+* VTR hard blocks given Verilog models (`tools/e2e/vtr/hard-block-models.py`):
+  {hard_blocks}
 * Synthesis {synth_s:.0f} s, pack + place + route {vpr_s:.0f} s,
   `symbiflow_write_fasm` {genfasm_s:.1f} s
 * FASM: {lines} lines, {size} bytes
@@ -328,8 +330,14 @@ def install_xilinx(src, info):
                   sort_keys=True)
         f.write('\n')
     template = INTRO_VERILOG if 'top' in info else INTRO_TASK
+    hard_blocks = 'none'
+    if os.path.exists(os.path.join(src, 'hard_blocks.txt')):
+        with open(os.path.join(src, 'hard_blocks.txt')) as f:
+            hard_blocks = ', '.join('`%s`' % b
+                                    for b in f.read().split()) or 'none'
     readme = (template + COMMON).format(
         top=info.get('top'),
+        hard_blocks=hard_blocks,
         synth_s=info.get('synth_seconds') or 0,
         circuit=circuit,
         board=board,

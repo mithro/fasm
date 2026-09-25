@@ -397,7 +397,8 @@ run_verilog() {
     fi
   fi
   if [[ $KEEP == 0 ]]; then
-    (cd "$out" && find . -maxdepth 1 -type f ! -name 'top.*' ! -name '*.log' ! -name 'top.pcf' -delete)
+    (cd "$out" && find . -maxdepth 1 -type f ! -name 'top.*' ! -name '*.log' ! -name '*.json' \
+      ! -name hard_blocks.txt ! -name vtr_hard_blocks.v -delete)
   fi
   compress_logs "$out"
   write_info "$out" "$device" "$circuit" "$netlist" 500 "$status" "$pnr_s" "$genfasm_s" - "$board" "$part" "$family" no "$synth_s" "$top"
