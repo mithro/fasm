@@ -126,8 +126,9 @@ rust-check: rust-lint rust-doc rust-test
 # tool (tests/cli/test_cli_compat.py): identical stdout, stderr and exit
 # code over the FASM corpus and argparse edge cases; and of the Rust
 # `fasm2frames`, `xcfasm`, `xc7frames2bit` and `bitread` command lines
-# against f4pga-xc-fasm's and prjxray's (tests/cli/test_*_compat.py, need
-# tests/oracle/setup-xilinx.sh).
+# against f4pga-xc-fasm's and prjxray's, and of `uray-fasm2frames`,
+# `xcframes2bit` and `uray-bitread` against prjuray's
+# (tests/cli/test_*_compat.py, need tests/oracle/setup-xilinx.sh).
 # Needs the oracle venv (tests/oracle/setup.sh); to use another checkout's
 # oracle (e.g. from a worktree) set ORACLE_DIR to its tests/oracle
 # directory.
@@ -137,7 +138,7 @@ cli-difftest:
 	cargo build --release -p fasm-cli
 	FASM_ORACLE=$(ORACLE_DIR)/fasm-oracle FASM2FRAMES_ORACLE=$(ORACLE_DIR)/fasm2frames-oracle \
 	XC7FRAMES2BIT_ORACLE=$(ORACLE_DIR)/xc7frames2bit-oracle BITREAD_ORACLE=$(ORACLE_DIR)/bitread-oracle \
-	XCFASM_ORACLE=$(ORACLE_DIR)/xcfasm-oracle \
+	XCFASM_ORACLE=$(ORACLE_DIR)/xcfasm-oracle URAY_ORACLE_DIR=$(ORACLE_DIR) \
 		$(ORACLE_DIR)/venv/bin/pytest tests/cli
 
 .PHONY: cli-difftest
@@ -175,6 +176,16 @@ xilinx-difftest:
 		--xcfasm-oracle $(ORACLE_DIR)/xcfasm-oracle $(DIFFTEST_XILINX_ARGS)
 
 .PHONY: xilinx-difftest
+
+# The prjuray mode of tools/difftest-xilinx.py (UltraScale+, prjuray-db
+# zynqusp: uray-fasm2frames, fasm2frames, xcframes2bit, uray-bitread).
+uray-difftest: DIFFTEST_XILINX_ARGS ?=
+uray-difftest:
+	cargo build --release -p fasm-cli
+	python3 tools/difftest-xilinx.py --prjuray \
+		--uray-oracle-dir $(ORACLE_DIR) $(DIFFTEST_XILINX_ARGS)
+
+.PHONY: uray-difftest
 
 # Fuzzing (T1.6, rust/fasm/fuzz/; see its README.md). Needs `cargo-fuzz`
 # (`cargo install cargo-fuzz`) and a nightly toolchain (`rustup toolchain
