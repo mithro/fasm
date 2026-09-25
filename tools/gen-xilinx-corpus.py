@@ -17,10 +17,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 """Deterministic, stdlib-only synthetic FASM generator for a part of a
-prjxray-db family (T5.9).
+prjxray-db or prjuray-db family (T5.9, T6.3).
 
     tools/gen-xilinx-corpus.py --db-root <db>/artix7 --part xc7a35tcsg324-1 \\
         --out-dir OUT [--tiles first|sample N|all] [--seed S]
+    tools/gen-xilinx-corpus.py --db-root <db>/zynqusp \\
+        --part xczu3eg-sfvc784-1-e --out-dir OUT
 
 writes
 
@@ -69,6 +71,20 @@ Tiles kept free of generated features: the PUDC_B tile (so
 the banks chosen for the STEPDOWN features (they receive the reference's
 STEPDOWN propagation), unless a tile type has no other tile.
 
+prjuray-db layout (a family directory with ``tile_types/`` and no
+``mapping/``: the tilegrid is ``<part>/tilegrid.json``, the parts are the
+directories with one, the tile types the files of ``tile_types/``), read
+like prjuray's ``utils/fasm2frames.py`` (``prjuray/db.py``,
+``tile_segbits.py``, ``utils/fasm_assembler.py``, DESIGN-xilinx-db.md
+§8.12): offsets and segbits bit positions count 16-bit words, a frame has
+186 of them, bits past the frame end are not dropped (a set one is an
+``IndexError`` of the reference: such features are not placed on the
+tiles where that happens and go to ``errors/past_frame_end.fasm``), and
+there are no IO bank, STEPDOWN or PUDC_B steps. In both layouts, segbits
+keys that are not FASM feature names (a part that does not start with a
+letter, e.g. prjuray-db's ``BRAM.RAMB18E2_L.READ_WIDTH_A.36``) are listed
+as unreachable (``errors/feature_name.fasm`` shows the parse error).
+
 The same arguments always give byte identical output (``--seed``, default
 0).
 """
@@ -84,6 +100,9 @@ CLB_IO_CLK = 'CLB_IO_CLK'
 BLOCK_RAM = 'BLOCK_RAM'
 WORD_BITS = 32
 FRAME_WORDS = 101
+# prjuray (prjuray/bitstream.py): 16-bit words, 93 * 2 per frame.
+URAY_WORD_BITS = 16
+URAY_FRAME_WORDS = 186
 GENERATOR_VERSION = 2
 
 PUDC_FEATURES = (
@@ -91,6 +110,14 @@ PUDC_FEATURES = (
     'SSTL15_TMDS_33.IN_ONLY', 'LVCMOS25_LVCMOS33_LVTTL.IN', 'PULLTYPE.PULLUP')
 
 ANNOTATION_KEYS = ('src', 'net', 'cell', 'note')
+
+# A part of a FASM feature name (the FASM grammar's IDENTIFIER).
+IDENTIFIER_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]*$')
+
+
+def is_fasm_name(name):
+    """Whether a feature name (without address) can be written in FASM."""
+    return all(IDENTIFIER_RE.match(p) for p in name.split('.'))
 
 
 # ---------------------------------------------------------------------
@@ -121,8 +148,19 @@ def read_simple_yaml(path):
     return out
 
 
+def is_prjuray_layout(db_root):
+    """prjuray-db: no mapping/, tile types in tile_types/."""
+    return (not os.path.isdir(os.path.join(db_root, 'mapping'))
+            and os.path.isdir(os.path.join(db_root, 'tile_types')))
+
+
 def family_parts(db_root):
-    """The parts of mapping/parts.yaml, in file order."""
+    """The parts of mapping/parts.yaml, in file order; for prjuray-db the
+    part directories (with a tilegrid.json), sorted."""
+    if is_prjuray_layout(db_root):
+        return sorted(
+            d for d in os.listdir(db_root)
+            if os.path.isfile(os.path.join(db_root, d, 'tilegrid.json')))
     return list(read_simple_yaml(os.path.join(db_root, 'mapping',
                                               'parts.yaml')))
 
@@ -217,11 +255,30 @@ class Database(object):
     def __init__(self, db_root, part):
         self.db_root = db_root
         self.part = part
-        self.fabric = fabric_of(db_root, part)
-        with open(os.path.join(db_root, self.fabric, 'tilegrid.json')) as f:
+        self.prjuray = is_prjuray_layout(db_root)
+        if self.prjuray:
+            # prjuray/db.py: <db_root>/<part>/tilegrid.json, tile types
+            # from tile_types/, 16-bit words, 186 per frame, bits past the
+            # frame end kept (utils/fasm_assembler.py has no word check).
+            grid_path = os.path.join(db_root, part, 'tilegrid.json')
+            if not os.path.isfile(grid_path):
+                raise SystemExit('part %s: no %s' % (part, grid_path))
+            self.fabric = None
+            self.layout = 'prjuray'
+            types_dir = os.path.join(db_root, 'tile_types')
+            self.word_bits = URAY_WORD_BITS
+            self.frame_words = URAY_FRAME_WORDS
+        else:
+            self.fabric = fabric_of(db_root, part)
+            self.layout = 'prjxray'
+            grid_path = os.path.join(db_root, self.fabric, 'tilegrid.json')
+            types_dir = db_root
+            self.word_bits = WORD_BITS
+            self.frame_words = FRAME_WORDS
+        with open(grid_path) as f:
             self.grid = json.load(f)
         self.known_types = set()
-        for f in os.listdir(db_root):
+        for f in os.listdir(types_dir):
             if f.startswith('tile_type_') and f.endswith('.json'):
                 name = f[len('tile_type_'):-len('.json')]
                 self.known_types.add(name.upper())
@@ -231,7 +288,9 @@ class Database(object):
         part_dir = os.path.join(db_root, part)
         pins = os.path.join(part_dir, 'package_pins.csv')
         part_json = os.path.join(part_dir, 'part.json')
-        if os.path.isfile(pins) and os.path.isfile(part_json):
+        # prjuray's fasm2frames has no IO bank (STEPDOWN) step.
+        if (not self.prjuray and os.path.isfile(pins)
+                and os.path.isfile(part_json)):
             with open(part_json) as f:
                 for bank, loc in json.load(f).get('iobanks', {}).items():
                     tile = 'HCLK_IOI3_' + loc
@@ -266,7 +325,10 @@ class Database(object):
         return out
 
     def pudc_b(self):
-        """find_pudc_b: (tile, site) of the PUDC_B pin, None, or 'many'."""
+        """find_pudc_b: (tile, site) of the PUDC_B pin, None, or 'many'
+        (None for prjuray, whose fasm2frames has no PUDC_B step)."""
+        if self.prjuray:
+            return None
         found = None
         for tile, info in self.grid.items():
             for site, function in info.get('pin_functions', {}).items():
@@ -359,6 +421,9 @@ class TileFeatures(object):
                 if name is None:
                     self.skipped.append((key, 'unreachable through alias'))
                     continue
+                if not is_fasm_name(re.sub(r'\[\d+\]$', '', name)):
+                    self.skipped.append((key, 'not a FASM feature name'))
+                    continue
                 open_ = name.rfind('[')
                 if open_ == -1:
                     candidates.append((name, None, key))
@@ -368,6 +433,9 @@ class TileFeatures(object):
                          key))
         for key in own.ppips:
             if key.startswith(tile_type + '.'):
+                if not is_fasm_name(key[len(tile_type) + 1:]):
+                    self.skipped.append((key, 'not a FASM feature name'))
+                    continue
                 candidates.append((key[len(tile_type) + 1:], None, key))
         if alias is not None:
             # The aliased type's pseudo PIPs, under this tile's names (no
@@ -375,7 +443,8 @@ class TileFeatures(object):
             for key in source.ppips:
                 if key.startswith(source_type + '.'):
                     name = to_own(key)
-                    if name is not None and '[' not in name:
+                    if (name is not None and '[' not in name
+                            and is_fasm_name(name)):
                         candidates.append((name, None, key))
         plain_names = set(n for n, a, _ in candidates if a is None)
         for name, address, key in candidates:
@@ -427,11 +496,15 @@ def tile_features(db, cache, tile):
     return cache[key]
 
 
-def unit_positions(unit, blocks):
+def unit_positions(unit, blocks, db=None):
     """[(key, isset)] of the unit's bits on a tile: key = (frame, word,
     bit) with prjxray's unwrapped word (negative for alias tiles), bits
     past the frame end dropped like prjxray's frame_set. None if a bits
-    block is missing (a FasmLookupError)."""
+    block is missing (a FasmLookupError). For a prjuray-db part (`db`):
+    16-bit words, and bits past the frame end kept."""
+    word_bits, frame_words, drop = WORD_BITS, FRAME_WORDS, True
+    if db is not None and db.prjuray:
+        word_bits, frame_words, drop = db.word_bits, db.frame_words, False
     out = []
     if not unit.bits:
         return out
@@ -442,12 +515,20 @@ def unit_positions(unit, blocks):
         base, offset, _, alias = block
         if alias is not None:
             offset -= alias['start_offset']
-        absolute = offset * WORD_BITS + word_bit
-        word = absolute // WORD_BITS
-        if word >= FRAME_WORDS:
+        absolute = offset * word_bits + word_bit
+        word = absolute // word_bits
+        if drop and word >= frame_words:
             continue
-        out.append(((base + column, word, absolute % WORD_BITS), isset))
+        out.append(((base + column, word, absolute % word_bits), isset))
     return out
+
+
+def sets_past_frame_end(positions, db):
+    """prjuray: a set bit outside the frame's words (`IndexError` in
+    fasm_assembler.get_frames; a cleared one is only stored)."""
+    return db.prjuray and any(
+        isset and not -db.frame_words <= key[1] < db.frame_words
+        for key, isset in positions)
 
 
 # ---------------------------------------------------------------------
@@ -578,8 +659,8 @@ class Generator(object):
         self.seed_required()
 
     def place(self, tile, unit, blocks):
-        positions = unit_positions(unit, blocks)
-        if positions is None:
+        positions = unit_positions(unit, blocks, self.db)
+        if positions is None or sets_past_frame_end(positions, self.db):
             return False
         design = self.cur.design
         if not design.fits(positions):
@@ -595,10 +676,12 @@ class Generator(object):
         self.cur.placed[tile].append(unit)
         return True
 
-    @staticmethod
-    def is_stepdown(tile, unit):
+    def is_stepdown(self, tile, unit):
         """fasm2frames' test: a feature of 3 or more parts whose tag (the
-        parts after the site) contains STEPDOWN."""
+        parts after the site) contains STEPDOWN (prjuray's fasm2frames has
+        no such step)."""
+        if self.db.prjuray:
+            return False
         parts = unit.name.split('.', 1)
         return len(parts) == 2 and 'STEPDOWN' in parts[1]
 
@@ -619,7 +702,7 @@ class Generator(object):
                     self.note('required feature not found: %s' % text)
                     continue
                 self.cur.design.add(
-                    unit_positions(unit, blocks) or [],
+                    unit_positions(unit, blocks, self.db) or [],
                     (tile, 'required ' + text))
 
     def note(self, text):
@@ -788,17 +871,34 @@ class Generator(object):
                 break
         for group in self.groups:
             for unit in group.leftover:
-                blocks = self.db.bits_blocks(group.tiles[0])
-                if unit_positions(unit, blocks) is None:
-                    reason = 'tile has no bits block for the feature'
-                else:
-                    reason = 'conflicts in every pass (--max-passes)'
-                self.uncovered.append(
-                    (group.tile_type, group.tiles[0], unit.label(), reason))
+                self.uncovered.append((group.tile_type, group.tiles[0],
+                                       unit.label(),
+                                       self.leftover_reason(group, unit)))
         self.check_coverage()
         for p in self.passes:
             for tile in p.placed:
                 self.stats[self.db.grid[tile]['type']]['tiles_used'] += 1
+
+    def leftover_reason(self, group, unit):
+        blocks = self.db.bits_blocks(group.tiles[0])
+        if not self.db.prjuray:
+            if unit_positions(unit, blocks, self.db) is None:
+                return 'tile has no bits block for the feature'
+            return 'conflicts in every pass (--max-passes)'
+        placeable = False
+        missing = True
+        for tile in group.tiles:
+            positions = unit_positions(unit, self.db.bits_blocks(tile),
+                                       self.db)
+            if positions is not None:
+                missing = False
+                if not sets_past_frame_end(positions, self.db):
+                    placeable = True
+        if missing:
+            return 'tile has no bits block for the feature'
+        if not placeable:
+            return 'sets a bit past the frame end on every tile'
+        return 'conflicts in every pass (--max-passes)'
 
     def check_coverage(self):
         """Per group: its units, the distinct units placed on its tiles
@@ -890,7 +990,7 @@ class Generator(object):
                     if unit is None:
                         continue
                     positions = unit_positions(
-                        unit, self.db.bits_blocks(tile)) or []
+                        unit, self.db.bits_blocks(tile), self.db) or []
                     key = trial.conflict(positions)
                     if key is None:
                         trial.add(positions, (tile, 'stepdown ' + feature))
@@ -1063,13 +1163,14 @@ class Generator(object):
                         continue
                     use(tile, unit)
                     for key, isset in unit_positions(
-                            unit, self.db.bits_blocks(tile)) or ():
+                            unit, self.db.bits_blocks(tile), self.db) or ():
                         bits.setdefault(key, isset)
             finally:
                 self.cur = saved
-        frames = dict((f, [0] * FRAME_WORDS) for f in in_use)
+        size = self.db.frame_words
+        frames = dict((f, [0] * size) for f in in_use)
         for (frame, word, bit), isset in bits.items():
-            words = frames.setdefault(frame, [0] * FRAME_WORDS)
+            words = frames.setdefault(frame, [0] * size)
             if isset:
                 words[word] |= 1 << bit
         return frames
@@ -1084,9 +1185,13 @@ class Generator(object):
     def write_pass(self, p, path):
         count = 0
         with open(path, 'w') as f:
-            f.write('# Synthetic FASM for %s (fabric %s), pass %d of %d, '
+            if self.db.prjuray:
+                where = 'prjuray-db'
+            else:
+                where = 'fabric %s' % self.db.fabric
+            f.write('# Synthetic FASM for %s (%s), pass %d of %d, '
                     'generated by tools/gen-xilinx-corpus.py\n' %
-                    (self.db.part, self.db.fabric, p.index, len(self.passes)))
+                    (self.db.part, where, p.index, len(self.passes)))
             f.write('# --tiles %s --seed %s\n' %
                     (self.describe_mode(), self.seed))
             f.write('{ generator = "gen-xilinx-corpus", version = "%d" }\n\n' %
@@ -1175,6 +1280,18 @@ def write_errors(gen, out_dir, family_types):
         if unit is not None:
             lines.append('%s.%s # missing bits block' % (tile, unit.label()))
             break
+    if db.prjuray:
+        # A tile type without segbits: with a bits block (e.g. PSS_ALTO)
+        # and without one.
+        for with_bits in (True, False):
+            group = next((g for g in gen.groups
+                          if not g.features.units
+                          and bool(db.bits_blocks(g.tiles[0])) == with_bits),
+                         None)
+            if group is not None:
+                lines.append('%s.NO_SEGBITS.FEATURE # %s' %
+                             (group.tiles[0], 'no segbits, bits block'
+                              if with_bits else 'no segbits, no bits'))
     written.append(('lookup_errors.fasm', lines))
 
     # 2. A tile absent from this part after lookup errors: KeyError at
@@ -1231,12 +1348,64 @@ def write_errors(gen, out_dir, family_types):
             ]))
             break
 
+    # 6. A segbits key that is not a FASM feature name: a parse error.
+    for group in gen.groups:
+        key = next((k for k, reason in group.features.skipped
+                    if reason == 'not a FASM feature name'), None)
+        if key is not None:
+            written.append(('feature_name.fasm', [
+                '# a segbits key that is not a FASM feature name',
+                '%s.%s' % (group.tiles[0], key.split('.', 1)[1])
+            ]))
+            break
+
+    # 7. prjuray: a feature that sets a bit past the frame end (IndexError
+    # in get_frames, after every line is read).
+    if db.prjuray:
+        found = past_end_example(db, groups)
+        if found:
+            tile, unit = found
+            written.append(('past_frame_end.fasm', [
+                '# IndexError: a bit past the end of the frame',
+                good_line(tile),
+                '%s.%s' % (tile, unit.label()),
+            ]))
+
     names = []
     for name, lines in written:
         with open(os.path.join(out_dir, name), 'w') as f:
             f.write('\n'.join(lines) + '\n')
         names.append(name)
     return names
+
+
+def past_end_example(db, groups):
+    """(tile, unit) of the first unit that sets a bit past the frame end
+    on a tile of its group, or None (tiles whose bits cannot reach the
+    end are skipped)."""
+    limit = db.frame_words * db.word_bits
+    for group in groups:
+        top = {}
+        for unit in group.features.units:
+            for block_type, _, word_bit, isset in unit.bits or ():
+                if isset:
+                    top[block_type] = max(top.get(block_type, 0), word_bit)
+        for tile in group.tiles:
+            blocks = db.bits_blocks(tile)
+            reach = False
+            for block_type, block in blocks.items():
+                if block[3] is not None:
+                    reach = True  # an alias: negative words too
+                elif block_type in top:
+                    last = block[1] * db.word_bits + top[block_type]
+                    reach = reach or last >= limit
+            if not reach:
+                continue
+            for unit in group.features.units:
+                positions = unit_positions(unit, blocks, db)
+                if positions and sets_past_frame_end(positions, db):
+                    return tile, unit
+    return None
 
 
 def family_tile_types(db_root):
@@ -1342,6 +1511,7 @@ def main(argv=None):
         'generator_version': GENERATOR_VERSION,
         'part': args.part,
         'fabric': db.fabric,
+        'layout': db.layout,
         'tiles': gen.describe_mode(),
         'seed': args.seed,
         'density': args.density,

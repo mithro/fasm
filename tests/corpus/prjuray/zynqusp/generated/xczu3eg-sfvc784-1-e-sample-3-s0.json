@@ -1,0 +1,162 @@
+{
+ "comment": "Reference results (tests/oracle/uray-fasm2frames-oracle, prjuray utils/fasm2frames.py) for the corpus of tools/gen-xilinx-corpus.py; written by python3 tests/cli/test_uray_corpus.py --write-goldens",
+ "coverage": {
+  "features_placed": 54542,
+  "features_total": 54542,
+  "uncovered": 0,
+  "unreachable": 34
+ },
+ "files_sha256": {
+  "errors/absent_tile.fasm": "b995f0c6910e6cdcfceded78c1469566fb5170e1273047357035db479ee109f2",
+  "errors/feature_name.fasm": "9468fe1e568688d812e79db020b82a67df01ce71a062e28619804ac1d51ecfaa",
+  "errors/inconsistent.fasm": "3a0807cf713c384b5afb5abcefaf566b2bf6b850221004bcfbd17607f119f6a0",
+  "errors/lookup_errors.fasm": "bd8d5e4210f3fa6f230c095db0d6e8c7c9022c9c2bd669a0ceaf87f98be44200",
+  "errors/value_range.fasm": "129bf18dfb2f7383eeba3d008284a40814c1e60c03e0939bff9347cd3de6dfd4",
+  "features-10.fasm": "db06d93a0c2200e55a4a4b4e9fc90a55fa12b064e035efe88854b6d135c5ac88",
+  "features-11.fasm": "546f0f2135e32bbfa4b016d761279b0cd648a6f5286f01232a31ebc230243443",
+  "features-12.fasm": "2f723308567946d0bed226542823813b264b3511bf4feb9bc5a977c347c098b9",
+  "features-13.fasm": "b364a808e88905fae32814ab72dd2bd12389c1561fc72d35c39d602b2af9adcd",
+  "features-14.fasm": "c7ab6e76f99921cfe54e6fb172b9309d0ac261a4ed6f0260ab5dfdc1867cf19b",
+  "features-2.fasm": "0d8b46ff1e1b40b182f5c8367eed77e3cdc537db5da80a1d271a1c8ca6a4d755",
+  "features-3.fasm": "11766d017808c2551e43628625c11d7b1e6adf6b6e9500c3dfd685826f19ae5b",
+  "features-4.fasm": "2eefcbd6334c157f3e714d9926f3807b246bbe1e49bc1014c1662568a643c174",
+  "features-5.fasm": "963aad061d564388e974b3362f7c6d984d80612effb45ff30105d46232afd54d",
+  "features-6.fasm": "53fee917adb85e1659f7b7440df6b9d367aa8369336001dc3a6b520be5d3d3ba",
+  "features-7.fasm": "ac1a4a5404a3b12df7b3d34fbc348b1a9d8c7fac3426c015783d6fad707c326b",
+  "features-8.fasm": "183ccba851333a9dbe04f7c64b18e4be56803f036b7f5f15c581cf1ad5cb57f0",
+  "features-9.fasm": "368ef274b106ca11a00a77c55b729f2ba723141d40f193455bf3c10a0b30699e",
+  "features.fasm": "5fa863244b3772c8af4eccb9b8bf608e32fc7d371a6036480665f167a1c3d9e0"
+ },
+ "generator": {
+  "generator_version": 2,
+  "seed": "0",
+  "tiles": [
+   "sample",
+   "3"
+  ]
+ },
+ "part": "xczu3eg-sfvc784-1-e",
+ "prjuray_db_commit": "affbc5e555ebae16475f32e8fb2d6565d4204f3f",
+ "reference": {
+  "prjuray_commit": "c550b03a26b4c4a9c4453353bd642a21f710b3ec",
+  "prjuray_tools_commit": "f53f07b8fe37721137a57e9bee3b2b13e7676f53",
+  "source": "tests/oracle/build/xilinx/status.json"
+ },
+ "runs": {
+  "errors/absent_tile.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "KeyError: 'RCLK_BRAM_INTF_TD_R_X999Y999'\n"
+  },
+  "errors/feature_name.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "Exception: Parse error at 2:33 - <message>\n"
+  },
+  "errors/inconsistent.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "utils.fasm_assembler.FasmInconsistentBits: FASM line \"BRAM_X8Y75.RAMB18E2_U.WRITE_MODE_A.READ_FIRST { why = \"conflicts\" }\" wanted to set bit (268293, 57, 1) but was cleared by FASM line \"BRAM_X8Y75.RAMB18E2_U.WRITE_MODE_A.WRITE_FIRST\"\n"
+  },
+  "errors/lookup_errors.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "sha256:98f9bbea0abd4ae04ba5a4a7186114fb4573b5b4a2a2326d152340dd0d8995a8"
+  },
+  "errors/value_range.fasm[sparse]": {
+   "exit_code": 1,
+   "frm_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "stderr": "<value range error>"
+  },
+  "features-10.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "51081b8c2f59abac43dc4fb70e8992acc35a41a563b0fb34e07ff18aec144018",
+   "frm_sha256": "a248b275657574ef44f655c1e08e9dd65dedc2fd4a1956563aaef70414d10c0a",
+   "stderr": ""
+  },
+  "features-11.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "059c105adf41d876cb8e925e0aeb19e45273999f8dfe7bd5473687d81ad60d09",
+   "frm_sha256": "60a03c05db9a034a47aebff7be825ba5b4505546ba53e162828c07e150b9580c",
+   "stderr": ""
+  },
+  "features-12.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "5e0a2668573aa7a59f5e7686d8080acd167ed20bc672e0d850ea9f2900c24b1b",
+   "frm_sha256": "c251df57aae489d9356d1cc8af8161422d466651ecb1f98277f32e213d19c1a4",
+   "stderr": ""
+  },
+  "features-13.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "c70457590f64be53c5111a1d4826060e353b6ed54f4ef6921cc9c9884dfe57cb",
+   "frm_sha256": "51ad81bd34398f1f667b25b64076f130ab48d3a12aadb1c5c103ffcef5193e3b",
+   "stderr": ""
+  },
+  "features-14.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "f3e7a4917efe5951dbf57d2488a8f0f267ebb32553c8ebf322ef116e549a51c7",
+   "frm_sha256": "0061fd822fe98f8e68ae2f47f22875997226e92062319980e1feb48d647dd632",
+   "stderr": ""
+  },
+  "features-2.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "6cd1919addf1b4aa522a135dca71f22a224e9987efd5e6d24009c5dc33a9cb16",
+   "frm_sha256": "d1371e8d9660fc97bd04981f3e364d54d5bde4118fbf66a6255c35db1764bf77",
+   "stderr": ""
+  },
+  "features-3.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "7ca7a8a138c2ee45f32e3fc21c5b9a77cb9aa4c69aaf513698f5407bf6ce5666",
+   "frm_sha256": "71f4d17cfbabd2ce255521f6c0054fd967cf896388c51ce3bfd5b1da8c7f0164",
+   "stderr": ""
+  },
+  "features-4.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "e3311598955b62ac5dff8830c33c17b2bd546b5bb635f5857a8124dfde80e60d",
+   "frm_sha256": "89a0723d8c415e96c80c3f700f1ca4f477f8fd3be733bb6f44849589fb7b5706",
+   "stderr": ""
+  },
+  "features-5.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "8a5ac5741882b04ffe7912da2d41ce54cfa2049f080a47e1398a867bafe3bb8f",
+   "frm_sha256": "55c99c2d509f29437a10779b008b0f333a75e14ebe9c3d7245ab63d1f0610b21",
+   "stderr": ""
+  },
+  "features-6.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "08f79f9ae503523107f92b6c677c2e07da4c26a41a959d8cf130f92e50ab9d1c",
+   "frm_sha256": "7d1b87c24a79de891093bab0e1ebda78c4ce94a78a3b0984731ddddd715bdd87",
+   "stderr": ""
+  },
+  "features-7.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "7ae74850c4f98fa56f9e61fab3f357568de5255f8dc20d5b5c9ba316ac1e9d7d",
+   "frm_sha256": "26fdde8b4d1a542dc251d282b4b8763e6a1a058bf9ec3c5fd28a4fc10bf73690",
+   "stderr": ""
+  },
+  "features-8.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "e53f366f9e5fa6654851db47a207613844d45e7bd72bb2c31851908b8e0e948b",
+   "frm_sha256": "d926300a8bf3909b1508c6e7be4100bd0dc2ce6a0979bc8dce96b3a262d7a700",
+   "stderr": ""
+  },
+  "features-9.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "d9cede87049d46eadd3d75740019f0fb9e7809545c25ec5c884c7f84a37dd744",
+   "frm_sha256": "c4d4c2df5f57db03e608afc0a68df13558035e59b1282d921e4b655178b9561a",
+   "stderr": ""
+  },
+  "features.fasm[dense]": {
+   "exit_code": 0,
+   "frm32_sha256": "40a4be2c8e285bdb0e965577ad255e2057a54f99109e12a7cb36c548a2a5e312",
+   "frm_sha256": "29d132f73d20a8af14eb361035a42d7693b74247182f5b741567790a3cfd7198",
+   "stderr": ""
+  },
+  "features.fasm[sparse]": {
+   "exit_code": 0,
+   "frm32_sha256": "caf6d39d4bc1a20688c0a1a9401e14171982429bf769185ab848e5a1d00fae69",
+   "frm_sha256": "cc612e9b0af12dbb2cd45c40e47ebaa29376b919b0a392fdc093f42fc249cd66",
+   "stderr": ""
+  }
+ }
+}

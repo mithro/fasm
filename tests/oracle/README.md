@@ -610,6 +610,56 @@ python3 tools/difftest-xilinx.py --family zynq7 --parts xc7z010clg400-1 \
 See `docs/rewrite/DESIGN-xilinx-db.md` §8.9 for what is generated and
 compared, the run matrix and the timings.
 
+### prjuray all-parts differential test (`make uray-difftest-all`, T6.3)
+
+The prjuray mode of `tools/difftest-xilinx.py` does the same for every
+part of every prjuray-db family (the directories of
+`$FASM_DB_CACHE/prjuray-db/` with a `tile_types/`; `zynqusp` is fetched
+with `tools/fetch-db.sh prjuray zynqusp` when there is none). Upstream
+prjuray-db has only `zynqusp`, with two parts (xczu3eg-sbva484-1-e,
+xczu3eg-sfvc784-1-e) and no native UltraScale (non-plus) part.
+
+```sh
+make uray-difftest-all                         # both parts, 2 jobs
+make uray-difftest-all URAY_DIFFTEST_ALL_ARGS="--parts 'xczu3eg-sfvc*'"
+FASM_DB_CACHE=... python3 tools/difftest-xilinx.py --prjuray \
+    --uray-oracle-dir tests/oracle --jobs 2 --work-dir DIR --json-report R.json
+```
+
+* Per part: the every-feature corpus of `tools/gen-xilinx-corpus.py`
+  (prjuray-db layout: 27 of 27 tile types with segbits, 54542 of 54542
+  reachable features; 34 segbits keys are not FASM names, see the
+  `uray-fasm2frames` section of `docs/rewrite/COMPAT.md`), T6.2's random
+  designs and error files, through the reference and the Rust
+  `uray-fasm2frames` (dense, sparse, debug, dump_bits, ROI), then the
+  Rust `fasm2frames` (32-bit words), `xcframes2bit` and `uray-bitread`
+  (9 flag sets) on the successful results; plus the `ToolsTestData`
+  bitstreams once. 134 `uray-fasm2frames` runs and 624 bitstream tool
+  runs per part.
+* Wall time (`--jobs 2`, this container, next to another 3-job run):
+  about 400 s for the two parts (393-394 s each, almost all in the
+  reference tools); 96 s from the result cache. Result: 268 runs, 258 identical, 10 explained
+  (value range errors, rule 4), 0 different; 1248 bitstream tool runs
+  identical.
+* `URAY_DIFFTEST_WORK` (default `tests/oracle/build/difftest-uray`):
+  `corpus/<family>/<part>/<opts>/` and `.../random-<n>-s<seed>/`, the
+  `results/` cache (keyed like the prjxray one, with prjuray's `utils/`
+  and the `prjuray` package in the oracle identity) and `run/`; about
+  30 MB after a full run.
+* The table has, per part, the `uray-fasm2frames` runs identical /
+  explained / different, the bitstream tool runs, the tile types reached
+  (of those with segbits), the features placed (of all reachable) and the
+  unreachable segbits keys; `--json-report` also writes the coverage.
+* `tests/cli/test_uray_corpus.py` is the fast version (xczu3eg-sfvc784-1-e,
+  golden `tests/corpus/prjuray/zynqusp/generated/`, written by
+  `URAY_ORACLE_DIR=<oracle>/tests/oracle python3
+  tests/cli/test_uray_corpus.py --write-goldens`);
+  `tests/cli/test_gen_xilinx_corpus.py` checks the generator's model
+  against the Rust `uray-fasm2frames` on `synthetic-usp-db` (and on a
+  zynqusp part when fetched).
+
+See `docs/rewrite/DESIGN-xilinx-db.md` §8.12.
+
 ### What worked / what didn't
 
 On the container this was developed in (Ubuntu, `cmake` 3.28,

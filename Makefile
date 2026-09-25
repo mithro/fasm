@@ -207,8 +207,28 @@ xilinx-difftest-quick:
 	$(MAKE) xilinx-difftest-all XILINX_DIFFTEST_ALL_ARGS="--parts-sample 1 $(XILINX_DIFFTEST_ALL_ARGS)"
 
 .PHONY: xilinx-difftest-quick
-# The prjuray mode of tools/difftest-xilinx.py (UltraScale+, prjuray-db
-# zynqusp: uray-fasm2frames, fasm2frames, xcframes2bit, uray-bitread).
+# The prjuray mode of tools/difftest-xilinx.py (UltraScale+, T6.2/T6.3,
+# docs/rewrite/DESIGN-xilinx-db.md 8.12): every part of every prjuray-db
+# family (fetched with tools/fetch-db.sh when missing; upstream has only
+# zynqusp with two parts), on the every-feature corpus of
+# tools/gen-xilinx-corpus.py, random designs and error files, and the
+# ToolsTestData bitstreams: uray-fasm2frames, fasm2frames, xcframes2bit and
+# uray-bitread against prjuray's. Generated files, the cached reference
+# results and the run directories go to $(URAY_DIFFTEST_WORK); a rerun
+# only runs the Rust tools. URAY_DIFFTEST_ALL_ARGS can add e.g.
+# `--parts 'xczu3eg-sfvc*'`, `--tiles first` or `--no-result-cache`.
+URAY_DIFFTEST_WORK ?= $(TOP_DIR)/tests/oracle/build/difftest-uray
+URAY_DIFFTEST_JOBS ?= 2
+uray-difftest-all: URAY_DIFFTEST_ALL_ARGS ?=
+uray-difftest-all:
+	cargo build --release -p fasm-cli
+	python3 tools/difftest-xilinx.py --prjuray \
+		--uray-oracle-dir $(ORACLE_DIR) --jobs $(URAY_DIFFTEST_JOBS) \
+		--work-dir $(URAY_DIFFTEST_WORK) $(URAY_DIFFTEST_ALL_ARGS)
+
+.PHONY: uray-difftest-all
+
+# The same with the default work directory and DIFFTEST_XILINX_ARGS.
 uray-difftest: DIFFTEST_XILINX_ARGS ?=
 uray-difftest:
 	cargo build --release -p fasm-cli

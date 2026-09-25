@@ -157,3 +157,120 @@ def test_model_matches_rust_real_part(tmp_path):
         assert result.returncode == 0, result.stderr
         expected = fasm.with_suffix('.expected.frm').read_bytes()
         assert (tmp_path / 'out.frm').read_bytes() == expected, name
+
+
+# prjuray-db layout (T6.3): the model of prjuray's utils/fasm2frames.py
+# (16-bit words, 186 per frame, bits past the frame end kept) against the
+# Rust uray-fasm2frames.
+URAY_RUST = RUST.parent / 'uray-fasm2frames'
+USP_DB = TESTDATA / 'synthetic-usp-db'
+
+
+def real_uray_db():
+    for base in (os.environ.get('FASM_DB_CACHE'),
+                 ROOT.joinpath('tests', 'oracle', 'build', 'db')):
+        if base and (Path(base) / 'prjuray-db' / 'zynqusp').is_dir():
+            return Path(base) / 'prjuray-db' / 'zynqusp'
+    return None
+
+
+def uray_fasm2frames(db, part, fasm, frm, tmp_path, flags=('--sparse', )):
+    env = dict(os.environ)
+    env['FASM_XDB_CACHE'] = str(tmp_path / 'xdb')
+    argv = [str(URAY_RUST), '--db-root', str(db), '--part', part]
+    argv += list(flags) + [str(fasm), str(frm)]
+    return subprocess.run(argv, env=env, capture_output=True)
+
+
+@pytest.mark.skipif(not URAY_RUST.exists(),
+                    reason='Rust uray-fasm2frames missing')
+@pytest.mark.parametrize('options', [['--tiles', 'sample', '3'],
+                                     ['--tiles', 'first'],
+                                     ['--tiles', 'all', '--seed', '5']])
+def test_uray_model_matches_rust(options, tmp_path):
+    part = 'xcusptest-1'
+    manifest = generate(USP_DB, part, tmp_path / 'a', *options)
+    check_coverage(manifest)
+    assert manifest['layout'] == 'prjuray'
+    assert manifest['fabric'] is None
+    # EDGE.OUT sets 16-bit word 186 of EDGE_X0Y0 (the only EDGE tile):
+    # IndexError in prjuray's get_frames, never placed; EDGE.CLEAR_OUT
+    # clears that word (stored, no error) and is placed.
+    assert manifest['uncovered'] == [[
+        'EDGE', 'EDGE_X0Y0', 'OUT',
+        'sets a bit past the frame end on every tile'
+    ]]
+    assert not manifest['unreachable']
+    assert not manifest['stepdown_hosts'] and manifest['pudc_b'] is None
+    assert 'past_frame_end.fasm' in manifest['errors']
+    text = ''.join((tmp_path / 'a' / name).read_text()
+                   for name in manifest['files'])
+    assert 'EDGE_X0Y0.CLEAR_OUT' in text
+    assert 'RCLK_INT_L_X2Y29.' in text
+    if options[1] != 'first':
+        # The bottom half tile.
+        assert 'CLEM_X1Y60.' in text
+    for name in manifest['files']:
+        fasm = tmp_path / 'a' / name
+        result = uray_fasm2frames(USP_DB, part, fasm, tmp_path / 'out.frm',
+                                  tmp_path)
+        assert result.returncode == 0, result.stderr
+        expected = fasm.with_suffix('.expected.frm').read_bytes()
+        assert (tmp_path / 'out.frm').read_bytes() == expected, name
+        # Each frame: 186 16-bit words.
+        line = expected.decode().splitlines()[0]
+        assert len(line.split(' ')[1].split(',')) == 186
+    for name in manifest['errors']:
+        result = uray_fasm2frames(USP_DB, part,
+                                  tmp_path / 'a' / 'errors' / name,
+                                  tmp_path / 'out.frm', tmp_path)
+        assert result.returncode == 1, name
+    past_end = tmp_path / 'a' / 'errors' / 'past_frame_end.fasm'
+    result = uray_fasm2frames(USP_DB, part, past_end, tmp_path / 'out.frm',
+                              tmp_path)
+    assert result.stderr.decode().endswith(
+        'IndexError: list index out of range\n'), result.stderr
+
+
+def test_uray_list_parts():
+    argv = [
+        sys.executable,
+        str(GENERATOR), '--db-root',
+        str(USP_DB), '--list-parts'
+    ]
+    out = subprocess.run(argv, check=True, capture_output=True,
+                         text=True).stdout.split()
+    assert out == ['xcusptest-1']
+
+
+def test_uray_deterministic(tmp_path):
+    generate(USP_DB, 'xcusptest-1', tmp_path / 'a', '--seed', '3')
+    generate(USP_DB, 'xcusptest-1', tmp_path / 'b', '--seed', '3')
+    for name in sorted(p.name for p in (tmp_path / 'a').iterdir()):
+        if name.endswith('.fasm'):
+            assert (tmp_path / 'a' / name).read_bytes() == (
+                tmp_path / 'b' / name).read_bytes()
+
+
+@pytest.mark.skipif(real_uray_db() is None or not URAY_RUST.exists(),
+                    reason='prjuray-db zynqusp not fetched')
+def test_uray_model_matches_rust_real_part(tmp_path):
+    db = real_uray_db()
+    part = 'xczu3eg-sbva484-1-e'
+    manifest = generate(db, part, tmp_path / 'a', '--tiles', 'first',
+                        '--no-errors')
+    check_coverage(manifest)
+    assert not manifest['uncovered']
+    # 34 segbits keys of BRAM, INT_INTF_LEFT_TERM_PSS and XIPHY_BYTE_RIGHT
+    # have a part that starts with a digit (e.g. READ_WIDTH_A.36): not
+    # FASM feature names.
+    assert len(manifest['unreachable']) == 34
+    assert len([c for c in manifest['coverage'].values()
+                if c['placed']]) == 27
+    for name in manifest['files']:
+        fasm = tmp_path / 'a' / name
+        result = uray_fasm2frames(db, part, fasm, tmp_path / 'out.frm',
+                                  tmp_path)
+        assert result.returncode == 0, result.stderr
+        expected = fasm.with_suffix('.expected.frm').read_bytes()
+        assert (tmp_path / 'out.frm').read_bytes() == expected, name
