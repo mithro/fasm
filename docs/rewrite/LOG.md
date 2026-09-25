@@ -673,3 +673,22 @@ what happened, branch/commit references, open issues.
   Phase 6 (UltraScale/UltraScale+) is complete.
 * T5.10 (fasm.xilinx Python bindings + fasm_xilinx_* C API) started
   (Opus); T7.3 running.
+* T7.3 implemented on branch `worktree-agent-a10d4cdf1c15a7c33` (13
+  commits): tools/e2e/setup-f4pga.sh (micromamba, explicit conda lock with
+  md5s, pip freeze, sha256 checked arch-defs, --big-files-dir for the
+  4.8 GiB xc7a100t device), run-f4pga-examples.sh,
+  compare-f4pga-examples.py, tests/e2e/test_f4pga_examples.py (70 tests),
+  difftest-xilinx.py corpus extensions (difftest.json dirs, .fasm.xz,
+  --corpus-root), 8.3 MB corpus of 30 design/board pairs (counter_test x5,
+  picosoc x4, litex_demo x4, linux_litex_demo x2, timer, pulse_width_led,
+  button_controller, projf hello A-L), §8.11. All 30 byte identical to the
+  flow's own tools and to the pinned oracle (120/120 fasm2frames, 90/90
+  xcfasm each side, 30/30 difftest.py); the flow's prjxray-db equals the
+  pinned 0a0adde. Not built: the 2 nexys_video (xc7a200t) pairs, whose
+  10.5 GiB arch defs do not fit this container. Reference quirks: broken
+  bin/fasm2frames entry, genfasm OOM kill ignored by the flow (truncated
+  FASM counted as success), non reproducible .bit header. Rust tools
+  30-35x faster summed over the designs. The agent's commit trailers name
+  the sub-agent model (Claude Opus 5.5) rather than the session line;
+  left as is (history is not rewritten). Independent review (Opus)
+  started.
