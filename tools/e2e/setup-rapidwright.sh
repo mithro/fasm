@@ -41,8 +41,8 @@
 #       RapidWright itself checks: with it in place RapidWright does not
 #       download anything; RAPIDWRIGHT_PATH points here)
 #   classes/RwCheck.class, classes/RwDesign.class
-#   venv-interchange/, fpga-interchange-schema/, capnp-include/ (with
-#       --with-interchange)
+#   venv-interchange/, fpga-interchange-schema/, capnp-include/,
+#       pfi-data/, dcps/ (with --with-interchange)
 #   status.json
 #
 # Requires: java/javac >= 11 (Java 21 used), curl, sha256sum, md5sum.
@@ -75,6 +75,11 @@
 #       interchange/fpga-interchange-schema submodule at the tag)
 #     capnproto/capnproto-java v0.1.16 compiler/src/main/schema/capnp/java.capnp
 #       sha256 abc48d859ffa06ac26c7dfe6020374fb0ee5efa4936707abc35bdac2233aefab
+#     python-fpga-interchange's test_data/series7_{constraints,luts}.yaml
+#       (the device patches; pip does not install test_data)
+#     Xilinx/RapidWrightDCP f9625fc62d290926668c4955c3a76e9d2044e916
+#       (RapidWright's test/RapidWrightDCP submodule at the tag): its nine
+#       DCPs for 7 series parts and xczu3eg, sha256 below
 
 set -euo pipefail
 
@@ -186,6 +191,45 @@ if [ "$INTERCHANGE" = 1 ]; then
     fetch "$PFI_RAW/series7_constraints.yaml" "$BUILD/pfi-data/series7_constraints.yaml" \
         "c105d3f9f0d09dce5a78179fcc0a46dbcb4bcba66cafa42289f63133a55f4961"
     fetch "$PFI_RAW/series7_luts.yaml" "$BUILD/pfi-data/series7_luts.yaml" "5208272cccc3bf1a5a44a86a691f02d41da7079ef97f4f918daa48f0cfbe4a50"
+    # The 7 series and xczu3eg DCPs of RapidWright's test data (Vivado
+    # placed and routed, with readable EDIF), fetched one by one from a
+    # blobless clone (the whole repository is about 150 MB).
+    DCP_COMMIT="f9625fc62d290926668c4955c3a76e9d2044e916"
+    DCPS=(
+        "routethru_luts.dcp e449fc87233d89474457513189f9ed61310f1d26555f398ffe246ffbbb128905"
+        "routethru_pip.dcp 4f534ec63a7cf068906f5143d73d97eb9dd826fb92eaacc3a2ecbf901b5f9cce"
+        "ramb18.dcp 68aedfd03d08dbcecc0de0f2c6d7bab5e480b62de7ffc1c241e760c7ca3db89a"
+        "bug226.dcp c416adb235bd72639ac57d1256a2ec8a99c33998c2a65b3585c0fac5f05d4215"
+        "bug349.dcp b3f725d5b1d38a44ed5b2c6947ab6d43cc13e35fcbeac11d4c83cbb63b6518e0"
+        "bug635.dcp 3f69b0a4161f7e70cae83ab19df613a19f32181cce9db492815100e0705fef39"
+        "bug709.dcp 0879309ed25f2f19579159eb8adc14fbbc31eddf60115f222a1a30f300ca1d8a"
+        "verilog_ethernet.dcp 01e01522036f2b1523342605983f69a20df20b58e0af8549824b726da9fc96de"
+        "bug701.dcp 6cc11c37989346da02db26e5de7ab7277a7396ef330b4d61d26d6b2111658de9"
+    )
+    missing=0
+    for entry in "${DCPS[@]}"; do
+        read -r name sha <<<"$entry"
+        if [ ! -f "$BUILD/dcps/$name" ] || \
+                [ "$(sha256sum "$BUILD/dcps/$name" | cut -d' ' -f1)" != "$sha" ]; then
+            missing=1
+        fi
+    done
+    if [ "$missing" = 1 ]; then
+        rm -rf "$BUILD/rapidwright-dcp.git"
+        timeout 900 git clone -q --filter=blob:none --no-checkout \
+            https://github.com/Xilinx/RapidWrightDCP.git "$BUILD/rapidwright-dcp.git"
+        mkdir -p "$BUILD/dcps"
+        for entry in "${DCPS[@]}"; do
+            read -r name sha <<<"$entry"
+            timeout 900 git -C "$BUILD/rapidwright-dcp.git" show "$DCP_COMMIT:$name" \
+                > "$BUILD/dcps/$name"
+            if [ "$(sha256sum "$BUILD/dcps/$name" | cut -d' ' -f1)" != "$sha" ]; then
+                echo "setup-rapidwright: sha256 mismatch for $name" >&2
+                exit 1
+            fi
+        done
+        rm -rf "$BUILD/rapidwright-dcp.git"
+    fi
 fi
 
 cat > "$BUILD/status.json" <<EOF

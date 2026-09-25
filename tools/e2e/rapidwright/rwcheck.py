@@ -59,6 +59,7 @@ import hashlib
 import json
 import lzma
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -986,9 +987,10 @@ def _fdri(res, ours, rw_written):
 
 def overall(res):
     sts = {s['status'] for s in res['checks'].values()}
-    if 'different' in sts:
-        return 'different'
-    return 'explained' if 'explained' in sts else 'identical'
+    for st in ('different', 'not possible', 'explained'):
+        if st in sts:
+            return st
+    return 'identical'
 
 
 class FrmCase:
@@ -1082,8 +1084,8 @@ def interchange_available():
         and (RW_BUILD / 'classes' / 'RwDesign.class').is_file())
 
 
-def java(cls, *args, cwd=None):
-    env = dict(os.environ, RAPIDWRIGHT_PATH=str(RW_BUILD))
+def java(cls, *args, cwd=None, env=None):
+    env = dict(os.environ, RAPIDWRIGHT_PATH=str(RW_BUILD), **(env or {}))
     return run(
         [
             'java', '-Xmx4g', '-cp',
@@ -1300,6 +1302,242 @@ Generated from this repository's own driver (Apache-2.0); no third party
 design sources.
 """
 
+# The DCPs of RapidWright's test data (Xilinx/RapidWrightDCP f9625fc,
+# setup-rapidwright.sh --with-interchange): Vivado placed and routed, with
+# a readable EDIF, so RapidWright converts them without Vivado.
+DCP_DESIGNS = (
+    ('routethru_luts', 'artix7', 'xc7a35tcpg236-1'),
+    ('routethru_pip', 'artix7', 'xc7a35tcpg236-1'),
+    ('ramb18', 'artix7', 'xc7a35tcpg236-1'),
+    ('bug226', 'artix7', 'xc7a35tcpg236-1'),
+    ('bug349', 'artix7', 'xc7a35tcpg236-1'),
+    ('bug635', 'artix7', 'xc7a200tsbg484-1'),
+    ('bug709', 'artix7', 'xc7a200tsbg484-1'),
+    ('verilog_ethernet', 'artix7', 'xc7a200tsbg484-1'),
+    ('bug701', 'zynqusp', 'xczu3eg-sbva484-1-i'),
+)
+
+
+def strip_traceback(text):
+    """The reference's error output without its Python traceback (the
+    Rust tools print only the exception line and what follows)."""
+    lines = text.splitlines()
+    out = []
+    skipping = False
+    for line in lines:
+        if line.startswith('Traceback (most recent call last):'):
+            skipping = True
+            continue
+        if skipping and line.startswith(' '):
+            continue
+        skipping = False
+        out.append(line)
+    return '\n'.join(out)
+
+
+def compare_fasm2frames(res, family, part, fasm, d, name):
+    """Rust and reference fasm2frames (sparse and dense) on FASM: identical
+    frames, or identical errors (the reference's traceback dropped)."""
+    ok = True
+    for sparse in (True, False):
+        label = 'sparse' if sparse else 'dense'
+        ours = d / ('%s.%s.rust.frm' % (name, label))
+        ref = d / ('%s.%s.ref.frm' % (name, label))
+        rc1, out1 = fasm2frames(
+            RUST / 'fasm2frames', family, part, fasm, ours, sparse)
+        rc2, out2 = fasm2frames(
+            ORACLE_DIR / 'fasm2frames-oracle', family, part, fasm, ref, sparse)
+        o1 = out1.decode(errors='replace').strip()
+        o2 = strip_traceback(out2.decode(errors='replace')).strip()
+        if rc1 == rc2 == 0:
+            same = ours.read_bytes() == ref.read_bytes()
+            detail = '' if same else 'frames differ'
+            if sparse and same:
+                res['sparse_frames'] = len(read_frm(ref))
+                res['_ref_sparse'] = ref.read_bytes()
+        elif rc1 != 0 and rc2 != 0:
+            same = o1 == o2
+            detail = (
+                'both reject it: %d lines of %s' %
+                (len(o1.splitlines()), o1.split(':', 1)[0])
+                if same else 'errors differ: %s / %s' % (o1[-300:], o2[-300:]))
+            res['rejected'] = o1.splitlines()[:3]
+        else:
+            same = False
+            detail = 'exit %d / %d: %s / %s' % (rc1, rc2, o1[-300:], o2[-300:])
+        ok = ok and same
+        _step(
+            res, 'fasm2frames %s rust = reference' % label,
+            'identical' if same else 'different', detail)
+        ours.unlink(missing_ok=True)
+        ref.unlink(missing_ok=True)
+    return ok
+
+
+def check_dcp_designs(args, work):
+    results = []
+    d = work / 'fasm'
+    d.mkdir(parents=True, exist_ok=True)
+    dcps = RW_BUILD / 'dcps'
+    # A Vivado DCP whose EDIF is encrypted (the prjxray-db harness
+    # designs): RapidWright needs Vivado to write a readable one.
+    harness = DB_CACHE / 'prjxray-db' / 'artix7' / 'harness' / 'arty-a7' / \
+        'swbut' / 'design.dcp'
+    if harness.is_file():
+        res = {'design': 'prjxray-db harness arty-a7/swbut', 'checks': {}}
+        try:
+            java(
+                'com.xilinx.rapidwright.interchange.DcpToInterchange',
+                harness,
+                cwd=d,
+                env={'RW_AUTO_GENERATE_READABLE_EDIF': '0'})
+            _step(res, 'DcpToInterchange', 'identical', 'converted')
+        except RuntimeError as e:
+            msg = str(e)
+            why = (
+                'Unable to find a readable EDIF'
+                if 'readable EDIF' in msg else msg[-300:])
+            _step(
+                res, 'DcpToInterchange', 'not possible',
+                '%s (the DCP\'s EDIF is encrypted; Vivado write_edif '
+                'is needed)' % why)
+        res['status'] = overall(res)
+        results.append(res)
+    for name, family, part in DCP_DESIGNS:
+        res = {'design': 'RapidWrightDCP %s/%s' % (name, part), 'checks': {}}
+        results.append(res)
+        if family == 'zynqusp':
+            _step(
+                res, 'fasm_generator', 'not possible',
+                'python-fpga-interchange has FASM generators for xc7 and '
+                'nexus only')
+            res['status'] = overall(res)
+            continue
+        try:
+            java(
+                'com.xilinx.rapidwright.interchange.DcpToInterchange',
+                dcps / ('%s.dcp' % name),
+                cwd=d,
+                env={'RW_AUTO_GENERATE_READABLE_EDIF': '0'})
+            dev = device_resources(part, work)
+        except RuntimeError as e:
+            _step(res, 'DcpToInterchange', 'different', str(e)[-500:])
+            res['status'] = overall(res)
+            continue
+        prefix = d / name
+        fasm = prefix.with_suffix('.fasm')
+        try:
+            pfi(
+                'fasm_generator', '--schema_dir', SCHEMA_DIR, '--family',
+                'xc7', dev, prefix.with_suffix('.netlist'),
+                prefix.with_suffix('.phys'), fasm)
+        except RuntimeError as e:
+            last = [
+                line for line in str(e).splitlines()
+                if re.match(r'[A-Za-z_][\w.]*(Error|Exception)\b', line)
+            ] or [str(e).splitlines()[-1]]
+            _step(
+                res, 'fasm_generator', 'not possible',
+                'python-fpga-interchange: %s' % last[-1][:300])
+            res['status'] = overall(res)
+            continue
+        data = fasm.read_bytes()
+        res['fasm_lines'] = data.count(b'\n')
+        res['fasm_sha256'] = hashlib.sha256(data).hexdigest()
+        ok = compare_fasm2frames(res, family, part, fasm, d, name)
+        stored = design_dir(family, 'dcp-' + name, part) / 'rw.fasm'
+        if ok and 'sparse_frames' in res:
+            if args.install:
+                install_dcp_design(family, name, part, fasm, res)
+            elif stored.is_file():
+                same = stored.read_bytes() == data
+                _step(
+                    res, 'regenerated FASM = committed',
+                    'identical' if same else 'different',
+                    '' if same else 'sha256 %s' % res['fasm_sha256'])
+        res.pop('_ref_sparse', None)
+        res['status'] = overall(res)
+        for f in d.glob(name + '.*'):
+            f.unlink()
+    return results
+
+
+def install_dcp_design(family, name, part, fasm, res):
+    out = design_dir(family, 'dcp-' + name, part)
+    out.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(fasm, out / 'rw.fasm')
+    ref = res['_ref_sparse']
+    (out / 'rw.sparse.frm.xz').write_bytes(lzma.compress(ref, preset=9))
+    (out / 'difftest.json'
+     ).write_text(json.dumps({
+         'family': family,
+         'part': part
+     }) + '\n')
+    sha = hashlib.sha256(
+        (RW_BUILD / 'dcps' / ('%s.dcp' % name)).read_bytes()).hexdigest()
+    (out / 'README.md').write_text(
+        DCP_README.format(
+            name=name,
+            part=part,
+            family=family,
+            dcp_sha=sha,
+            lines=res['fasm_lines'],
+            fasm_sha=res['fasm_sha256'],
+            frm_sha=hashlib.sha256(ref).hexdigest(),
+            frames=res['sparse_frames'],
+            tag=RW_TAG,
+            pfi=PFI_COMMIT))
+
+
+DCP_README = """\
+# rapidwright/dcp-{name}/{part} -- a Vivado DCP through RapidWright (T7.5)
+
+`rw.fasm` is FASM for `{name}.dcp` of RapidWright's test data
+(Xilinx/RapidWrightDCP `f9625fc62d290926668c4955c3a76e9d2044e916`, sha256
+`{dcp_sha}`; placed and routed by Vivado, with a readable EDIF), converted
+without Vivado: RapidWright's `DcpToInterchange` (interchange logical and
+physical netlists), then python-fpga-interchange's xc7 FASM generator with
+RapidWright's device resources for the part (patched with
+python-fpga-interchange's Series7 constraints and LUT definitions;
+`pfi_run.py` supplies the pseudo PIP sites RapidWright does not write).
+`rw.sparse.frm.xz` is the reference `fasm2frames --sparse` (f4pga-xc-fasm,
+prjxray-db) of it: the Rust `fasm2frames` gives the same bytes
+(`tests/e2e/test_rapidwright.py`). The DCP has no bitstream, and without
+Vivado none can be made to compare with.
+
+* Part: `{part}` (family `{family}`)
+* FASM: {lines} lines, sha256 `{fasm_sha}`
+* Sparse frames: {frames}, `.frm` sha256 `{frm_sha}`
+
+## Tools
+
+* RapidWright `{tag}` (`tools/e2e/setup-rapidwright.sh`)
+* python-fpga-interchange `{pfi}` with pycapnp 1.3.0
+  (`setup-rapidwright.sh --with-interchange`, `rapidwright/pfi_run.py`)
+* Database: the pinned prjxray-db of `tools/fetch-db.sh`
+
+## Commands
+
+```
+python3 tools/e2e/rapidwright/rwcheck.py fasm --install
+```
+
+which runs
+
+```
+java com.xilinx.rapidwright.interchange.DcpToInterchange {name}.dcp
+pfi_run.py fasm_generator --family xc7 <device> \\\\
+    {name}.netlist {name}.phys rw.fasm
+fasm2frames-oracle --db-root <prjxray-db>/{family} --part {part} \\\\
+    --sparse rw.fasm rw.sparse.frm
+```
+
+## Licence
+
+RapidWrightDCP is Apache-2.0 (RapidWright's licence); the FASM is
+derived from its DCP.
+"""
+
 # ------------------------------------------------------------------- main
 
 
@@ -1388,6 +1626,7 @@ def main(argv=None):
                 file=sys.stderr)
             return 2
         report['fasm'] = check_fasm(args, work)
+        report['fasm'] += check_dcp_designs(args, work)
         summarize('fasm', report['fasm'], 'design')
     if args.report:
         Path(args.report).write_text(json.dumps(report, indent=1) + '\n')
