@@ -42,6 +42,18 @@ jobs:
       # docs/rewrite/DESIGN-python.md) must keep building.
       - name: cargo clippy -p fasm-python --no-default-features
         run: cargo clippy -p fasm-python --no-default-features --all-targets -- -D warnings
+      # `cargo package --list` catches an include/exclude mistake (a test
+      # fixture or dev-only file slipping into the published package)
+      # without needing a full `cargo package`, which for these three
+      # crates would otherwise fail in CI for the unrelated reason
+      # covered in the `package` job's comment below.
+      - name: cargo package --list (fasm-xilinx, fasm-cli, fasm-capi)
+        run: |
+          for crate in fasm-xilinx fasm-cli fasm-capi; do
+            echo "::group::cargo package -p $crate --list"
+            cargo package -p "$crate" --list --allow-dirty
+            echo "::endgroup::"
+          done
 
   test:
     name: test (${{ matrix.os }})
@@ -87,6 +99,27 @@ jobs:
         run: cargo install cbindgen --locked
       - name: make capi-header-check capi-test
         run: make capi-header-check capi-test
+
+  # `cargo package` for the core crate, with the same `--verify` (build
+  # from the packaged tarball) a real `cargo publish -p fasm` would do;
+  # catches an include/exclude list or Cargo.toml metadata mistake before
+  # release (T8.4, docs/RELEASING.md). Not run for fasm-xilinx/fasm-cli/
+  # fasm-capi: their path dependency on `fasm` needs a `version`
+  # requirement that resolves against the *published* crates.io index,
+  # which fails in ordinary CI the same way it does locally pre-publish
+  # (see docs/RELEASING.md's crates.io name collision note); `--list`
+  # avoids the registry lookup and is checked in `lint` instead
+  # (comparable to `cargo package -p fasm --list`, cheap enough to run
+  # for all four crates there).
+  package:
+    name: cargo package (fasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo package -p fasm
+        run: cargo package -p fasm
 
   msrv:
     name: msrv (1.88.0)
