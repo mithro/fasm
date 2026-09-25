@@ -746,6 +746,10 @@ compares the Rust tools with them. Results matrix and timings:
   written for this snap's generation. Its `regression/` cases (moved
   there from nextpnr-xilinx) are run like `regression/run.sh`.
 * **openXC7/primitive-tests** `d29ee7c58bdad361c690298d0c1b22004f9f4c02`.
+  Its `bscane2` is a LiteX build directory (`build/build_top.sh`, the
+  generated `top.v`, `top.ys`, `top.xdc`): built with the commands of
+  `build_top.sh`, `top.ys`'s absolute `read_verilog` path of the machine
+  LiteX ran on replaced with `top.v`.
 * openXC7's other repositories were checked: `iologic-tests` and
   `dsp-tests` target only Kintex-7 parts, `xc7k325t-blinky-nextpnr` and
   `xc7k325t-picosoc-nextpnr` are Kintex-7 too; `toolchain-nix` and
@@ -821,14 +825,20 @@ place and route, and records it (`commands.txt`, the note in
   `fdse-fdpe-undefined-init` and `lut_shared_pin` (`xc7z010`): other
   families, listed as `skip` by `--list`.
 * demo-projects designs for Kintex-7, Spartan-7 and Zynq parts (every
-  other directory; the brief covers Artix-7 parts only).
+  other directory; the brief covers Artix-7 parts only), and
+  primitive-tests' `mmcm-blinky` (Spartan-7 `xc7s50csga324-1`),
+  `mmcm-blinky-kintex`, `gtx_channel`, `gtx_common/internal-refclk`
+  (Kintex-7 `xc7k70t`), `dsp-tests/*` and `iologic-tests/*` (Kintex-7
+  `xc7k160t`/`xc7k325t`): all listed as `skip` by `--list`.
 * Designs that nextpnr-xilinx `0.8.2` cannot place and route (the
   regression cases guard fixes made after it; the error is in each
   `info.json`): `litex-sata/alientek-davincipro` (`IBUFDS_GTE2 ... must
   be connected to a GTPE2_COMMON`), `gtp_common-external-refclk`
   (`Invalid global constant node 'INT_L_X0Y173/VCC_WIRE'`), and the
   regression cases `bufio-in-use`, `bufr-pad-site`, `bufr-sink-region`
-  (no BUFIO/BUFR bels), `lutram-clkinv`, `lutram-ram64x1s` (no
+  (no BUFIO/BUFR bels; the last two are placement-level cases,
+  `no_route`, that would not give a FASM anyway: the script never installs
+  such a case), `lutram-clkinv`, `lutram-ram64x1s` (no
   `RAM64X1S`), `iddr-four-iff-flops`, `srl-init` (`Invalid global
   constant node 'INT_L_X0Y113/GND_WIRE'`), `dsp-const-only-pins`
   (unroutable `CARRYCASCIN`), `dup-package-pin` (expected to fail) and
@@ -845,7 +855,16 @@ pinned database, either the same frames or the error the README records;
 with the toolchain and a nextpnr-xilinx checkout,
 `nextpnr-xilinx/blinky/arty-a35` is rebuilt end to end (the flow is
 deterministic: the FASM must be the committed one) and
-`compare-nextpnr-examples.py` must pass on it. 104 tests: all pass in 16 s
+`compare-nextpnr-examples.py` must pass on it. 109 tests: all pass in 16 s
 with the toolchain, the Rust tools and both databases (`ORACLE_DIR`,
 `FASM_DB_CACHE` and `OPENXC7_E2E_BUILD` pointing at the main checkout
-from a second working tree); 62 pass and 42 skip without them.
+from a second working tree, `NEXTPNR_XILINX_DIR` at a checkout); with
+the Rust tools but no database or toolchain 65 pass and 44 skip; with
+nothing built 44 pass and 65 skip.
+
+The regression cases also run their own `check.sh` like
+`regression/run.sh` does (nextpnr's output in the case's `nextpnr.log`,
+`CHIPDB` set); its verdict against nextpnr-xilinx 0.8.2 is in
+`info.json` and the corpus README (`const-holdout` passes;
+`bufh-clock-constraint` and `xorigport-unknown-name` fail as expected of
+a nextpnr-xilinx without their fixes).

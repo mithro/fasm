@@ -761,8 +761,10 @@ The snap's `fasm2frames` is prjxray's `utils/fasm2frames.py` (the snap
 builds prjxray `master` at its build time), not f4pga-xc-fasm's
 `xc_fasm.fasm2frames` that the Rust tool reproduces; the two files differ
 only in the licence header, formatting, `OpenSafeFile` (a lock file) for
-`package_pins.csv`, `part.json` and the ROI, the function name, and the
-PUDC_B feature below.
+`package_pins.csv`, `part.json` and the ROI, the function name
+(`run` / `fasm2frames`), xc_fasm's `f_out=None` default and `return
+frames` (so it can be called as a library function), and the PUDC_B
+feature below.
 
 ### Differences and quirks of the reference flow
 
@@ -770,7 +772,7 @@ PUDC_B feature below.
 |---|---|---|
 | `fasm2frames --emit_pudc_b_pullup` on a design that does not use the PUDC_B pin (every design built here) | `prjxray.fasm_assembler.FasmLookupError: Segment DB LIOB33, key LIOB33.IOB_Y0.LVCMOS12_LVCMOS15_LVCMOS18_LVCMOS25_LVCMOS33_LVTTL_SSTL135_SSTL15.IN_ONLY not found ...`, exit code 1: prjxray's `utils/fasm2frames.py` still emits the IN_ONLY feature under its old name, which neither the snap's nor the pinned prjxray-db has (both name it `...LVCMOS33_LVDS_25_LVTTL_SSTL135_SSTL15_TMDS_33.IN_ONLY`) | the feature f4pga-xc-fasm emits (`..._LVDS_25_LVTTL_SSTL135_SSTL15_TMDS_33.IN_ONLY`, plus `LVCMOS25_LVCMOS33_LVTTL.IN` and `PULLTYPE.PULLUP`), like the oracle: the frames are the oracle's (`compare-nextpnr-examples.py` checks this and reports the snap's failure as explained). Repro: `fasm2frames --db-root $PRJXRAY_DB_DIR/artix7 --part xc7a35tcsg324-1 --emit_pudc_b_pullup tests/corpus/xilinx/artix7/designs/nextpnr-xilinx/blinky/arty-a35/top.fasm x.frm` after `source tools/e2e/openxc7-env.sh` |
 | The snap's `fasm` package without snapd's `core20` base (tools/e2e/setup-openxc7.sh patches the interpreter, the libraries of `core20` are not there) | its ANTLR extension does not load (`ImportError: libffi.so.7`), so `fasm` and `fasm2frames` print a `RuntimeWarning: Unable to import fast Antlr4 parser implementation` on stderr and parse with textX | same output as the textX run; the comparisons check stdout, frames and exit codes, not this warning |
-| Designs using `STARTUPE2`, `BSCANE2` or a GTP reference clock (`config-primitive-startupe2`, primitive-tests `startupe2`, `jtag-test`, `gtp_common/internal-refclk`) with the pinned database | -- (the snap flow uses the snap database, which has the `ppips_cfg_center_*.db` pseudo PIPs and `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED`, see `tools/e2e/README.md`, "A note on prjxray-db provenance") | with the pinned database both the Rust tool and the oracle fail with the same `FasmLookupError` (`Segment DB CFG_CENTER_MID, key CFG_CENTER_MID.CFG_CENTER_STARTUP_USRDONEO.CFG_CENTER_IMUX42_8 not found ...`, `... CFG_CENTER_STARTUP_USRCCLKO.CFG_CENTER_CLK1_7 ...`, `... CFG_CENTER_LOGIC_OUTS_B17_11.CFG_CENTER_BSCAN3_TDI ...`, `Segment DB GTP_COMMON, key GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED ...`): a database difference, not a tool difference |
+| Designs using `STARTUPE2`, `BSCANE2` or a GTP reference clock (`config-primitive-startupe2`, primitive-tests `startupe2`, `jtag-test`, `bscane2`, `gtp_common/internal-refclk`) with the pinned database | -- (the snap flow uses the snap database, which has the `ppips_cfg_center_*.db` pseudo PIPs and `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED`, see `tools/e2e/README.md`, "A note on prjxray-db provenance") | with the pinned database both the Rust tool and the oracle fail with the same `FasmLookupError` (`Segment DB CFG_CENTER_MID, key CFG_CENTER_MID.CFG_CENTER_STARTUP_USRDONEO.CFG_CENTER_IMUX42_8 not found ...`, `... CFG_CENTER_STARTUP_USRCCLKO.CFG_CENTER_CLK1_7 ...`, `... CFG_CENTER_LOGIC_OUTS_B17_11.CFG_CENTER_BSCAN3_TDI ...`, `... CFG_CENTER_LOGIC_OUTS_B14_3.CFG_CENTER_BSCAN1_TCK ...`, `Segment DB GTP_COMMON, key GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED ...`): a database difference, not a tool difference |
 | `.bit` header | names the `.frm` file as given to `xc7frames2bit` (relative, e.g. `blinky.frames`) and the build time | the comparison skips the path and injects the time (as for the f4pga flow above) |
 
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)

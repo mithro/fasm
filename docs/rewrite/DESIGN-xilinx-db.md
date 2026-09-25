@@ -3252,16 +3252,26 @@ snap flow each example documents: yosys `synth_xilinx`, `nextpnr-xilinx
 and comparison: `tools/e2e/run-nextpnr-examples.sh`,
 `compare-nextpnr-examples.py`, `install-nextpnr-examples-corpus.py`;
 details, workarounds and what was not built: `tools/e2e/README.md`,
-"nextpnr-xilinx examples corpus (T7.6)"). Every Artix-7 design with a
-chipdb here or one its Makefile would build (xc7a35tcpg236-1 and
-xc7a100tfgg676-1 were built, 85 s and 152 s) was attempted; the 20 that
-nextpnr-xilinx 0.8.2 places and routes are in the corpus
+"nextpnr-xilinx examples corpus (T7.6)"). Every Artix-7 design of the
+three repositories was attempted, with the chipdbs here and the two its
+Makefile would build (xc7a35tcpg236-1 and xc7a100tfgg676-1, 85 s and
+152 s): 16 nextpnr-xilinx examples, demo-projects designs and
+primitive-tests designs (primitive-tests' `bscane2` through the
+`build_top.sh` LiteX wrote) plus 17 Artix-7 regression cases of
+demo-projects. The 21 that nextpnr-xilinx 0.8.2 places and routes are in
+the corpus
 (`tests/corpus/xilinx/artix7/designs/{nextpnr-xilinx,openxc7-demo-projects,openxc7-primitive-tests}/<example>/<board>/`,
 2.5 MB: `top.fasm[.xz]`, the flow's dense frames `top.frm.xz`,
 `difftest.json`, a README of provenance, commands, sha256 of the flow's
 FASM, frames and bitstream, and the comparison results), so `make
 xilinx-difftest` covers them. The whole `--all` run took 27 minutes, 20
-of them the one regression case whose router never finishes.
+of them the one regression case whose router never finishes. The
+regression cases' own `check.sh` (run like `regression/run.sh`, with its
+`nextpnr.log` and `CHIPDB`) passes for `const-holdout` and fails, as the
+cases expect of a nextpnr-xilinx without their fix, for
+`bufh-clock-constraint` (no derived 200 MHz constraint on the BUFH output
+net) and `xorigport-unknown-name` (the corrupted `X_ORIG_PORT` name is
+accepted); the output is in each README.
 
 **What was compared, per design** (`compare-nextpnr-examples.py`; the
 columns of the matrix):
@@ -3328,9 +3338,11 @@ columns of the matrix):
 | openxc7-primitive-tests | mmcm-blinky-artixx | xc7a100tfgg676 | `xc7a100tfgg676-1` | yes | 1283 | 9 s | yes | yes, same frames | 1.06 / 0.04 s | 0.11 / 0.06 s | 0.01 / 0.01 s | 0.32 / 0.003 s |
 | openxc7-primitive-tests | mmcm-reconfig | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 4927 | 8 s | yes | yes, same frames | 1.68 / 0.04 s | 0.11 / 0.05 s | 0.02 / 0.01 s | 0.82 / 0.009 s |
 | openxc7-primitive-tests | pll-reconfig | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 4277 | 7 s | yes | yes, same frames | 1.57 / 0.04 s | 0.10 / 0.05 s | 0.02 / 0.01 s | 0.70 / 0.006 s |
+| openxc7-primitive-tests | bscane2 | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 2371 | 7 s | yes | yes, both fail (snap-only features) | 1.28 / 0.05 s | 0.10 / 0.05 s | 0.02 / 0.01 s | 0.55 / 0.004 s |
 | openxc7-primitive-tests | startupe2 | qmtech-artix7 | `xc7a100tfgg676-1` | yes | 799 | 6 s | yes | yes, both fail (snap-only features) | 0.91 / 0.05 s | 0.10 / 0.06 s | 0.01 / 0.01 s | 0.23 / 0.002 s |
 
-Summed over the 20 designs: the snap's `fasm2frames` 83.0 s, the Rust
+Summed over the first 20 designs (bscane2, added in review, is in the
+row above): the snap's `fasm2frames` 83.0 s, the Rust
 one 1.25 s (66x; the oracle `xc_fasm.fasm2frames` with the pinned db
 27.4 s: the snap's runs its fasm parser with textX); the snap's `fasm
 --canonical` 49.4 s, Rust 0.28 s (176x); `xc7frames2bit` 2.9 s / 1.5 s
@@ -3346,8 +3358,10 @@ designs with snap-only features fail identically on both sides, so they
 have no bitstream runs), 2.2 minutes with `--jobs 2`; with the snap
 database (`--db-cache <snap>/opt/nextpnr-xilinx/external`) 80/80 and
 60/60 identical, 720 xc7frames2bit/bitread runs, 2.5 minutes.
+`bscane2`, added in review: 4/4 and 3/3 with each database (it fails on
+the pinned one on both sides; 36 bitstream runs with the snap's).
 `tools/difftest.py` (Rust parser, `to_string`, canonical form and round
-trip against the original Python package, ANTLR and textX): 20/20 files
+trip against the original Python package, ANTLR and textX): 21/21 files
 identical (1.4 minutes).
 
 **Not built.** Other families: nextpnr-xilinx's `artyz7-20/blinky`
@@ -3355,12 +3369,17 @@ identical (1.4 minutes).
 (UltraScale+, no FASM: RapidWright json2dcp and Vivado), the fork's
 `counter25` (Virtex-7, only on its `main`), demo-projects' Kintex-7,
 Spartan-7 and Zynq designs and its two xc7z010 regression cases,
-iologic-tests and dsp-tests (Kintex-7). Not placed or routed by
+primitive-tests' `mmcm-blinky` (Spartan-7), `mmcm-blinky-kintex`,
+`gtx_channel`, `gtx_common`, `dsp-tests/*` and `iologic-tests/*`
+(Kintex-7; all listed as `skip` by `run-nextpnr-examples.sh --list`), and
+the separate iologic-tests and dsp-tests repositories (Kintex-7). Not
+placed or routed by
 nextpnr-xilinx 0.8.2 (errors in `tools/e2e/README.md`): demo-projects'
 `litex-sata/alientek-davincipro` (`IBUFDS_GTE2` driving a `BUFG`),
 primitive-tests' `gtp_common/external-refclk`, and 10 of the 17 Artix-7
 regression cases, which guard nextpnr-xilinx fixes made after 0.8.2
-(`srl-wemux` reached the 20 minute cap in the router).
+(`srl-wemux` reached the 20 minute cap in the router; the placement-level
+cases `bufr-pad-site` and `bufr-sink-region` fail to place).
 
 **Findings.** No difference between the Rust tools and the snap's or the
 oracle's; no Rust bug found, no Rust change. Quirks of the reference
@@ -3371,8 +3390,8 @@ package falls back to textX here (its ANTLR extension needs `libffi.so.7`
 from snapd's `core20`); the pinned database lacks features some designs
 use. Flow notes (`tools/e2e/README.md`): this machine's Yosys needs the
 T7.2 `$buf` workaround for nextpnr-xilinx 0.8.2, applied to the written
-netlist; the flow is deterministic (two full runs gave the same 20 FASM
-files).
+netlist; the flow is deterministic (three full runs gave the same 20
+FASM files, two the same bscane2 FASM).
 
 ## 9. Open questions / risks
 
