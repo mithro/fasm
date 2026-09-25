@@ -41,6 +41,7 @@ import hashlib
 import json
 import lzma
 import os
+import re
 import sys
 
 REPO_ROOT = os.path.dirname(
@@ -84,6 +85,23 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def commands(lines):
+    """The flow's commands (`make -n` output for the Makefile flows)
+    without make's warnings and this machine's paths, the `$buf`
+    workaround (run after synthesis) marked."""
+    out = []
+    for line in lines:
+        if re.match(r'^\S*(Makefile|\.mk):\d+: warning:', line):
+            continue
+        line = re.sub(r'/\S*/chipdb/', '<chipdb dir>/', line)
+        line = re.sub(r'/\S*/prjxray-db', '<snap prjxray-db>', line)
+        line = re.sub(r'\s+$', '', line)
+        line = line.replace('   # workaround, see run-nextpnr-examples.sh',
+                            '   # after synthesis: the $buf workaround')
+        out.append(line)
+    return out
+
+
 def readme(info, compare, fasm_name):
     src = info['source']
     source = info['id'].split('/')[0]
@@ -120,7 +138,7 @@ def readme(info, compare, fasm_name):
     lines += ['## Tools', '', SNAP.format(
         nextpnr=info['tools']['nextpnr-xilinx'],
         yosys=info['tools']['yosys']), '## Commands', '', '```']
-    lines += info.get('commands', [])
+    lines += commands(info.get('commands', []))
     lines += [
         '```', '', '## Reference outputs of the flow', '', '```',
         'sha256  top.fasm  %s' % info['top.fasm']['sha256'],
