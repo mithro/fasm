@@ -760,3 +760,11 @@ what happened, branch/commit references, open issues.
   cached vs 400-500 ms reference. Not measured: 1M line textX (RSS blow
   up), perf profile (no perf), python suite re-run. Independent review
   (Opus) started.
+* T8.1 review (Opus): end-to-end numbers reproduced within noise, benches
+  and clippy clean. REQUEST CHANGES: the every-feature benchmark timed a
+  run that fails with a conflict on both sides (conflict free runs: Rust
+  0.32 s vs oracle 18 s, 56x, not 26x); failed runs shown as timings;
+  peak RSS inherits the driver floor via vfork/exec; database cache state
+  not controlled; missing rows (picosoc, linux_litex_demo, 1M line
+  parser, canonical 1M lines 9.7 s / 2.4 GiB); several factual errors;
+  README pointer placement. Fixes requested.
