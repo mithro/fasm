@@ -118,8 +118,10 @@ Every file here parses identically with Rust, ANTLR and textX, prints
 identically with `fasm_tuple_to_string` (both modes) and round trips
 (`tools/difftest.py`), except `genfasm-rr-metadata.fasm` (above).
 genfasm's output is simple FASM: one feature per line, no comments,
-annotations or blank lines, values only as `[hi:lo]=<width>'b<bits>`
-(`LUT[63:0]=64'b...` from `fasm_lut`).
+annotations or blank lines; on this architecture values only as
+`[hi:lo]=<width>'b<bits>` (`LUT[63:0]=64'b...` from `fasm_lut`). (On
+`xc7a50t_test` genfasm also writes range-less one bit values such as
+`F=1'b0`, see `docs/rewrite/COMPAT.md`, "VTR genfasm output".)
 
 ## `vtr_test_fasm_literals.fasm` (T1.5)
 

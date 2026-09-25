@@ -3480,8 +3480,13 @@ runs, all identical to the oracle).
 **Findings.** No difference between the Rust tools and the flow's or
 the oracle's; no Rust bug found, no Rust change. genfasm's Xilinx output
 is plain FASM like the f4pga-examples designs of §8.11 (it is the same
-tool): one feature per line, values `[hi:lo]=<w>'b<bits>`, repeated
-features (`docs/rewrite/COMPAT.md`, "VTR genfasm output"). What did not
+tool): one feature per line; values are sized binary literals, with a
+bit range (`INIT[31:0]=32'b...`, `INIT[255:0]=256'b...`) or, for the one
+bit `fasm_params`, without one (`...ZINV_RSTREGARSTREG=1'b0`: 2,664 lines
+in `picosoc_basys3_full_50`, 2,456 of them `=1'b0`); some features are
+written more than once with the same value (211 features, 282 extra
+lines in `picosoc_basys3_full_50`); `docs/rewrite/COMPAT.md`, "VTR
+genfasm output". What did not
 produce FASM, and why:
 
 * the tarball's `*_arty_a7` / `*_arty_100t` circuits (4): need
