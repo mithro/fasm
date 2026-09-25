@@ -3597,11 +3597,15 @@ the flow and corpus bitstreams, which were written by `xc7frames2bit`).
 | RapidWrightDCP `bug701` | xczu3eg | | not possible: no UltraScale+ FASM generator |
 | prjxray-db harness DCP (the only DCPs with a bitstream) | xc7a35t | | not possible: encrypted EDIF, needs Vivado `write_edif` |
 
-The five FASM designs are stored with their reference sparse frames in
-`tests/corpus/xilinx/{artix7,zynq7}/designs/rapidwright/` (712 KB), so
-`tools/difftest-xilinx.py` and `tests/e2e/test_rapidwright.py` use them
-without RapidWright (`difftest-xilinx.py --corpus-root` over just these:
-5 files, 20 fasm2frames runs with its four flag sets, all identical). Comparing against an original bitstream is not
+The three RapidWright-built designs are stored with their reference
+sparse frames in `tests/corpus/xilinx/{artix7,zynq7}/designs/rapidwright/`
+(660 KB), so `tools/difftest-xilinx.py` and `tests/e2e/test_rapidwright.py`
+use them without RapidWright (`difftest-xilinx.py --corpus-root` over the
+three and the two DCP designs: 5 files, 20 fasm2frames runs with its four
+flag sets, all identical). The DCP-derived FASM is not committed
+(RapidWrightDCP has no licence file); `rwcheck.py` pins the SHA-256 of
+its FASM and reference frames and the expected outcome and error of every
+DCP. Comparing against an original bitstream is not
 possible without Vivado (no DCP with a bitstream is readable, and
 RapidWright cannot make frames from a design).
 

@@ -768,13 +768,16 @@ def explain_per_frame_crc(rw_frm, ours, arch, bit):
     zero = [0] * WORDS_PER_FRAME[arch]
     if (rw_frm[-2][1] == lost and ours.get(order[-1], zero) == pad
             and pad == zero and lost != zero):
-        return (
+        why = (
             'per frame CRC: RapidWright reads the frames of every row '
-            'one frame address early (model verified on all %d '
-            'frames); the last frame of the part (0x%08X) is lost by the '
-            'prjxray-compatible reader (overwritten by the trailing pad '
-            'frame), RapidWright has it at 0x%08X' %
-            (len(rw_frm), order[-1], order[-2]))
+            'one frame address early (model verified on all %d frames '
+            'but the last one of the part); ' % len(rw_frm))
+        why += (
+            'the last frame of the part (0x%08X) is lost by the '
+            'prjxray-compatible reader (overwritten by the trailing '
+            'pad frame), RapidWright has it at 0x%08X' %
+            (order[-1], order[-2]))
+        return why
     return None
 
 
@@ -1309,17 +1312,78 @@ design sources.
 # The DCPs of RapidWright's test data (Xilinx/RapidWrightDCP f9625fc,
 # setup-rapidwright.sh --with-interchange): Vivado placed and routed, with
 # a readable EDIF, so RapidWright converts them without Vivado.
+# The expected outcome of each is pinned, so that a change (a new
+# generator failure, other FASM) is reported as a difference:
+#   ('frames', FASM sha256, reference sparse .frm sha256): both fasm2frames
+#       give these frames;
+#   ('rejected', FASM lines, text of the first error line): both reject
+#       the FASM with the same errors;
+#   ('not possible', text of the generator's error).
+# RapidWrightDCP has no licence file, so nothing derived from these DCPs
+# is committed (docs/rewrite/DESIGN-rapidwright.md); the FASM and frames
+# stay in the work directory (<work>/fasm/dcp/).
 DCP_DESIGNS = (
-    ('routethru_luts', 'artix7', 'xc7a35tcpg236-1'),
-    ('routethru_pip', 'artix7', 'xc7a35tcpg236-1'),
-    ('ramb18', 'artix7', 'xc7a35tcpg236-1'),
-    ('bug226', 'artix7', 'xc7a35tcpg236-1'),
-    ('bug349', 'artix7', 'xc7a35tcpg236-1'),
-    ('bug635', 'artix7', 'xc7a200tsbg484-1'),
-    ('bug709', 'artix7', 'xc7a200tsbg484-1'),
-    ('verilog_ethernet', 'artix7', 'xc7a200tsbg484-1'),
-    ('bug701', 'zynqusp', 'xczu3eg-sbva484-1-i'),
+    (
+        'routethru_luts', 'artix7', 'xc7a35tcpg236-1', (
+            'frames',
+            'aa9c00a9b57eb02dd939c514862f6fd8cdb2e5e13f98b2750d370e38723ebfa1',
+            'b76e5abe10c30393aea8c193d7c59218d8e2dcec939628bd54349910edd801b0')
+    ),
+    (
+        'routethru_pip', 'artix7', 'xc7a35tcpg236-1', (
+            'frames',
+            'cfbbc175d1e9ca27db817c9f49263c54c117bb0eefd9269f6124935e9d42d004',
+            '09731db011fcf50e4d970fa40baca6596822026020d9b24e6b75ad55ccc1b8d7')
+    ),
+    (
+        'ramb18', 'artix7', 'xc7a35tcpg236-1',
+        ('not possible', "TypeError: 'NoneType' object is not subscriptable")),
+    (
+        'bug226', 'artix7', 'xc7a35tcpg236-1', (
+            'rejected', 85400, 'key BRAM_L.RAMB18_Y0.ZINV_REGCLKARDRCLK_B not '
+            'found')),
+    (
+        'bug349', 'artix7', 'xc7a35tcpg236-1', (
+            'not possible',
+            'ValueError: invalid literal for int() with base 16: '
+            '"64\'h00000000ffff0000"')),
+    (
+        'bug635', 'artix7', 'xc7a200tsbg484-1', (
+            'rejected', 710,
+            'key BRAM_R.RAMB18_Y0.WRITE_MODE_A_WRITE_FIRST not '
+            'found')),
+    (
+        'bug709', 'artix7', 'xc7a200tsbg484-1', (
+            'not possible', 'AssertionError: processor/data_path_i/LIFOi/'
+            'ram_reg_0_15_6_6/SP')),
+    (
+        'verilog_ethernet', 'artix7', 'xc7a200tsbg484-1',
+        ('not possible', "AssertionError: ('VCC', dict_keys(")),
+    (
+        'bug701', 'zynqusp', 'xczu3eg-sbva484-1-i',
+        ('not possible', 'FASM generators for xc7 and nexus only')),
 )
+
+
+def check_expected(res, expect):
+    """Compares the outcome of a DCP design with its pinned EXPECT."""
+    kind = expect[0]
+    if kind == 'frames':
+        got = (res.get('fasm_sha256'), res.get('sparse_sha256'))
+        ok = got == expect[1:]
+        detail = '' if ok else 'FASM / frames sha256 %s / %s' % got
+    elif kind == 'rejected':
+        rejected = res.get('rejected') or ['']
+        ok = (res.get('fasm_lines') == expect[1] and expect[2] in rejected[0])
+        detail = '' if ok else '%s lines, %s' % (
+            res.get('fasm_lines'), rejected[0][:200])
+    else:
+        details = [c['detail'] for c in res['checks'].values()]
+        ok = any(expect[1] in d for d in details)
+        detail = '' if ok else 'expected %r' % expect[1]
+    _step(
+        res, 'expected outcome (%s)' % kind,
+        'identical' if ok else 'different', detail)
 
 
 def strip_traceback(text):
@@ -1407,140 +1471,62 @@ def check_dcp_designs(args, work):
                 'is needed)' % why)
         res['status'] = overall(res)
         results.append(res)
-    for name, family, part in DCP_DESIGNS:
+    d = d / 'dcp'
+    d.mkdir(exist_ok=True)
+    for name, family, part, expect in DCP_DESIGNS:
         res = {'design': 'RapidWrightDCP %s/%s' % (name, part), 'checks': {}}
         results.append(res)
-        if family == 'zynqusp':
-            _step(
-                res, 'fasm_generator', 'not possible',
-                'python-fpga-interchange has FASM generators for xc7 and '
-                'nexus only')
-            res['status'] = overall(res)
-            continue
-        try:
-            java(
-                'com.xilinx.rapidwright.interchange.DcpToInterchange',
-                dcps / ('%s.dcp' % name),
-                cwd=d,
-                env={'RW_AUTO_GENERATE_READABLE_EDIF': '0'})
-            dev = device_resources(part, work)
-        except RuntimeError as e:
-            _step(res, 'DcpToInterchange', 'different', str(e)[-500:])
-            res['status'] = overall(res)
-            continue
-        prefix = d / name
-        fasm = prefix.with_suffix('.fasm')
-        try:
-            pfi(
-                'fasm_generator', '--schema_dir', SCHEMA_DIR, '--family',
-                'xc7', dev, prefix.with_suffix('.netlist'),
-                prefix.with_suffix('.phys'), fasm)
-        except RuntimeError as e:
-            last = [
-                line for line in str(e).splitlines()
-                if re.match(r'[A-Za-z_][\w.]*(Error|Exception)\b', line)
-            ] or [str(e).splitlines()[-1]]
-            _step(
-                res, 'fasm_generator', 'not possible',
-                'python-fpga-interchange: %s' % last[-1][:300])
-            res['status'] = overall(res)
-            continue
-        data = fasm.read_bytes()
-        res['fasm_lines'] = data.count(b'\n')
-        res['fasm_sha256'] = hashlib.sha256(data).hexdigest()
-        ok = compare_fasm2frames(res, family, part, fasm, d, name)
-        stored = design_dir(family, 'dcp-' + name, part) / 'rw.fasm'
-        if ok and 'sparse_frames' in res:
-            if args.install:
-                install_dcp_design(family, name, part, fasm, res)
-            elif stored.is_file():
-                same = stored.read_bytes() == data
-                _step(
-                    res, 'regenerated FASM = committed',
-                    'identical' if same else 'different',
-                    '' if same else 'sha256 %s' % res['fasm_sha256'])
+        check_dcp_design(res, name, family, part, dcps, d, work)
+        check_expected(res, expect)
         res.pop('_ref_sparse', None)
         res['status'] = overall(res)
-        for f in d.glob(name + '.*'):
-            f.unlink()
     return results
 
 
-def install_dcp_design(family, name, part, fasm, res):
-    out = design_dir(family, 'dcp-' + name, part)
-    out.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(fasm, out / 'rw.fasm')
-    ref = res['_ref_sparse']
-    (out / 'rw.sparse.frm.xz').write_bytes(lzma.compress(ref, preset=9))
-    (out / 'difftest.json'
-     ).write_text(json.dumps({
-         'family': family,
-         'part': part
-     }) + '\n')
-    sha = hashlib.sha256(
-        (RW_BUILD / 'dcps' / ('%s.dcp' % name)).read_bytes()).hexdigest()
-    (out / 'README.md').write_text(
-        DCP_README.format(
-            name=name,
-            part=part,
-            family=family,
-            dcp_sha=sha,
-            lines=res['fasm_lines'],
-            fasm_sha=res['fasm_sha256'],
-            frm_sha=hashlib.sha256(ref).hexdigest(),
-            frames=res['sparse_frames'],
-            tag=RW_TAG,
-            pfi=PFI_COMMIT))
+def check_dcp_design(res, name, family, part, dcps, d, work):
+    if family == 'zynqusp':
+        _step(
+            res, 'fasm_generator', 'not possible',
+            'python-fpga-interchange has FASM generators for xc7 and '
+            'nexus only')
+        return
+    try:
+        java(
+            'com.xilinx.rapidwright.interchange.DcpToInterchange',
+            dcps / ('%s.dcp' % name),
+            cwd=d,
+            env={'RW_AUTO_GENERATE_READABLE_EDIF': '0'})
+        dev = device_resources(part, work)
+    except RuntimeError as e:
+        _step(res, 'DcpToInterchange', 'different', str(e)[-500:])
+        return
+    prefix = d / name
+    fasm = prefix.with_suffix('.fasm')
+    try:
+        pfi(
+            'fasm_generator', '--schema_dir', SCHEMA_DIR, '--family',
+            'xc7', dev, prefix.with_suffix('.netlist'),
+            prefix.with_suffix('.phys'), fasm)
+    except RuntimeError as e:
+        last = [
+            line for line in str(e).splitlines()
+            if re.match(r'[A-Za-z_][\w.]*(Error|Exception)\b', line)
+        ] or [str(e).splitlines()[-1]]
+        _step(
+            res, 'fasm_generator', 'not possible',
+            'python-fpga-interchange: %s' % last[-1][:300])
+        return
+    data = fasm.read_bytes()
+    res['fasm_lines'] = data.count(b'\n')
+    res['fasm_sha256'] = hashlib.sha256(data).hexdigest()
+    ok = compare_fasm2frames(res, family, part, fasm, d, name)
+    if ok and '_ref_sparse' in res:
+        res['sparse_sha256'] = hashlib.sha256(res['_ref_sparse']).hexdigest()
+        prefix.with_suffix('.sparse.frm').write_bytes(res['_ref_sparse'])
+    for f in d.glob(name + '.*'):
+        if f.suffix not in ('.fasm', '.frm'):
+            f.unlink()
 
-
-DCP_README = """\
-# rapidwright/dcp-{name}/{part} -- a Vivado DCP through RapidWright (T7.5)
-
-`rw.fasm` is FASM for `{name}.dcp` of RapidWright's test data
-(Xilinx/RapidWrightDCP `f9625fc62d290926668c4955c3a76e9d2044e916`, sha256
-`{dcp_sha}`; placed and routed by Vivado, with a readable EDIF), converted
-without Vivado: RapidWright's `DcpToInterchange` (interchange logical and
-physical netlists), then python-fpga-interchange's xc7 FASM generator with
-RapidWright's device resources for the part (patched with
-python-fpga-interchange's Series7 constraints and LUT definitions;
-`pfi_run.py` supplies the pseudo PIP sites RapidWright does not write).
-`rw.sparse.frm.xz` is the reference `fasm2frames --sparse` (f4pga-xc-fasm,
-prjxray-db) of it: the Rust `fasm2frames` gives the same bytes
-(`tests/e2e/test_rapidwright.py`). The DCP has no bitstream, and without
-Vivado none can be made to compare with.
-
-* Part: `{part}` (family `{family}`)
-* FASM: {lines} lines, sha256 `{fasm_sha}`
-* Sparse frames: {frames}, `.frm` sha256 `{frm_sha}`
-
-## Tools
-
-* RapidWright `{tag}` (`tools/e2e/setup-rapidwright.sh`)
-* python-fpga-interchange `{pfi}` with pycapnp 1.3.0
-  (`setup-rapidwright.sh --with-interchange`, `rapidwright/pfi_run.py`)
-* Database: the pinned prjxray-db of `tools/fetch-db.sh`
-
-## Commands
-
-```
-python3 tools/e2e/rapidwright/rwcheck.py fasm --install
-```
-
-which runs
-
-```
-java com.xilinx.rapidwright.interchange.DcpToInterchange {name}.dcp
-pfi_run.py fasm_generator --family xc7 <device> \\\\
-    {name}.netlist {name}.phys rw.fasm
-fasm2frames-oracle --db-root <prjxray-db>/{family} --part {part} \\\\
-    --sparse rw.fasm rw.sparse.frm
-```
-
-## Licence
-
-RapidWrightDCP is Apache-2.0 (RapidWright's licence); the FASM is
-derived from its DCP.
-"""
 
 # ------------------------------------------------------------------- main
 

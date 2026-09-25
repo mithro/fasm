@@ -15,7 +15,7 @@ results matrix is in `DESIGN-xilinx-db.md` §8.15; usage in
 | Java | OpenJDK 21.0.10, `-Xmx4g` | |
 | python-fpga-interchange | `04a02101d1f7f03a2d33716192fb478e1e8605af` (its last commit, 0.0.18), pycapnp 1.3.0, python-sat, PyYAML | `setup-rapidwright.sh --with-interchange` |
 | FPGA interchange schema | `c985b4648e66414b250261c1ba4cbe45a2971b1c` (RapidWright's submodule at the tag) plus capnproto-java's `java.capnp` v0.1.16 (imported by `References.capnp`) | same |
-| RapidWrightDCP | `f9625fc62d290926668c4955c3a76e9d2044e916` (RapidWright's `test/RapidWrightDCP` submodule at the tag): its nine DCPs for parts we have databases for | same |
+| RapidWrightDCP | `f9625fc62d290926668c4955c3a76e9d2044e916` (RapidWright's `test/RapidWrightDCP` submodule at the tag): its nine DCPs for parts we have databases for; no licence file in Xilinx/RapidWrightDCP at `f9625fc` (only DCP and EDIF test data, no LICENSE or README); AMD/Xilinx test data distributed as RapidWright's test submodule, so nothing derived from them is committed | same |
 
 The drivers are small and committed: `tools/e2e/rapidwright/RwCheck.java`
 (the bitstream API), `RwDesign.java` (a design placed and routed by
@@ -72,13 +72,19 @@ adaptations, §4), `rwcheck.py` (the comparisons), and
     ring design leaves clock, CE and reset unconnected).
   * The generator needs `INIT` on every flip-flop cell (`KeyError:
     'INIT'` otherwise): `RwDesign.java` sets it.
-* Designs that went through (all in `tests/corpus/xilinx/*/designs/
-  rapidwright/`, each with its reference sparse frames):
+* Designs that went through:
   * three RapidWright-built rings of 60 LUT6 + flip-flop stages
     (xc7a35tcsg324-1 seeds 1 and 2, xc7z010clg400-1 seed 1; 4969-5521
-    FASM lines, 2014-3324 sparse frames);
+    FASM lines, 2014-3324 sparse frames), stored with their reference
+    sparse frames in `tests/corpus/xilinx/*/designs/rapidwright/`;
   * two Vivado DCPs of RapidWrightDCP, `routethru_luts` and
-    `routethru_pip` (xc7a35tcpg236-1; 47 and 136 lines).
+    `routethru_pip` (xc7a35tcpg236-1; 47 and 136 lines, 106 sparse frames
+    each). RapidWrightDCP has no licence file, so their FASM and frames
+    are **not** committed: `rwcheck.py fasm` regenerates them (in
+    `<work>/fasm/dcp/`) and checks them against the SHA-256 of the FASM
+    and of the reference frames pinned in `rwcheck.py` (`DCP_DESIGNS`,
+    which also pins every other DCP's expected outcome and error line, so
+    that a new generator failure is a difference).
 * Designs that did not (`rwcheck.py fasm` reports them as "not
   possible", with the error):
   * the prjxray-db harness DCPs (`artix7/harness/*/*/design.dcp`, Vivado
