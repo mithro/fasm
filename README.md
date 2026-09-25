@@ -104,11 +104,6 @@ parsing the text database (about 4-6x faster opens: e.g. 23 ms instead of
 about 100 ms for xc7a35t). A cache file is only used when none of the files
 it was built from changed (size, stat fingerprint, BLAKE3 content hash),
 otherwise it is silently rebuilt; the output is identical either way.
-See [`docs/rewrite/BENCHMARKS.md`](docs/rewrite/BENCHMARKS.md) for the
-full benchmark suite and numbers: parser throughput vs. the Python/ANTLR
-oracle (double digit to 300x+ speed-ups depending on file size and
-parser), database open with/without the cache, assembly and bitstream
-timings, and Python binding overheads.
 It is configured by the environment only (the command lines stay those
 of the reference tools):
 
@@ -118,6 +113,12 @@ of the reference tools):
   the text databases.)
 * `FASM_XDB_CACHE_VERBOSE=1`: report cache hits, rebuilds and their
   reason on stderr.
+
+See [`docs/rewrite/BENCHMARKS.md`](docs/rewrite/BENCHMARKS.md) for the
+full benchmark suite and numbers: parser throughput vs. the Python/ANTLR
+oracle (double digit to 300x+ speed-ups depending on file size and
+parser), database open with/without the cache, assembly and bitstream
+timings, and Python binding overheads.
 
 `fasm-db-cache build DB_ROOT PART...` (or `build --all DB_ROOT`) fills
 the cache ahead of time; `verify` re-hashes every source file, `info`,
