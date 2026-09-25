@@ -25,7 +25,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use fasm_xilinx::{
-    fasm2frames, AssemblerError, Database, Fasm2FramesOptions, FasmAssembler, Frames,
+    fasm2frames, fasm2frames_from, propagate_stepdown, AssemblerError, Database,
+    Fasm2FramesOptions, FasmAssembler, FasmInput, Frames,
 };
 
 use common::{repo_root, testdata};
@@ -161,6 +162,45 @@ fn frm_matches_oracle() {
             assert!(back.diff(&frames).is_empty());
         }
     }
+}
+
+/// `fasm2frames_from` with the FASM text in memory, and an assembler
+/// sharing its database (`new_shared`) plus `propagate_stepdown`, give
+/// the same frames as `fasm2frames` on the file.
+#[test]
+fn bytes_input_and_shared_assembler() {
+    let db = std::sync::Arc::new(open());
+    for fixture in FIXTURES {
+        let path = corpus(fixture);
+        let text = std::fs::read(&path).unwrap();
+        for sparse in [false, true] {
+            let options = Fasm2FramesOptions {
+                sparse,
+                ..Default::default()
+            };
+            let (expected, _) = run_file(&db, &path, &options);
+            let expected = expected.unwrap();
+            let from_bytes =
+                fasm2frames_from(&db, FasmInput::Bytes(&text), &options, &mut |_| {}).unwrap();
+            assert!(from_bytes == expected, "{fixture}");
+
+            let mut assembler = FasmAssembler::new_shared(std::sync::Arc::clone(&db)).unwrap();
+            assembler.parse_fasm_bytes(&text, Vec::new()).unwrap();
+            propagate_stepdown(&db, &mut assembler).unwrap();
+            assert!(
+                assembler.get_frames(sparse).unwrap() == expected,
+                "{fixture}"
+            );
+        }
+    }
+    let err = fasm2frames_from(
+        &db,
+        FasmInput::Bytes(b"NOPE_X0Y0.A\n"),
+        &Default::default(),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert_eq!(err.traceback_line(), "KeyError: 'NOPE_X0Y0'");
 }
 
 // The cases of f4pga-xc-fasm's tests/test_fasm2frames.py.

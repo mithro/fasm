@@ -20,7 +20,9 @@
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::io;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use fasm::idstring::IdString;
 use fasm::{FasmLine, ParseError, SetFasmFeature};
@@ -288,6 +290,11 @@ fn unpack_key(key: u64) -> (u32, i64, u32) {
 /// * [`FasmAssembler::get_frames`] returns every frame of the grid
 ///   (dense) or only the frames in use (sparse), plus the frame of every
 ///   bit that was written, zero filled, with the set bits applied.
+///
+/// The assembler borrows its database ([`FasmAssembler::new`]) or shares
+/// the ownership of it ([`FasmAssembler::new_shared`], a
+/// `FasmAssembler<'static>` for bindings that cannot express the borrow,
+/// such as the Python and C APIs).
 pub struct FasmAssembler<'db> {
     core: Core<'db>,
     /// Every line given to the assembler, for error messages: bits refer
@@ -299,8 +306,7 @@ pub struct FasmAssembler<'db> {
 /// The state of [`FasmAssembler`] other than the lines and the callback
 /// (so that a line of `lines` can be processed while the state changes).
 struct Core<'db> {
-    db: &'db Database,
-    grid: &'db Grid,
+    db: DbRef<'db>,
     architecture: Architecture,
     words_per_frame: usize,
     /// Packed `(frame, unwrapped word, bit)` -> `line index << 1 | is_set`.
@@ -361,15 +367,20 @@ impl<'db> FasmAssembler<'db> {
     /// [`AssemblerError::Python`] (`AttributeError`) if the database was
     /// opened without a part (it has no grid).
     pub fn new(db: &'db Database) -> Result<Self, AssemblerError> {
-        let grid = db.grid().ok_or(AssemblerError::Python {
-            exception: "AttributeError",
-            message: "the database was opened without a part".to_owned(),
-        })?;
+        Self::with_db(DbRef::Borrowed(db))
+    }
+
+    fn with_db(db: DbRef<'db>) -> Result<Self, AssemblerError> {
+        if db.grid().is_none() {
+            return Err(AssemblerError::Python {
+                exception: "AttributeError",
+                message: "the database was opened without a part".to_owned(),
+            });
+        }
         let architecture = db.architecture();
         Ok(FasmAssembler {
             core: Core {
                 db,
-                grid,
                 architecture,
                 words_per_frame: architecture.words_per_frame(),
                 bits: HashMap::new(),
@@ -399,8 +410,8 @@ impl<'db> FasmAssembler<'db> {
     }
 
     /// The database.
-    pub fn database(&self) -> &'db Database {
-        self.core.db
+    pub fn database(&self) -> &Database {
+        &self.core.db
     }
 
     /// Sets the callback run on every feature
@@ -555,11 +566,17 @@ impl<'db> FasmAssembler<'db> {
     /// `FasmAssembler.mark_roi_frames`: marks every frame of every bus of
     /// the tiles inside `roi` in use.
     pub fn mark_roi_frames(&mut self, roi: &Roi) {
-        let grid = self.core.grid;
+        let core = &mut self.core;
+        let grid = core.db.grid().expect("checked by FasmAssembler::new");
         for tile in grid.tiles() {
             if roi.contains(tile.grid_x, tile.grid_y) {
                 for block in grid.bits(tile) {
-                    self.core.mark_in_use(block.base_address, block.frames);
+                    mark_in_use(
+                        &mut core.in_use,
+                        &mut core.last_in_use,
+                        block.base_address,
+                        block.frames,
+                    );
                 }
             }
         }
@@ -577,7 +594,7 @@ impl<'db> FasmAssembler<'db> {
         let blocks: HashSet<(u32, u32)> = if sparse {
             core.in_use.clone()
         } else {
-            core.grid
+            core.grid()
                 .iter_bits()
                 .map(|(_, b)| (b.base_address, b.frames))
                 .collect()
@@ -650,7 +667,7 @@ impl Core<'_> {
             }
             Err(LookupError::UnknownFeature { .. } | LookupError::MissingBitsBlock { .. }) => {
                 let tile_type = self
-                    .grid
+                    .grid()
                     .tile(tile)
                     .map_or_else(String::new, |t| t.tile_type.to_string());
                 return Err(AssemblerError::Lookup(vec![format!(
@@ -733,10 +750,56 @@ impl Core<'_> {
     }
 
     fn mark_in_use(&mut self, base: u32, frames: u32) {
-        if self.last_in_use != Some((base, frames)) {
-            self.in_use.insert((base, frames));
-            self.last_in_use = Some((base, frames));
+        mark_in_use(&mut self.in_use, &mut self.last_in_use, base, frames);
+    }
+
+    fn grid(&self) -> &Grid {
+        self.db.grid().expect("checked by FasmAssembler::new")
+    }
+}
+
+/// Marks the bus block `(base, frames)` in use.
+fn mark_in_use(
+    in_use: &mut HashSet<(u32, u32)>,
+    last_in_use: &mut Option<(u32, u32)>,
+    base: u32,
+    frames: u32,
+) {
+    if *last_in_use != Some((base, frames)) {
+        in_use.insert((base, frames));
+        *last_in_use = Some((base, frames));
+    }
+}
+
+/// The database of an assembler: borrowed, or shared.
+#[derive(Clone)]
+enum DbRef<'db> {
+    Borrowed(&'db Database),
+    Shared(Arc<Database>),
+}
+
+impl Deref for DbRef<'_> {
+    type Target = Database;
+
+    fn deref(&self) -> &Database {
+        match self {
+            DbRef::Borrowed(db) => db,
+            DbRef::Shared(db) => db,
         }
+    }
+}
+
+impl FasmAssembler<'static> {
+    /// [`FasmAssembler::new`] for a database whose ownership the assembler
+    /// shares: the assembler does not borrow anything, so it can live in
+    /// an object of a language binding next to other users of the same
+    /// database.
+    ///
+    /// # Errors
+    ///
+    /// See [`FasmAssembler::new`].
+    pub fn new_shared(db: Arc<Database>) -> Result<Self, AssemblerError> {
+        Self::with_db(DbRef::Shared(db))
     }
 }
 

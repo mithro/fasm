@@ -92,6 +92,43 @@ pub fn fasm2frames(
     options: &Fasm2FramesOptions,
     warn: &mut dyn FnMut(&str),
 ) -> Result<Frames, AssemblerError> {
+    fasm2frames_from(db, FasmInput::File(fasm), options, warn)
+}
+
+/// Where [`fasm2frames_from`] and [`uray_fasm2frames_from`] take the FASM
+/// text from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FasmInput<'a> {
+    /// A FASM file ([`FasmAssembler::parse_fasm_filename`]).
+    File(&'a Path),
+    /// The contents of a FASM file ([`FasmAssembler::parse_fasm_bytes`]).
+    Bytes(&'a [u8]),
+}
+
+impl FasmInput<'_> {
+    fn parse(
+        self,
+        assembler: &mut FasmAssembler<'_>,
+        extra_features: Vec<FasmLine>,
+    ) -> Result<(), AssemblerError> {
+        match self {
+            FasmInput::File(path) => assembler.parse_fasm_filename(path, extra_features),
+            FasmInput::Bytes(data) => assembler.parse_fasm_bytes(data, extra_features),
+        }
+    }
+}
+
+/// [`fasm2frames`] for a FASM file or text.
+///
+/// # Errors
+///
+/// See [`AssemblerError`].
+pub fn fasm2frames_from(
+    db: &Database,
+    fasm: FasmInput<'_>,
+    options: &Fasm2FramesOptions,
+    warn: &mut dyn FnMut(&str),
+) -> Result<Frames, AssemblerError> {
     let mut assembler = FasmAssembler::new(db)?;
     let result = run(db, &mut assembler, fasm, options);
     for warning in assembler.take_warnings() {
@@ -117,6 +154,19 @@ pub fn uray_fasm2frames(
     fasm: &Path,
     options: &Fasm2FramesOptions,
 ) -> Result<Frames, AssemblerError> {
+    uray_fasm2frames_from(db, FasmInput::File(fasm), options)
+}
+
+/// [`uray_fasm2frames`] for a FASM file or text.
+///
+/// # Errors
+///
+/// See [`AssemblerError`].
+pub fn uray_fasm2frames_from(
+    db: &Database,
+    fasm: FasmInput<'_>,
+    options: &Fasm2FramesOptions,
+) -> Result<Frames, AssemblerError> {
     let mut assembler = FasmAssembler::new(db)?;
     assembler.set_prjuray(true);
     let info = db.part_info().ok_or_else(|| AssemblerError::Python {
@@ -133,7 +183,7 @@ pub fn uray_fasm2frames(
     }
     let required = db.get_required_fasm_features(Some(&info.name)).join("\n");
     extra_features.extend(fasm::parse_fasm_string(&required)?);
-    assembler.parse_fasm_filename(fasm, extra_features)?;
+    fasm.parse(&mut assembler, extra_features)?;
     assembler.get_frames(options.sparse)
 }
 
@@ -227,7 +277,7 @@ fn not_found(path: PathBuf) -> AssemblerError {
 fn run(
     db: &Database,
     assembler: &mut FasmAssembler<'_>,
-    fasm: &Path,
+    fasm: FasmInput<'_>,
     options: &Fasm2FramesOptions,
 ) -> Result<Frames, AssemblerError> {
     let info = db.part_info().ok_or_else(|| AssemblerError::Python {
@@ -286,7 +336,7 @@ fn run(
     let required = db.get_required_fasm_features(Some(&info.name)).join("\n");
     extra_features.extend(fasm::parse_fasm_string(&required)?);
 
-    assembler.parse_fasm_filename(fasm, extra_features)?;
+    fasm.parse(assembler, extra_features)?;
 
     if let Some((tile, site)) = pudc.as_ref().filter(|_| !pudc_in_use.get()) {
         let mut text = String::from("\n");
@@ -358,8 +408,19 @@ fn last_digit(site: &str) -> Result<u32, AssemblerError> {
     })
 }
 
-/// The STEPDOWN pass of `fasm2frames()`.
-fn propagate_stepdown(
+/// The STEPDOWN pass of `fasm2frames()` (step 7 of [`fasm2frames`]) on
+/// the lines `assembler` has seen so far: if a used IOB of a bank sets a
+/// feature whose tag contains `STEPDOWN`, every unused IOB site of the
+/// bank gets the same tag(s) and the bank's `HCLK_IOI3` tile gets
+/// `STEPDOWN`. Does nothing without the part's IO bank maps.
+///
+/// # Errors
+///
+/// The errors of [`FasmAssembler::add_fasm_line`],
+/// [`AssemblerError::Lookup`] for added features that are not in the
+/// database, and [`AssemblerError::KeyError`] for a STEPDOWN tile without
+/// an IO bank.
+pub fn propagate_stepdown(
     db: &Database,
     assembler: &mut FasmAssembler<'_>,
 ) -> Result<(), AssemblerError> {
