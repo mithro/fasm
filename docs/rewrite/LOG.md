@@ -819,3 +819,7 @@ what happened, branch/commit references, open issues.
   the debug target removed.
 * T7.4 (VTR genfasm designs via the vtr-optimized binaries in the f4pga
   conda env and the upstream VTR checkout) started (Opus); T8.2 running.
+* GitHub access granted: claude/epic-goldberg-uc7xqf pushed (483 commits);
+  pushes now succeed after every merge. Local master holds the T0.1
+  fast-forward to upstream ffafe82 (50 commits) and is left for the user
+  to push.
