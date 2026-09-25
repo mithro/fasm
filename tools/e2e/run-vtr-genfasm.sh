@@ -328,7 +328,7 @@ run_xc7() {
     if [[ ${r%% *} != 0 || -z $fasm ]] || ! grep -q '^Writing Implementation FASM' "$out/genfasm.log"; then
       status="failed: genfasm exit ${r%% *} $(vpr_error "$out/genfasm.log")"
     else
-      mv "$out/$fasm" "$out/top.fasm"
+      [[ $fasm == ./top.fasm ]] || mv "$out/$fasm" "$out/top.fasm"
       status=built
       # The reference frames and bitstream: the f4pga flow's xcfasm
       # command line (as tools/e2e/run-f4pga-examples.sh), with --frm_out.
