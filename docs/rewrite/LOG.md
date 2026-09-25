@@ -644,3 +644,15 @@ what happened, branch/commit references, open issues.
 * T6.3 (prjuray-db all-parts differential tests with every-feature
   coverage) started (Opus); T7.3 running; version 2 all-parts prjxray run
   at 74/125 parts in the background.
+* T6.3 implemented on branch `worktree-agent-a2a7bb03c7cd519cf` (7
+  commits): gen-xilinx-corpus.py for the prjuray-db layout (16-bit words,
+  past-frame-end handling, new error files), `--prjuray` over every
+  family/part with the every-feature corpus, result cache, JSON report,
+  `make uray-difftest-all`, test_uray_corpus.py + golden under
+  tests/corpus/prjuray/, 6 new generator tests, §8.12. Upstream prjuray-db
+  (affbc5e5) has only zynqusp with the two xczu3eg parts and no native
+  UltraScale part. Coverage 27/27 segbits tile types, 54542/54542 reachable
+  features, 34 keys unreachable (digit-leading name parts neither parser
+  accepts). 268 uray-fasm2frames runs = 258 identical + 10 explained
+  (value range) + 0 different, 1248 bitstream tool runs identical, 406 s.
+  No Rust bug found. Independent review (Opus) started.
