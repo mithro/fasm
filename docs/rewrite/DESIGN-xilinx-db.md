@@ -3393,6 +3393,115 @@ T7.2 `$buf` workaround for nextpnr-xilinx 0.8.2, applied to the written
 netlist; the flow is deterministic (three full runs gave the same 20
 FASM files, two the same bscane2 FASM).
 
+### 8.14 VTR genfasm designs (T7.4)
+
+VTR's own FASM writer (`genfasm`, VTR `25e723a24`: the f4pga toolchain's
+`vtr-optimized 8.0.0_5699_g25e723a24`, `vpr --version`
+`8.1.0-dev+25e723a24-dirty`) run on every VTR design that can produce
+FASM (`tools/e2e/run-vtr-genfasm.sh`; usage and quirks:
+`tools/e2e/README.md`, "VTR genfasm designs (T7.4)"). Of VTR's
+architectures only two kinds have `fasm_*` metadata: its genfasm test
+architecture `utils/fasm/test/test_fasm_arch.xml` (generic FASM: 428 of
+VTR's 1502 BLIF netlists fit it; `tests/corpus/vtr/README.md` has that
+matrix, and `docs/rewrite/COMPAT.md`, "VTR genfasm output", the one
+genfasm output no FASM parser accepts) and the symbiflow-arch-defs
+architectures of VTR's nightly `symbiflow` task, i.e. the f4pga
+toolchain's `xc7a50t_test` (Xilinx FASM, this section). Two sets of
+designs were run on `xc7a50t_test`:
+
+* **VTR's `symbiflow` benchmarks** (`vtr_reg_nightly_test1/symbiflow`:
+  eblif netlists with placement constraints and, except for
+  `counter_basys3` and the `murax` circuits, SDC, from the
+  symbiflow-arch-defs `fb1b251a` benchmark tarball that
+  `vtr_flow/scripts/download_symbiflow.py` fetches; VPR with the task's
+  options, then genfasm): all 10 `xc7a50t_test` circuits of the tarball
+  (the task lists 6 of them); its 4 `xc7a100t_test` circuits were not run
+  (device not installed, §8.11).
+* **VTR's Verilog benchmarks** (`vtr_flow/benchmarks/verilog/*.v`, 28)
+  through the f4pga flow for the Arty A7-35T (`symbiflow_synth`, `_pack`,
+  `_place`, `_route`, `_write_fasm`), with a generated PCF and models of
+  VTR's hard blocks (`tools/e2e/vtr/make-pcf.py`,
+  `hard-block-models.py`).
+
+For each design the reference frames and bitstream are the f4pga
+flow's `xcfasm --sparse --emit_pudc_b_pullup` with the flow's prjxray-db
+(identical to the pinned one, §8.11), and the comparisons are those of
+§8.11: `tools/e2e/compare-f4pga-examples.py --out <out>/xc7a50t_test`
+(Rust `xcfasm`, `fasm2frames` with the flow's and the pinned database,
+`xc7frames2bit`, `bitread` x 11 flag sets and the `fasm` CLI with and
+without `--canonical` against the flow's tools, the `fasm` CLI also
+against the oracle) and `tools/difftest.py`-style parse / print /
+canonical / round trip comparisons against the Python oracle (ANTLR and
+textX).
+
+**Results** (VPR / genfasm wall time on this machine, 4 cores, two jobs
+at a time; xcfasm times are one run each, the Rust tool with a warm
+database cache):
+
+VTR `symbiflow` task benchmarks (`(task)`: listed in the task's `config.txt`):
+
+| Design | Board (part) | FASM lines | VPR / genfasm | Parser = oracle | Same as flow (frm, bit, bitread, fasm) | xcfasm flow / Rust | fasm --canonical flow / Rust | Committed |
+|---|---|---|---|---|---|---|---|---|
+| counter_basys3 | basys3 (xc7a35tcpg236-1) | 1703 | 14 / 19.1 s | yes | yes | 0.63 / 0.04 s | 0.07 / 0.00 s | yes |
+| ibex_arty | arty_35 (xc7a35tcsg324-1) | 103176 | 101 / 24.7 s | yes | yes | 4.48 / 0.16 s | 1.51 / 0.08 s | yes |
+| linux_arty (task) | arty_35 (xc7a35tcsg324-1) | 351989 | 621 / 42.3 s | yes | yes | 17.85 / 0.49 s | 4.91 / 0.31 s | no |
+| minilitex_arty (task) | arty_35 (xc7a35tcsg324-1) | 153885 | 268 / 30.4 s | yes | yes | 7.40 / 0.22 s | 2.29 / 0.12 s | yes |
+| minilitex_ddr_arty (task) | arty_35 (xc7a35tcsg324-1) | 258581 | 391 / 31.6 s | yes | yes | 13.16 / 0.33 s | 3.56 / 0.20 s | yes |
+| minilitex_ddr_eth_arty (task) | arty_35 (xc7a35tcsg324-1) | 287369 | 463 / 36.2 s | yes | yes | 13.48 / 0.34 s | 4.14 / 0.23 s | no |
+| murax_basys3_full_100 | basys3 (xc7a35tcpg236-1) | 42219 | 87 / 23.9 s | yes | yes | 1.87 / 0.08 s | 0.55 / 0.03 s | no |
+| murax_basys3_full_50 | basys3 (xc7a35tcpg236-1) | 42401 | 75 / 20.5 s | yes | yes | 1.86 / 0.07 s | 0.62 / 0.03 s | yes |
+| picosoc_basys3_full_100 (task) | basys3 (xc7a35tcpg236-1) | 102638 | 198 / 25.0 s | yes | yes | 4.17 / 0.15 s | 1.52 / 0.09 s | yes |
+| picosoc_basys3_full_50 (task) | basys3 (xc7a35tcpg236-1) | 109742 | 98 / 24.2 s | yes | yes | 4.34 / 0.15 s | 1.34 / 0.08 s | yes |
+
+VTR Verilog benchmarks (times: synthesis / pack + place + route / `symbiflow_write_fasm`):
+
+| Design | Board (part) | FASM lines | synth / pack+place+route / write_fasm | Parser = oracle | Same as flow (frm, bit, bitread, fasm) | xcfasm flow / Rust | fasm --canonical flow / Rust | Committed |
+|---|---|---|---|---|---|---|---|---|
+| and_latch | arty_35 (xc7a35tcsg324-1) | 112 | 12 / 38 / 19.8 s | yes | yes | 0.50 / 0.06 s | 0.04 / 0.00 s | yes |
+| diffeq2 | arty_35 (xc7a35tcsg324-1) | 76667 | 25 / 125 / 22.8 s | yes | yes | 3.10 / 0.11 s | 1.16 / 0.05 s | yes |
+| multiclock_output_and_latch | arty_35 (xc7a35tcsg324-1) | 265 | 12 / 29 / 18.8 s | yes | yes | 0.61 / 0.04 s | 0.04 / 0.00 s | yes |
+| multiclock_reader_writer | arty_35 (xc7a35tcsg324-1) | 534 | 12 / 30 / 18.8 s | yes | yes | 0.51 / 0.07 s | 0.07 / 0.00 s | yes |
+| multiclock_separate_and_latch | arty_35 (xc7a35tcsg324-1) | 267 | 12 / 29 / 18.9 s | yes | yes | 0.64 / 0.16 s | 0.07 / 0.00 s | yes |
+| sha | arty_35 (xc7a35tcsg324-1) | 49080 | 19 / 84 / 21.6 s | yes | yes | 2.20 / 0.11 s | 0.70 / 0.04 s | yes |
+| single_ff | arty_35 (xc7a35tcsg324-1) | 82 | 11 / 29 / 19.2 s | yes | yes | 0.45 / 0.04 s | 0.05 / 0.00 s | yes |
+| single_wire | arty_35 (xc7a35tcsg324-1) | 51 | 11 / 29 / 19.7 s | yes | yes | 0.44 / 0.04 s | 0.04 / 0.00 s | yes |
+| spree | arty_35 (xc7a35tcsg324-1) | 27993 | 24 / 64 / 24.7 s | yes | yes | 1.46 / 0.10 s | 0.36 / 0.02 s | yes |
+
+**Committed** (`tests/corpus/xilinx/artix7/designs/vtr/<design>/<board>/`,
+`genfasm.fasm[.xz]` with `difftest.json`, README and the sha256 of the
+FASM, frames and bitstream; the frames as `genfasm.frm.xz` when under 64
+KiB compressed): the 7 `symbiflow` benchmarks and the 9 Verilog benchmarks marked above (3.7 MB; 9 of the 16 FASM files as `xz -9e`, 10 with their frames). Not committed, to keep the corpus small
+(verified the same way; their sha256 are in `info.json` of the run
+directory and reproduced by `run-vtr-genfasm.sh`): `linux_arty` (352k lines, 1.2 MB compressed), `minilitex_ddr_eth_arty` (1.0 MB) and `murax_basys3_full_100` (42k lines, a variant of `murax_basys3_full_50`).
+`make xilinx-difftest` covers the committed ones (16 FASM files: 64
+fasm2frames runs, 48 xcfasm runs, 576 xc7frames2bit + bitread
+runs, all identical to the oracle).
+
+**Findings.** No difference between the Rust tools and the flow's or
+the oracle's; no Rust bug found, no Rust change. genfasm's Xilinx output
+is plain FASM like the f4pga-examples designs of §8.11 (it is the same
+tool): one feature per line, values `[hi:lo]=<w>'b<bits>`, repeated
+features (`docs/rewrite/COMPAT.md`, "VTR genfasm output"). What did not
+produce FASM, and why:
+
+* the tarball's `*_arty_a7` / `*_arty_100t` circuits (4): need
+  `xc7a100t_test`, not installed (§8.11);
+* Verilog benchmarks with more port bits than the package has IOB pins
+  (210): `arm_core` (313), `bgm` (290), `blob_merge` (232), `boundtop`
+  (468), `ch_intrinsics` (229), `diffeq1` (258), `LU8PEEng` (216),
+  `mkDelayWorker32B` (1066), `mkPktMerge` (467), `mkSMAdapter4B` (403),
+  `or1200` (782), `raygentop` (560), `stereovision0` (366),
+  `stereovision1` (278), `stereovision2` (331): VTR's benchmarks are
+  written for its own architectures' IO rings (hundreds of pads), not for
+  a package;
+* synthesis beyond this task's limits (15 minutes, 7 GiB): `LU32PEEng`
+  (the flow's Yosys stops with `ERROR: uncaught exception` reading back its
+  own JSON netlist after 519 s, most likely out of memory), `LU64PEEng`
+  and `mcml` (timed out);
+* `stereovision3`: a latch (`LDCE`), which the `xc7a50t_test` VPR
+  architecture does not model (`Failed to find matching architecture model
+  for 'LDCE'` in packing).
+
 ## 9. Open questions / risks
 
 1. **Resolved by T6.2 (§8.10):** plain UltraScale uses the UltraScale+

@@ -1,4 +1,4 @@
-# End-to-end toolchains (T7.1, T7.2, T7.3, T7.6)
+# End-to-end toolchains (T7.1, T7.2, T7.3, T7.4, T7.6)
 
 Makes an open source Xilinx 7 series synthesis + place-and-route flow
 available on this machine, so later tasks (T7.2, T7.3) can turn the
@@ -868,3 +868,131 @@ The regression cases also run their own `check.sh` like
 `info.json` and the corpus README (`const-holdout` passes;
 `bufh-clock-constraint` and `xorigport-unknown-name` fail as expected of
 a nextpnr-xilinx without their fixes).
+
+## VTR genfasm designs (T7.4)
+
+Runs VTR's `genfasm` (VTR's FASM writer, the one the f4pga flow uses) on
+every VTR design that can produce FASM, collects the FASM, and for the
+Xilinx ones the reference frames and bitstream, for the Rust tools'
+differential tests. Results matrix: `docs/rewrite/DESIGN-xilinx-db.md`
+§8.14 (Xilinx) and `tests/corpus/vtr/README.md` (generic FASM).
+
+genfasm and VPR are those of the f4pga toolchain (`setup-f4pga.sh`
+above: conda package `vtr-optimized 8.0.0_5699_g25e723a24`, `vpr
+--version` `8.1.0-dev+25e723a24-dirty`), i.e. VTR
+`25e723a24aa0ae7a0061cd89dd84b1fb62afcc09` (2022-07-16); nothing else is
+installed. The VTR sources (test architecture, benchmarks, hard block
+models) are read from a VTR checkout at that commit: `$VTR_ROOT`
+(default `tools/e2e/build/vtr`, a blobless sparse clone of the
+directories used, about 130 MB, made on first use).
+
+### Which designs
+
+* **`test_fasm_arch`** (generic FASM): the only VTR architecture with
+  `fasm_*` metadata is `utils/fasm/test/test_fasm_arch.xml`, the
+  architecture of VTR's genfasm test `test_fasm.cpp` (nothing under
+  `vtr_flow/arch/` has any). Every VTR BLIF netlist is run on it
+  (`wire.eblif` of the test, `vtr_flow/benchmarks/{microbenchmarks,tests,blif}`,
+  the MCNC circuits in their 2- to 8-LUT and wiremap6 versions: 1502
+  circuits) with `--route_chan_width 100` like the test; 428 fit its fixed
+  6x6 layout and produce FASM. `wire.eblif` is also run the way
+  `test_fasm.cpp`'s `fasm_integration_test` runs it: every rr graph edge
+  gets `fasm_features` metadata (`vpr --write_rr_graph`,
+  `tools/e2e/vtr/add-rr-edge-metadata.py`, `genfasm --read_rr_graph`).
+  About 4 minutes for all of them, one at a time.
+* **`xc7a50t_test`** (Xilinx FASM): VTR's nightly regression task
+  `vtr_reg_nightly_test1/symbiflow` runs VPR on eblif netlists made by
+  symbiflow-arch-defs (`fb1b251a`) for the `xc7a50t_test` architecture,
+  downloaded by `vtr_flow/scripts/download_symbiflow.py` (a 3.6 MB
+  tarball; `run-vtr-genfasm.sh` downloads the same file and checks its
+  sha256, into `$VTR_SYMBIFLOW_BENCHMARKS`, default
+  `tools/e2e/build/vtr-symbiflow-benchmarks`). They are run with the
+  task's VPR options, SDC and placement constraints on the f4pga
+  toolchain's `xc7a50t_test` (symbiflow-arch-defs `007d1c1`), then
+  genfasm. The tarball's four `*_a7`/`*_100t` circuits need
+  `xc7a100t_test`, not installed here.
+* **`verilog`** (Xilinx FASM): VTR's Verilog benchmarks
+  (`vtr_flow/benchmarks/verilog/*.v`) through the f4pga flow for the
+  Arty A7-35T, the steps of the f4pga-examples Makefiles
+  (`symbiflow_synth`, `_pack`, `_place`, `_route`, `_write_fasm`), with
+  two additions the benchmarks need: a PCF (they have no pin
+  constraints, and the f4pga placer fails without one: `ValueError: max()
+  arg is an empty sequence` in `vpr_io_place.py`), made by
+  `tools/e2e/vtr/make-pcf.py` (every port bit on a package pin, clocks on
+  clock capable pins first; only IOB sites, not the XADC's analog pads
+  that the pin map lists too), and Verilog models of VTR's hard blocks
+  (`single_port_ram`, `dual_port_ram`, `multiply`, `adder`, which VTR maps
+  to its own architectures' blocks), made by
+  `tools/e2e/vtr/hard-block-models.py`: `vtr_flow/primitives.v`'s
+  models, the RAMs rewritten with non-blocking assignments (the same
+  behaviour) because Yosys turns `primitives.v`'s blocking-assignment
+  RAMs into registers (`boundtop` then did not synthesise in 15 minutes,
+  `LU32PEEng` ran out of memory).
+
+Each Xilinx design gets its reference frames and bitstream from the f4pga
+flow's `xcfasm --sparse --emit_pudc_b_pullup` (as for the f4pga-examples
+above), so `compare-f4pga-examples.py` and `difftest-xilinx.py
+--corpus-root` work on the output unchanged.
+
+### Running
+
+```
+export VTR_ROOT=...                              # optional, VTR checkout at 25e723a24
+tools/e2e/run-vtr-genfasm.sh --list [GROUP]      # the circuits of each group
+tools/e2e/run-vtr-genfasm.sh [--jobs 2] test_fasm_arch [CIRCUIT...]
+tools/e2e/run-vtr-genfasm.sh xc7a50t_test [CIRCUIT...]    # one at a time: 4-6 GB each
+tools/e2e/run-vtr-genfasm.sh verilog [BENCHMARK...]
+tools/e2e/compare-f4pga-examples.py --out tools/e2e/build/out/vtr-genfasm/xc7a50t_test
+python3 tools/difftest-xilinx.py --corpus-root tools/e2e/build/out/vtr-genfasm/xc7a50t_test \
+  --oracle tests/oracle/fasm2frames-oracle --frames2bit-oracle tests/oracle/xc7frames2bit-oracle \
+  --bitread-oracle tests/oracle/bitread-oracle --xcfasm-oracle tests/oracle/xcfasm-oracle
+tools/e2e/install-vtr-genfasm-corpus.py [--xilinx CIRCUIT/BOARD ...]   # into the corpus
+```
+
+Output: `tools/e2e/build/out/vtr-genfasm/` (`$VTR_GENFASM_OUT`),
+`test_fasm_arch/<circuit>/` and `xc7a50t_test/<circuit>/<board>/`, each
+with an `info.json` (status, VPR/genfasm wall time, sha256s) and the
+tools' logs (`xz`). Each VPR/genfasm run is limited to
+`$VTR_TIMEOUT` seconds (900) and `$VTR_MEMORY_KB` of virtual memory (7
+GiB). A circuit that VPR (or synthesis) cannot implement on its
+architecture is recorded as such, with VPR's message, and is not a
+failure of the script.
+
+### Quirks found here
+
+* `test_fasm.cpp`'s rr edge features (`533_557_0`) start with a digit:
+  not FASM identifiers, so no FASM parser accepts the test's own genfasm
+  output (the test matches lines with regular expressions instead);
+  `docs/rewrite/COMPAT.md`, "VTR genfasm output".
+* genfasm names its output after the netlist's model (`top.fasm`,
+  `basys3_demo.fasm`, `toplevel.fasm`, ...), in the current directory.
+* The VTR benchmarks' eblif netlists were made for symbiflow-arch-defs
+  `fb1b251a`; VPR reads them with the toolchain's `007d1c1` architecture
+  without complaint.
+* The f4pga placer (`symbiflow_place`) fails without a PCF (above).
+* The benchmark tarball has no SDC for `counter_basys3` and the two
+  `murax_basys3` circuits (none of them is in the task's list); VTR's task
+  runner would pass the missing path, VPR only warns about a missing SDC
+  file (and uses its default constraints: the FASM is the same without
+  the option, checked), so `run-vtr-genfasm.sh` omits `--sdc_file` for
+  them.
+* Several VTR Verilog benchmarks instantiate VTR's own hard blocks; the
+  models of `vtr_flow/primitives.v` are simulation models, and their RAMs
+  (blocking assignments) are not inferred as block RAM by Yosys (above).
+* VPR's and genfasm's logs of the xc7a50t_test designs are 40-50 MB
+  each (warnings), about 1 MB compressed.
+
+### Tests
+
+`tests/e2e/test_vtr_genfasm.py`: every stored generic FASM against
+`genfasm.json.xz` (sha256, lines), nothing unlisted stored, the rr
+metadata variant is the plain FASM plus the routing features and its
+`expected-errors.json` line, `tools/difftest.py` and
+`tools/difftest-xilinx.py` pick up every file, the Xilinx entries'
+metadata; with the Rust tools, the `fasm` CLI parses every generic file
+(and reports the expected error) and `fasm2frames --sparse
+--emit_pudc_b_pullup` reproduces each Xilinx entry's reference frames
+(pinned database); with the toolchain and `$VTR_ROOT`, five test
+architecture circuits are rerun and must give the committed FASM
+(genfasm is deterministic), and with `VTR_GENFASM_XC7=1`
+`counter_basys3` too.

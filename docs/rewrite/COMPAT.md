@@ -775,6 +775,32 @@ feature below.
 | Designs using `STARTUPE2`, `BSCANE2` or a GTP reference clock (`config-primitive-startupe2`, primitive-tests `startupe2`, `jtag-test`, `bscane2`, `gtp_common/internal-refclk`) with the pinned database | -- (the snap flow uses the snap database, which has the `ppips_cfg_center_*.db` pseudo PIPs and `GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED`, see `tools/e2e/README.md`, "A note on prjxray-db provenance") | with the pinned database both the Rust tool and the oracle fail with the same `FasmLookupError` (`Segment DB CFG_CENTER_MID, key CFG_CENTER_MID.CFG_CENTER_STARTUP_USRDONEO.CFG_CENTER_IMUX42_8 not found ...`, `... CFG_CENTER_STARTUP_USRCCLKO.CFG_CENTER_CLK1_7 ...`, `... CFG_CENTER_LOGIC_OUTS_B17_11.CFG_CENTER_BSCAN3_TDI ...`, `... CFG_CENTER_LOGIC_OUTS_B14_3.CFG_CENTER_BSCAN1_TCK ...`, `Segment DB GTP_COMMON, key GTP_COMMON.GTPE2_COMMON.GTGREFCLK0_USED ...`): a database difference, not a tool difference |
 | `.bit` header | names the `.frm` file as given to `xc7frames2bit` (relative, e.g. `blinky.frames`) and the build time | the comparison skips the path and injects the time (as for the f4pga flow above) |
 
+## VTR genfasm output (T7.4)
+
+### Rule
+
+For every FASM file VTR's `genfasm` (VTR `25e723a24`, the f4pga
+toolchain's `vtr-optimized 8.0.0_5699_g25e723a24`) writes for the VTR
+designs that can produce FASM (`tools/e2e/run-vtr-genfasm.sh`;
+`tests/corpus/vtr/README.md`, `docs/rewrite/DESIGN-xilinx-db.md` §8.14):
+the Rust parser gives the oracle's parse tree (ANTLR and textX),
+`fasm_tuple_to_string` (canonical and not) and round trip
+(`tools/difftest.py`), and the `fasm` CLI prints what the oracle's
+prints; for the Xilinx ones (VTR's `symbiflow` benchmarks on
+`xc7a50t_test`) the Rust `xcfasm`, `fasm2frames`, `xc7frames2bit` and
+`bitread` reproduce the f4pga flow's tools and the oracle (the rules of
+"The f4pga flow's outputs" above). No difference was found; no Rust
+change was needed.
+
+### Quirks of genfasm's output
+
+| Case | genfasm / the reference parsers | Rust / this repository |
+|---|---|---|
+| `test_fasm.cpp`'s `fasm_integration_test` (VTR's own genfasm test) puts `fasm_features` metadata on every rr graph edge: `<src node>_<sink node>_<switch>` (and `PIN_<x>_<y>_<sub tile>_<port>_<pin>` for edges into input pins), and genfasm writes those features (`tests/corpus/vtr/test_fasm_arch/fasm-test/wire/genfasm-rr-metadata.fasm`) | not FASM: an identifier must start with a letter (the specification, `FasmLexer.g4`'s `IDENTIFIER`, `fasm.tx`'s `Identifier`); ANTLR: `Parse error at 334:0 - extraneous input '533' expecting {<EOF>, NEWLINE}`, textX: `...:334:1: Expected Newline or S or Identifier or '{' or '#' or EOF` (the test itself never parses the file as FASM, it matches lines with regular expressions) | rejected at the same line: `Parse error at 334:0 - unexpected '5', expected a feature name, '{', '#' or end of line`. The file is listed in its directory's `expected-errors.json`, and `tools/difftest.py` classifies it `all_three_reject` (every parser must report an error on exactly that line); the `fasm` CLI prints `Error: Parse error at 334:0 - ...` like the original tool (rule 2 of the CLI section) |
+| Value forms | genfasm writes every value as `[hi:lo]=<width>'b<bits>`: LUT contents (`fasm_lut`: `LUT[63:0]=64'b...`, on `xc7a50t_test` `INIT[31:0]` / `INIT[63:32]` halves), `fasm_params` (`INIT[255:0]=256'b...`, one bit values including explicit zeros, e.g. `RIOB33_X43Y87.IOB_Y1.PULLTYPE.PULLDOWN=1'b0`) | parsed and printed like the oracle: the printer writes the binary value without its leading zeros (`4'b0101` -> `4'b101`), the canonical form drops the zero values and splits the others into one line per set bit |
+| Repeated features | a feature can be written more than once (211 duplicate lines in `picosoc_basys3_full_50`: `BRAM_L_X6Y115.CASCOUT_ARD_ACTIVE`, `...BLUT.DI1MUX.DI_CMC31`, ...) | kept as separate lines by the parser and the printer, written once by the canonical form, set once by `fasm2frames`, like the oracle |
+| Nothing else | no comments, annotations, blank lines, `{...}` blocks or placeholders (`fasm_placeholders` are substituted by genfasm; an empty substitution such as the test architecture's `SING=NULL` leaves no trace) | -- |
+
 ## C API (`libfasm_capi`, `rust/fasm-capi/`, T4.1)
 
 The C API mirrors the Python functions (see `docs/rewrite/DESIGN-capi.md`);
