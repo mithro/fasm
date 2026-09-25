@@ -2765,7 +2765,7 @@ the f4pga Yosys + VPR flow the examples are written for (toolchain:
 `tools/e2e/README.md`, "f4pga-examples corpus (T7.3)"). The FASM of each
 design/board is in the corpus
 (`tests/corpus/xilinx/{artix7,zynq7}/designs/f4pga-examples/<design>/<board>/vpr.fasm[.xz]`,
-8.3 MB for 30 designs/boards, with `difftest.json` and a README of the
+8.1 MB for 30 designs/boards, with `difftest.json` and a README of the
 provenance and the sha256 of the flow's FASM, frames and bitstream), so
 `make xilinx-difftest` covers it.
 
@@ -2871,6 +2871,7 @@ the oracle's anywhere; no Rust bug found, no Rust change. Quirks of the
 reference flow (`docs/rewrite/COMPAT.md`, "The f4pga flow's outputs"):
 the environment's `bin/fasm2frames` does not run (prjxray's pip package
 misses `utils/`); `symbiflow_write_fasm` ignores a failing `genfasm`
+(`tools/e2e/f4pga/check-genfasm.sh` now checks genfasm's own log)
 (an OOM-killed `genfasm` gave a truncated 320 line FASM for
 `counter_test/arty_100` and a "successful" build; rebuilt, 837 lines);
 the flow's `.bit` header names its temporary `.frm` file. The flow is

@@ -693,9 +693,22 @@ python3 tools/difftest-xilinx.py --corpus-root tools/e2e/build/out/f4pga-example
 * The flow is deterministic: rebuilding `counter_test/arty_35` gives the
   committed FASM byte for byte (`tests/e2e/test_f4pga_examples.py`).
 
+* `symbiflow_write_fasm` (the make and LiteX flows) runs `genfasm` in
+  `/bin/bash -c` with more commands after it and without `set -e`: a
+  `genfasm` that is killed (OOM here: `counter_test/arty_100` first came
+  out as a 320 line FASM without routing) or fails leaves a truncated
+  FASM, and the flow writes its bitstream and succeeds.
+  `run-f4pga-examples.sh` checks each build with
+  `tools/e2e/f4pga/check-genfasm.sh`: genfasm's own log (`fasm.log`, or
+  `vpr_stdout.log` for `f4pga build`) must end with `Writing
+  Implementation FASM: ...` and `The entire flow of VPR took ...`, and
+  the build output must not hold a bash signal report naming genfasm.
+
 ### Tests
 
-`tests/e2e/test_f4pga_examples.py`: the corpus metadata, that
+`tests/e2e/test_f4pga_examples.py` (109 tests): check-genfasm.sh on fake
+genfasm runs (killed by SIGKILL/SIGBUS/SIGTERM/SIGSEGV/SIGABRT, failing,
+succeeding; run through `/bin/bash -c` like the flow), the corpus metadata, that
 `make xilinx-difftest` covers every entry (its `difftest.json`), the Rust
 `fasm` parses every FASM and the Rust `fasm2frames --sparse
 --emit_pudc_b_pullup` reproduces the flow's frames (committed
