@@ -24,6 +24,7 @@
 mod common;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use fasm_xilinx::bitstream::{
     bitstream_bytes, fdri_payload, BitstreamOptions, BitstreamReader, Ecc,
@@ -41,21 +42,26 @@ fn open() -> Database {
     Database::open(&testdata("synthetic-usp-db"), Some(PART)).unwrap()
 }
 
-fn fasm_file(name: &str, text: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("fasm-usp-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join(name);
-    std::fs::write(&path, text).unwrap();
-    path
-}
-
+/// Assembles `text` (written to a file `name` in a directory of its own,
+/// removed afterwards) with prjuray's semantics.
 fn assemble(name: &str, text: &str, sparse: bool) -> Result<Frames, AssemblerError> {
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "fasm-usp-test-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path: PathBuf = dir.join(name);
+    std::fs::write(&path, text).unwrap();
     let db = open();
     let options = Fasm2FramesOptions {
         sparse,
         ..Default::default()
     };
-    uray_fasm2frames(&db, &fasm_file(name, text), &options)
+    let result = uray_fasm2frames(&db, &path, &options);
+    std::fs::remove_dir_all(&dir).unwrap();
+    result
 }
 
 const DESIGN: &str = "\
