@@ -145,7 +145,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T6.2 UltraScale / UltraScale+ bitstream writer and reader (prjuray
       `frames2bit`), CLI flags (`--architecture`), tests vs prjuray tools
       (after T6.1, T5.6).
-- [ ] T6.3 Differential tests for every part in prjuray-db (after T6.2):
+- [~] T6.3 Differential tests for every part in prjuray-db (after T6.2):
       per the T6.2 review the `--prjuray` corpus reaches only 17 of 27
       segbits tile types (~1.6k of 54.5k features); add an every-feature
       mode through `uray-fasm2frames` (reuse tools/gen-xilinx-corpus.py),

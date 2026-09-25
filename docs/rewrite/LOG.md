@@ -641,3 +641,6 @@ what happened, branch/commit references, open issues.
   clean, 473 Rust tests, tests/cli 1708 passed / 12 skipped,
   xilinx-difftest 107/60/6 identical, uray-difftest 220/220 + 5/5
   identical. Worktree removed. Next: T6.3.
+* T6.3 (prjuray-db all-parts differential tests with every-feature
+  coverage) started (Opus); T7.3 running; version 2 all-parts prjxray run
+  at 74/125 parts in the background.
