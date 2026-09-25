@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""The ``fasm`` command line tool.
+""" The ``fasm`` command line tool.
 
 Implements the ``fasm`` console script: parses a FASM file with the
 selected parser implementation (see :mod:`fasm.parser`) and prints it
@@ -46,7 +46,7 @@ def nullable_string(val):
 
 
 def get_fasm_parser(name=None):
-    """Import and return the ``fasm.parser.*`` module for ``name``.
+    """ Import and return the ``fasm.parser.*`` module for ``name``.
 
     ``name`` is one of :data:`fasm.parser.available` (``'rust'`` and/or
     ``'textx'``), or ``None`` for the default parser (:mod:`fasm.parser`
@@ -74,7 +74,7 @@ def get_fasm_parser(name=None):
 
 
 def main():
-    """Entry point for the ``fasm`` console script.
+    """ Entry point for the ``fasm`` console script.
 
     Parses ``sys.argv`` (see ``fasm --help``), parses the named file with
     the selected parser, and prints the result via

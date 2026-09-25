@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""The FASM in-memory model: the namedtuples every parser returns.
+""" The FASM in-memory model: the namedtuples every parser returns.
 
 ``fasm.parser.rust`` and ``fasm.parser.textx`` (the two parser
 implementations in :data:`fasm.parser.available`; there is no

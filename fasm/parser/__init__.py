@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""Parser implementation selection.
+""" Parser implementation selection.
 
 Imports and re-exports the best available FASM parser implementation as
 ``parse_fasm_filename``/``parse_fasm_string``, tried in the order

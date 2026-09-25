@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 # SPDX-License-Identifier: Apache-2.0
-"""The ``fasm`` package: parsing, formatting and merging FASM files.
+""" The ``fasm`` package: parsing, formatting and merging FASM files.
 
 This is the public API of the FPGA Assembly (FASM) Parser and Generation
 library. It re-exports the model types from :mod:`fasm.model`
