@@ -25,7 +25,12 @@ For every FASM file of the Xilinx corpus
 * `tests/corpus/xilinx/<family>/**/*.fasm` with the prjxray-db family
   `<db cache>/prjxray-db/<family>` and the part of `FAMILY_PARTS`
   (skipped with a note when the database has not been fetched,
-  `tools/fetch-db.sh prjxray <family>`);
+  `tools/fetch-db.sh prjxray <family>`); a directory with a
+  `difftest.json` (`{"part": ..., "family": ...}`) names its own part
+  (and family), and its `*.fasm.xz` files are compared too (the
+  f4pga-examples designs of T7.3); `--corpus-root DIR` compares the
+  FASM files under DIR instead (e.g. the outputs of
+  `tools/e2e/run-f4pga-examples.sh`);
 * `tests/corpus/f4pga-xc-fasm/**/*.fasm` with the miniature database
   `rust/fasm-xilinx/testdata/mini-db` (part `xc7`);
 
@@ -706,43 +711,88 @@ def compare_reference_bit(item, tools, tmpdir, runner=PLAIN_RUNNER):
     return not problems, '%s: %s' % (name, '; '.join(problems))
 
 
-def corpus(db_cache, pattern):
-    """The (name, fasm, db, part, flags) cases and skipped notes."""
+# A directory with this file holds FASM files of one part: a JSON object
+# with "part" and optionally "family" (the prjxray-db family; default: the
+# first directory under the corpus root). Its `*.fasm.xz` files are also
+# compared (decompressed into a temporary directory); elsewhere only
+# `*.fasm`.
+DIFFTEST_JSON = 'difftest.json'
+_XZ_DIR = []
+
+
+def decompressed(path):
+    """A decompressed copy of the `.fasm.xz` file `path`."""
+    import lzma
+    if not _XZ_DIR:
+        _XZ_DIR.append(tempfile.mkdtemp(prefix='difftest-xilinx-xz-'))
+        atexit.register(shutil.rmtree, _XZ_DIR[0], True)
+    digest = hashlib.sha256(path.encode()).hexdigest()[:16]
+    out = os.path.join(_XZ_DIR[0], digest,
+                       os.path.basename(path)[:-len('.xz')])
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        with lzma.open(path) as f, open(out, 'wb') as g:
+            shutil.copyfileobj(f, g)
+    return out
+
+
+def corpus(db_cache, pattern, root=None):
+    """The (name, fasm, db, part, flags) cases and skipped notes.
+
+    `root`: the corpus (default tests/corpus/xilinx, plus
+    tests/corpus/f4pga-xc-fasm with the miniature database)."""
     cases = []
     notes = []
     sources = []
-    xilinx = os.path.join(REPO_ROOT, 'tests', 'corpus', 'xilinx')
-    for family in sorted(os.listdir(xilinx)):
-        if not os.path.isdir(os.path.join(xilinx, family)):
+    default = root is None
+    xilinx = os.path.join(REPO_ROOT, 'tests', 'corpus',
+                          'xilinx') if default else os.path.abspath(root)
+    for dirpath, _, files in sorted(os.walk(xilinx)):
+        fasms = sorted(
+            f for f in files if f.endswith('.fasm') or (
+                f.endswith('.fasm.xz') and DIFFTEST_JSON in files))
+        if not fasms:
+            continue
+        rel_dir = os.path.relpath(dirpath, xilinx)
+        family = rel_dir.split(os.sep)[0]
+        part = FAMILY_PARTS.get(family)
+        if DIFFTEST_JSON in files:
+            with open(os.path.join(dirpath, DIFFTEST_JSON)) as f:
+                config = json.load(f)
+            part = config['part']
+            family = config.get('family', family)
+        if part is None:
+            notes.append('no part for %s' % rel_dir)
             continue
         db = os.path.join(db_cache, 'prjxray-db', family)
-        part = FAMILY_PARTS.get(family)
-        if part is None:
-            notes.append('no part for family %s' % family)
-            continue
         if not os.path.isdir(db):
             notes.append('skipping %s: %s not found (tools/fetch-db.sh '
-                         'prjxray %s)' % (family, db, family))
+                         'prjxray %s)' % (rel_dir, db, family))
             continue
-        sources.append((os.path.join(xilinx, family), db, part))
-    sources.append((os.path.join(REPO_ROOT, 'tests', 'corpus',
-                                 'f4pga-xc-fasm'), MINI_DB, 'xc7'))
-    for root, db, part in sources:
-        for dirpath, _, files in sorted(os.walk(root)):
-            for f in sorted(files):
-                if not f.endswith('.fasm'):
-                    continue
-                fasm = os.path.join(dirpath, f)
-                rel = os.path.relpath(fasm, REPO_ROOT)
-                if pattern and not fnmatch.fnmatch(rel, pattern):
-                    continue
-                variants = list(VARIANTS)
-                roi = fasm[:-len('.fasm')] + '.roi.json'
-                if os.path.exists(roi):
-                    variants.append(('roi', ['--sparse', '--roi', roi]))
-                for vname, flags in variants:
-                    cases.append(('%s[%s]' % (rel, vname), rel, db, part,
-                                  flags))
+        sources.append((dirpath, fasms, db, part))
+    if default:
+        mini = os.path.join(REPO_ROOT, 'tests', 'corpus', 'f4pga-xc-fasm')
+        for dirpath, _, files in sorted(os.walk(mini)):
+            fasms = sorted(f for f in files if f.endswith('.fasm'))
+            if fasms:
+                sources.append((dirpath, fasms, MINI_DB, 'xc7'))
+    for dirpath, fasms, db, part in sources:
+        for f in fasms:
+            path = os.path.join(dirpath, f)
+            rel = os.path.relpath(path, REPO_ROOT)
+            if rel.startswith('..'):
+                rel = path
+            if pattern and not fnmatch.fnmatch(rel, pattern):
+                continue
+            fasm = decompressed(path) if f.endswith('.xz') else path
+            variants = list(VARIANTS)
+            stem = path[:-len('.fasm.xz' if f.endswith('.xz') else '.fasm')]
+            roi = stem + '.roi.json'
+            if os.path.exists(roi):
+                variants.append(('roi', ['--sparse', '--roi', roi]))
+            for vname, flags in variants:
+                cases.append(('%s[%s]' % (rel, vname), fasm, db, part,
+                              flags))
     return cases, notes
 
 
@@ -1268,6 +1318,13 @@ def main():
                         'fetched into the first) (default: $FASM_DB_CACHE '
                         'or %%(default)s)' % os.pathsep)
     parser.add_argument('--filter', help='only FASM files matching GLOB')
+    parser.add_argument('--corpus-root',
+                        metavar='DIR',
+                        help='compare the FASM files under DIR (laid out '
+                        'like tests/corpus/xilinx: <family>/**/*.fasm, or '
+                        'any layout with %s files) instead of the corpus '
+                        '(e.g. the collected outputs of '
+                        'tools/e2e/run-f4pga-examples.sh)' % DIFFTEST_JSON)
     parser.add_argument('--jobs', type=int, default=os.cpu_count() or 1)
     parser.add_argument('-v', '--verbose', action='store_true')
     group = parser.add_argument_group(
@@ -1377,7 +1434,8 @@ def main():
     if args.families:
         return families_main(args, tools)
 
-    cases, notes = corpus(args.db_cache.split(os.pathsep)[0], args.filter)
+    cases, notes = corpus(args.db_cache.split(os.pathsep)[0], args.filter,
+                          args.corpus_root)
     for note in notes:
         print(note)
     totals = dict.fromkeys(RULES, 0)
@@ -1386,25 +1444,24 @@ def main():
     bitstream_runs = 0
     xcfasm_cases = []
     if tools:
-        seen = set()
+        seen = {}
         for name, fasm, db, part, flags in cases:
             key = (fasm, db, part)
-            if key in seen or not os.path.exists(
-                    os.path.join(db, part, 'part.yaml')):
+            if not os.path.exists(os.path.join(db, part, 'part.yaml')):
                 continue
-            seen.add(key)
-            variants = list(XCFASM_VARIANTS)
-            roi = os.path.join(REPO_ROOT, fasm)[:-len('.fasm')] + '.roi.json'
-            if os.path.exists(roi):
-                variants.append(('roi', ['--sparse', '--roi', roi]))
+            if key not in seen:
+                seen[key] = (name.rsplit('[', 1)[0], list(XCFASM_VARIANTS))
+            if name.endswith('[roi]'):
+                seen[key][1].append(('roi', flags))
+        for (fasm, db, part), (rel, variants) in seen.items():
             for vname, vflags in variants:
-                xcfasm_cases.append(('%s[xcfasm-%s]' % (fasm, vname), fasm,
+                xcfasm_cases.append(('%s[xcfasm-%s]' % (rel, vname), fasm,
                                      db, part, vflags))
     xcfasm_failures = []
     bit_failures = []
     with tempfile.TemporaryDirectory(prefix='difftest-xilinx-') as tmpdir:
         references = []
-        if tools and not args.filter:
+        if tools and not args.filter and not args.corpus_root:
             references = reference_bitstreams(args.bitread_oracle,
                                               args.db_cache, tmpdir)
         with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
