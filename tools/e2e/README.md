@@ -845,4 +845,7 @@ pinned database, either the same frames or the error the README records;
 with the toolchain and a nextpnr-xilinx checkout,
 `nextpnr-xilinx/blinky/arty-a35` is rebuilt end to end (the flow is
 deterministic: the FASM must be the committed one) and
-`compare-nextpnr-examples.py` must pass on it.
+`compare-nextpnr-examples.py` must pass on it. 104 tests: all pass in 16 s
+with the toolchain, the Rust tools and both databases (`ORACLE_DIR`,
+`FASM_DB_CACHE` and `OPENXC7_E2E_BUILD` pointing at the main checkout
+from a second working tree); 62 pass and 42 skip without them.
