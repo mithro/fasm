@@ -44,9 +44,16 @@ if not RUST.exists():
                 'fasm-cli): {}'.format(RUST),
                 allow_module_level=True)
 
+# Same fallback chain as test_uray_corpus.find_db: $FASM_DB_CACHE, else
+# <URAY_ORACLE_DIR or --uray-oracle-dir default>/build/db, else this
+# checkout's tests/oracle/build/db.
+ORACLE_DIR = Path(
+    os.environ.get('URAY_ORACLE_DIR', ROOT / 'tests' / 'oracle'))
+
 
 def real_db():
     for base in (os.environ.get('FASM_DB_CACHE'),
+                 ORACLE_DIR.joinpath('build', 'db'),
                  ROOT.joinpath('tests', 'oracle', 'build', 'db')):
         if base and (Path(base) / 'prjxray-db' / 'artix7').is_dir():
             return Path(base) / 'prjxray-db' / 'artix7'
@@ -168,6 +175,7 @@ USP_DB = TESTDATA / 'synthetic-usp-db'
 
 def real_uray_db():
     for base in (os.environ.get('FASM_DB_CACHE'),
+                 ORACLE_DIR.joinpath('build', 'db'),
                  ROOT.joinpath('tests', 'oracle', 'build', 'db')):
         if base and (Path(base) / 'prjuray-db' / 'zynqusp').is_dir():
             return Path(base) / 'prjuray-db' / 'zynqusp'
