@@ -187,7 +187,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       150-164 MB/s (target 200) with ~48% of instructions in idstring
       interning and ~9% in UTF-8 validation of names; speed up the interner
       hit path and validate names byte-wise (they are ASCII by grammar).
-- [~] T8.2b Performance follow-ups from the T8.2 review: the `stress`
+- [r] T8.2b Performance follow-ups from the T8.2 review: the `stress`
       parser class is still 120-129 MB/s cold (new tile name insertion
       ~175 ns each) and the interner hit path (51 ns vs 38 ns for a flat
       HashMap) is memory bound in the level-0 probe; add a unit test for
@@ -198,7 +198,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       canonical path still sorts formatted Strings (after T8.2).
 - [x] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
-- [~] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
+- [r] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
       (inherited from the original package, `dir(fasm)` raises TypeError);
       decide: fix with a COMPAT.md row (recommended, nothing relies on the
       crash) or keep for 1:1 compatibility and document (after T8.3).

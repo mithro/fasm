@@ -1041,3 +1041,17 @@ what happened, branch/commit references, open issues.
   xilinx-difftest, uray-difftest) runs in the background and is logged
   below. Worktree removed.
 * T8.2b + T8.3b started as one task (Sonnet); T5.3b still to report.
+* Follow-ups merged tree verified: tests/cli + tests/e2e 3442 passed / 18
+  skipped, xilinx-difftest 96 files 387/387 + 270/270 + 6/6 identical,
+  uray-difftest 268 runs 0 different.
+* T8.2b + T8.3b implemented on branch `worktree-agent-a246a763e76854832`
+  (5 commits): dir(fasm) fixed (module `__dir__` string renamed to
+  PACKAGE_DIR, COMPAT row, test), canonical `[` fallback unit test,
+  push overflow check matches its message, find_pieces inlined from
+  find_levels (hit 51.7 vs 53.4 ns), foldhash for CanonicalLines::index
+  (canonical output byte identical on 200 corpus files + 1M lines),
+  library canonical sort left as is with rationale. difftest.py 204
+  files 0 unexplained, tests/cli 2555 passed. Independent review (Opus)
+  started. T5.3b branch is complete at 35ff71e (only an untracked
+  target/ in its worktree) but its agent has not reported since the
+  restart.
