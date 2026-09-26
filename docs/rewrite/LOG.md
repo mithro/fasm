@@ -1071,3 +1071,18 @@ what happened, branch/commit references, open issues.
 * T5.3b: its agent never reported after the restarts; the branch is
   complete at 35ff71e, so the independent review (Opus) was launched
   directly on it, with the docs commit as the source of the claims.
+* T8.2b/T8.3b merged tree verified: fmt/clippy clean, 488 Rust tests,
+  difftest.py 204 files 0 unexplained, tests/cli 2555 passed,
+  xilinx-difftest 96 files 387/387 + 270/270 + 6/6, uray-difftest 268
+  runs 0 different (the scratch venv had been lost to a restart, so the
+  Python suites are re-run below).
+* T5.3b review (Opus): format 2 fast path proven safe by per section
+  hashes (10k payload mutations incl. lazy first touch: 0 wrong tables,
+  0 panics), difftests identical with cache building/hitting/off,
+  cached open xc7a35t 22 -> 8.5 ms, xc7a200t 36 -> 29 ms, xczu3eg 23 ->
+  21 ms (median, 4 cores). REQUEST CHANGES: `fasm-db-cache verify` skips
+  a corrupt file of this build (regression vs T5.3); lazy section reads
+  share the file offset with forked children (Python multiprocessing)
+  causing fallbacks that delete the cache; docs must state the few ms
+  target is still missed. The original agent is unresponsive, so a fresh
+  Opus implementer applies the fixes on top of the branch.
