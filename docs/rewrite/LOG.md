@@ -1062,3 +1062,12 @@ what happened, branch/commit references, open issues.
   points (reuse is feasible: T8.2c to be recorded) and a round count
   inconsistency. Fixes requested. One tests/cli flake (1 of 2555) seen
   again under load, clean on rerun.
+* T8.2b/T8.3b done: doc fixes (accurate reasons for not moving the
+  canonical sort into the library, recorded as deferred T8.2c; four
+  rounds), stronger fallback test (A[1]x vs A[5]), wording. Merged with
+  --no-ff; verification (cargo checks, difftest.py, tests/cli, Python
+  suites via maturin, xilinx-difftest, uray-difftest) runs in the
+  background and is logged below. Worktree removed.
+* T5.3b: its agent never reported after the restarts; the branch is
+  complete at 35ff71e, so the independent review (Opus) was launched
+  directly on it, with the docs commit as the source of the claims.
