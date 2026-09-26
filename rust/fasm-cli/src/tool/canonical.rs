@@ -330,6 +330,84 @@ impl Sorted {
 mod tests {
     use super::*;
 
+    /// A bare `push` of `feature` (no address), matching what
+    /// `try_canonical_features` produces for a `FEATURE` line.
+    fn bare(feature: &str) -> SetFasmFeature {
+        SetFasmFeature::new(
+            IdString::from(feature),
+            None,
+            None,
+            fasm::model::FeatureValue::from_u64(1),
+            None,
+        )
+        .expect("valid bare feature")
+    }
+
+    /// A `push` of `feature[address]`, matching what
+    /// `try_canonical_features` produces for an addressed line.
+    fn addressed(feature: &str, address: u32) -> SetFasmFeature {
+        SetFasmFeature::new(
+            IdString::from(feature),
+            Some(address),
+            None,
+            fasm::model::FeatureValue::from_u64(1),
+            None,
+        )
+        .expect("valid addressed feature")
+    }
+
+    /// Renders the lines of `sorted` (module documentation order) as
+    /// `String`s, for comparing against `sorted(set(...))` of the input.
+    fn rendered(sorted: &Sorted) -> Vec<String> {
+        let mut out = Vec::new();
+        sorted
+            .write_to(&mut out)
+            .expect("writing to a Vec never fails");
+        let text = String::from_utf8(out).expect("ASCII/UTF-8 lines only");
+        // `write_to` always appends a trailing blank line (like `print`);
+        // drop the final empty entry from the trailing "\n\n".
+        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
+        if lines.last().is_some_and(String::is_empty) {
+            lines.pop();
+        }
+        lines
+    }
+
+    /// A feature name containing `[` takes the "sort the formatted lines"
+    /// fallback path (module documentation); check it against the plain
+    /// `sorted(set(...))` of the formatted lines it should produce.
+    #[test]
+    fn bracket_in_feature_name_falls_back_to_sorting_formatted_lines() {
+        let mut lines = CanonicalLines::new();
+        // `A[` and `A[1]x` are feature names containing `[` (never
+        // produced by the parser, but not rejected by it either); push
+        // some duplicates and some ordinary addressed/bare features too.
+        lines.push(&bare("A["));
+        lines.push(&addressed("A[1]x", 5));
+        lines.push(&addressed("A[1]x", 5)); // duplicate, must be deduplicated
+        lines.push(&bare("B"));
+        lines.push(&addressed("B", 2));
+        lines.push(&addressed("B", 10));
+        lines.push(&bare("A["));
+
+        let mut expected: Vec<String> = vec![
+            "A[".to_string(),
+            "A[1]x[5]".to_string(),
+            "B".to_string(),
+            "B[2]".to_string(),
+            "B[10]".to_string(),
+        ];
+        expected.sort();
+        expected.dedup();
+
+        let sorted = lines.finish();
+        assert!(
+            matches!(sorted.lines, Lines::Formatted(_)),
+            "a `[` in a feature name must take the formatted-lines fallback"
+        );
+        assert_eq!(rendered(&sorted), expected);
+    }
+
     #[test]
     fn text_order_key_orders_like_the_text() {
         let mut addresses: Vec<u32> = (0..2000).collect();
