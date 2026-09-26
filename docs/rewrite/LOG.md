@@ -1022,3 +1022,11 @@ what happened, branch/commit references, open issues.
   `except BaseException`; not reproduced in 3 runs; hardening:
   CMAKE_BUILD_PARALLEL_LEVEL bounded, 3 attempts checked via
   fasm.parser.available). Independent review (Opus) started.
+* Follow-ups review (Opus): T6.3b confirmed (oracle identity hashes 85/153
+  files instead of the whole venv; fallback order and --list verified;
+  difftests unchanged), T5.8b download/reuse/shim verified, T0.4b root
+  cause confirmed in the pinned setup.py. REQUEST CHANGES: pip install
+  without -v hides the ANTLR failure cause; after N failed attempts
+  setup.sh still exits 0 and writes the marker (must fail loudly unless
+  ANTLR_OPTIONAL=1); snap_prjxray_db db_root/db_cache disagree on the
+  lookup order. Fixes requested. T5.3b still running.
