@@ -1055,3 +1055,10 @@ what happened, branch/commit references, open issues.
   started. T5.3b branch is complete at 35ff71e (only an untracked
   target/ in its worktree) but its agent has not reported since the
   restart.
+* T8.2b/T8.3b review (Opus): all code changes verified (dir(fasm), fallback
+  test, overflow check, inlining 51.6 vs 52.4 ns, foldhash byte identical
+  on 200 corpus files + 1M lines); REQUEST CHANGES for docs only: the
+  rationale for declining the library canonical path was wrong in three
+  points (reuse is feasible: T8.2c to be recorded) and a round count
+  inconsistency. Fixes requested. One tests/cli flake (1 of 2555) seen
+  again under load, clean on rerun.
