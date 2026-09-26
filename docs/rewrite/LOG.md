@@ -1009,3 +1009,5 @@ what happened, branch/commit references, open issues.
   setup-rapidwright.sh --with-interchange` recreates the venv. Worktree
   removed. Phase 7 is complete.
 * Fourth container restart interrupted T5.3b (4 commits kept); resumed.
+* Follow-ups T6.3b + T5.8b + T0.4b started as one task (Sonnet); T5.3b
+  resumed and finishing.
