@@ -88,28 +88,52 @@ def db_root(family, repo_root=None):
     return None
 
 
+def _ensure_shim(lean):
+    """Idempotently makes `lean.parent/.openxc7-db-cache/prjxray-db` a
+    symlink to `lean`, so that shim directory is shaped the way
+    `tools/difftest-xilinx.py --db-cache` expects. Returns the shim
+    directory, or None if the symlink cannot be made safely (e.g. a real
+    directory already sits at that exact path -- never touched)."""
+    shim = lean.parent / '.openxc7-db-cache'
+    link = shim / 'prjxray-db'
+    try:
+        if link.is_symlink():
+            if os.readlink(link) != str(lean):
+                link.unlink()
+                link.symlink_to(lean)
+        elif link.exists():
+            # A real file/directory already occupies the shim path (not
+            # one this function created) -- leave it alone rather than
+            # deleting someone else's directory out from under them.
+            return None
+        else:
+            shim.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(lean)
+    except OSError:
+        return None
+    return shim
+
+
 def db_cache(repo_root=None):
     """A directory shaped as `tools/difftest-xilinx.py --db-cache` expects
     (a directory whose child `prjxray-db/<family>` exists), or None if
-    neither source has anything. Prefers the full snap extraction (already
-    shaped this way, no extra step); when only the lean
-    `tools/fetch-db.sh openxc7` cache exists, creates (idempotently) a
-    small directory under it holding a `prjxray-db` symlink pointing at
-    it, so callers get the same shape either way."""
+    neither source has anything. Prefers the lean `tools/fetch-db.sh
+    openxc7` cache (same order as `db_root()` above), creating
+    (idempotently) a small directory under it holding a `prjxray-db`
+    symlink pointing at it, since the lean cache's top-level directory is
+    itself named `prjxray-db-openxc7`, not `prjxray-db`. Falls back to
+    `tools/e2e/setup-openxc7.sh`'s full extraction (already shaped this
+    way, no extra step needed) when the lean cache is absent or its shim
+    cannot be created."""
+    lean = lean_cache_root(repo_root)
+    if lean.is_dir():
+        shim = _ensure_shim(lean)
+        if shim is not None:
+            return shim
     full = full_snap_prjxray_db(repo_root)
     if full.is_dir():
         return full.parent  # .../external, whose child IS "prjxray-db"
-    lean = lean_cache_root(repo_root)
-    if not lean.is_dir():
-        return None
-    shim = lean.parent / '.openxc7-db-cache'
-    link = shim / 'prjxray-db'
-    if not link.is_symlink() or os.readlink(link) != str(lean):
-        shim.mkdir(parents=True, exist_ok=True)
-        if link.exists() or link.is_symlink():
-            link.unlink()
-        link.symlink_to(lean)
-    return shim
+    return None
 
 
 if __name__ == '__main__':
