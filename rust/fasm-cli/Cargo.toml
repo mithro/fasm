@@ -58,6 +58,10 @@ path = "src/bin/fasm-db-cache.rs"
 [dependencies]
 fasm = { path = "../fasm", version = "0.1.0-dev" }
 fasm-xilinx = { path = "../fasm-xilinx", version = "0.1.0-dev" }
+
+# Hasher of CanonicalLines::index (fast on short keys, no dependencies);
+# see docs/rewrite/DESIGN-idstring.md, docs/rewrite/BENCHMARKS.md
+# "After T8.2b".
 foldhash = "0.2"
 
 # Only for the terminal width (`ioctl(TIOCGWINSZ)`), which argparse uses to
