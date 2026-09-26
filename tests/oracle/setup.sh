@@ -40,6 +40,36 @@
 #             been set up successfully for the requested ORACLE_COMMIT (if
 #             ORACLE_COMMIT changed since the last successful run, a
 #             rebuild is triggered automatically, no --force needed).
+#
+#   ANTLR_BUILD_ATTEMPTS=N        (default 3) how many times to retry the
+#                                 ANTLR C++ build (T0.4b: that build is
+#                                 flaky across otherwise identical runs --
+#                                 see tests/oracle/README.md, "T0.4b")
+#                                 before giving up. Must be a positive
+#                                 integer.
+#   CMAKE_BUILD_PARALLEL_LEVEL=N  (default min(nproc, 4)) caps the ANTLR/
+#                                 cmake build's parallelism instead of the
+#                                 unbounded `-j` setup.py otherwise adds.
+#   ANTLR_OPTIONAL=1              Without this, exhausting
+#                                 ANTLR_BUILD_ATTEMPTS without a
+#                                 successful ANTLR build is a hard
+#                                 failure (exit 1, no completion marker
+#                                 written, so a plain re-run retries):
+#                                 T0.4b's "deterministic or fail loudly"
+#                                 requirement, since silently accepting
+#                                 a textX-only oracle here would leave a
+#                                 machine that hit the flakiness once
+#                                 stuck on textX-only forever (the fast
+#                                 no-op path above only checks the
+#                                 marker's existence, not what it was
+#                                 written for). Set ANTLR_OPTIONAL=1 to
+#                                 accept a textX-only oracle instead --
+#                                 needed on a machine that genuinely
+#                                 cannot build the ANTLR C++ extension at
+#                                 all (no C++17 compiler, no network to
+#                                 fetch it, ...); CI/test paths that
+#                                 legitimately run textX-only must set
+#                                 this explicitly.
 set -euo pipefail
 
 FORCE=0
@@ -49,7 +79,7 @@ for arg in "$@"; do
       FORCE=1
       ;;
     -h | --help)
-      sed -n '2,39p' "$0" | sed -e 's/^# \{0,1\}//'
+      sed -n '2,72p' "$0" | sed -e 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -200,30 +230,146 @@ fi
 #
 # setup.py's `AntlrCMakeBuild.run()` already implements the "attempt the
 # ANTLR C++ build, fall back to textX-only on any failure" behaviour we
-# want, so a single install call is all that is needed. `--no-build-isolation`
-# makes it use the Cython/setuptools/wheel already installed in this venv
-# instead of downloading its own isolated build environment.
+# want, so a single install call would in principle be all that is needed.
+# `--no-build-isolation` makes it use the Cython/setuptools/wheel already
+# installed in this venv instead of downloading its own isolated build
+# environment.
+#
+# T0.4b: the ANTLR C++ build is flaky across otherwise identical runs
+# (T5.8's implementer saw it succeed once and fall back to textX on
+# another run). Root cause, found by reading the pinned commit's own
+# build files (immutable at $PRISTINE_SRC -- never edited here):
+#
+#   1. `src/CMakeLists.txt` pulls in `third_party/antlr4/runtime/Cpp/
+#      cmake/ExternalAntlr4Cpp.cmake`, which does its OWN, SEPARATE
+#      `ExternalProject_Add(... GIT_REPOSITORY https://github.com/antlr/
+#      antlr4.git GIT_TAG e4c1a74 ...)` -- a fresh network `git clone` of
+#      the antlr4 runtime sources at *cmake build time*, into a temp build
+#      directory. This ignores the `third_party/antlr4` git submodule
+#      already checked out locally (used only for the ANTLR tool jar and
+#      cmake modules, not this runtime clone), so every build refetches
+#      from github.com regardless of the submodule step above having
+#      succeeded. A transient network hiccup here fails the whole step.
+#   2. setup.py's `AntlrCMakeBuild.build_extension()` adds an UNBOUNDED
+#      `cmake --build . -- -j` (no job count) whenever
+#      `CMAKE_BUILD_PARALLEL_LEVEL` is unset, for both this ExternalProject
+#      antlr4 runtime build and the `parse_fasm` extension itself --
+#      i.e. as many parallel compiler/linker jobs as there are
+#      translation units, uncapped, on a container that may have as few
+#      as 4 cores and be sharing them with other agents/builds. Resource
+#      contention (OOM, or the runtime's own internal build racing the
+#      extension's) can fail the build.
+#   3. `AntlrCMakeBuild.run()` wraps ALL of the above -- the network
+#      clone, the configure, the parallel build, `ctest` -- in a single
+#      `except BaseException`, prints a one-line message plus a
+#      traceback, and returns normally: `pip install` itself always
+#      reports success (exit 0) whether or not ANTLR actually built, so
+#      its own exit code can never be used to detect or retry the
+#      failure -- only inspecting `fasm.parser.available` after the
+#      install (done below) can.
+#
+# Neither of those files may be edited (they are the immutable pinned
+# oracle source, third_party/antlr4 is a pinned submodule) -- the fixes
+# below are all in this script instead:
+#
+#   * `CMAKE_BUILD_PARALLEL_LEVEL` is exported, bounded to at most 4
+#     (min(nproc, 4)), before every install attempt: this is exactly the
+#     escape hatch `build_extension()` checks
+#     (`if CMAKE_BUILD_PARALLEL_LEVEL is None: build_args += ['--', '-j']`),
+#     so it both serialises/bounds the racy parallel build (item 2) and
+#     is honoured natively by `cmake --build` for the antlr4_runtime
+#     ExternalProject step too.
+#   * Up to $ANTLR_BUILD_ATTEMPTS (default 3) full install attempts, each
+#     followed by an availability check (import fasm.parser); a run that
+#     falls back to textX-only is retried with backoff (5s, 10s) rather
+#     than accepted on the first try, to ride out a transient network
+#     failure of the ExternalProject clone (item 1). Every attempt's
+#     `pip install` output is appended to install.log under its own
+#     "=== attempt N ===" header, so a persistent failure's actual cause
+#     (network vs. compiler vs. something else) is still visible there
+#     instead of only ever showing the first attempt.
 #
 # A regular (non-editable) install is used so the venv's site-packages
 # holds a standalone copy, independent of $PRISTINE_SRC after this point.
-# If that fails outright (not just the ANTLR extension falling back, which
-# setup.py already handles internally, but the whole `pip install` call
-# failing) an editable install of the *pristine* worktree is tried as a
-# fallback -- still immutable with respect to $REPO_ROOT's live fasm/, just
-# not copied into site-packages. See README.md for when this path is taken.
-log "installing the pinned fasm package into the venv (non-editable)"
-set +e
-"$PY" -m pip install --no-build-isolation "$PRISTINE_SRC" \
-  > "$BUILD_DIR/install.log" 2>&1
-INSTALL_STATUS=$?
-set -e
+# If that fails outright (not just the ANTLR extension falling back,
+# which setup.py already handles internally, but the whole `pip install`
+# call failing) an editable install of the *pristine* worktree is tried
+# as a fallback -- still immutable with respect to $REPO_ROOT's live
+# fasm/, just not copied into site-packages. See README.md for when this
+# path is taken.
+NPROC="$(nproc 2>/dev/null || echo 4)"
+export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$((NPROC < 4 ? NPROC : 4))}"
+log "bounding the ANTLR/cmake build to CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL" \
+  "jobs (of $NPROC available) -- see T0.4b comment above for why"
+
+ANTLR_BUILD_ATTEMPTS="${ANTLR_BUILD_ATTEMPTS:-3}"
+if ! [[ "$ANTLR_BUILD_ATTEMPTS" =~ ^[0-9]+$ ]] || [[ "$ANTLR_BUILD_ATTEMPTS" -lt 1 ]]; then
+  echo "setup.sh: ANTLR_BUILD_ATTEMPTS must be a positive integer" \
+    "(got '$ANTLR_BUILD_ATTEMPTS')" >&2
+  exit 2
+fi
+
+# Fresh per run (not per attempt: every attempt below appends, under its
+# own "=== attempt N ===" header) -- otherwise a previous, failed run's
+# leftover install.log (this run's own MARKER is only written on success,
+# see the end of this section) would be indistinguishable from this run's.
+: > "$BUILD_DIR/install.log"
+
 INSTALL_MODE="non-editable"
+INSTALL_STATUS=1
+for attempt in $(seq 1 "$ANTLR_BUILD_ATTEMPTS"); do
+  log "installing the pinned fasm package into the venv (non-editable," \
+    "attempt $attempt/$ANTLR_BUILD_ATTEMPTS)"
+  {
+    echo "=== attempt $attempt/$ANTLR_BUILD_ATTEMPTS" \
+      "(CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL) ==="
+  } >> "$BUILD_DIR/install.log"
+  set +e
+  # -v: without it, pip swallows setup.py's own stdout (the
+  # "Failed to build ANTLR parser, falling back ..." message and
+  # traceback AntlrCMakeBuild.run() prints on a caught failure), so a
+  # persistent failure's actual cause would never make it into
+  # install.log at all -- only pip's own "Successfully installed fasm"
+  # (see the T0.4b comment above: pip's exit code alone cannot tell the
+  # two outcomes apart, and neither can its default-verbosity output).
+  "$PY" -m pip install -v --no-build-isolation "$PRISTINE_SRC" \
+    >> "$BUILD_DIR/install.log" 2>&1
+  INSTALL_STATUS=$?
+  set -e
+  if [[ "$INSTALL_STATUS" -ne 0 ]]; then
+    # A hard pip failure is not the ANTLR-fallback flakiness this task is
+    # about (that path always exits 0, see the comment above) -- retrying
+    # it here would just repeat the same packaging error, so break out to
+    # the existing editable-install fallback below instead.
+    break
+  fi
+  ATTEMPT_ANTLR_JSON="$(cd "$BUILD_DIR" && "$PY" -c '
+import json
+import fasm.parser
+print(json.dumps(sorted(fasm.parser.available)))
+' 2>/dev/null || echo '[]')"
+  case "$ATTEMPT_ANTLR_JSON" in
+    *antlr*)
+      log "ANTLR C++ parser built on attempt $attempt/$ANTLR_BUILD_ATTEMPTS"
+      break
+      ;;
+    *)
+      if [[ "$attempt" -lt "$ANTLR_BUILD_ATTEMPTS" ]]; then
+        backoff=$((attempt * 5))
+        log "WARNING: attempt $attempt/$ANTLR_BUILD_ATTEMPTS fell back to" \
+          "textX only (available: $ATTEMPT_ANTLR_JSON); retrying the ANTLR" \
+          "build in ${backoff}s -- see $BUILD_DIR/install.log"
+        sleep "$backoff"
+      fi
+      ;;
+  esac
+done
 
 if [[ "$INSTALL_STATUS" -ne 0 ]]; then
   log "WARNING: non-editable install failed; retrying as an editable" \
     "install of the pinned (immutable) worktree; see $BUILD_DIR/install.log"
   set +e
-  "$PY" -m pip install --no-build-isolation -e "$PRISTINE_SRC" \
+  "$PY" -m pip install -v --no-build-isolation -e "$PRISTINE_SRC" \
     >> "$BUILD_DIR/install.log" 2>&1
   INSTALL_STATUS=$?
   set -e
@@ -298,9 +444,26 @@ with open(os.environ["STATUS_FILE"], "w") as f:
 
 if [[ "$ANTLR_OK" -eq 1 ]]; then
   log "ANTLR C++ parser built successfully; available parsers: $AVAILABLE_JSON"
-else
-  log "WARNING: ANTLR C++ parser was NOT built; falling back to textX only." \
+elif [[ "${ANTLR_OPTIONAL:-0}" == "1" ]]; then
+  log "WARNING: ANTLR C++ parser was NOT built; falling back to textX only" \
+    "(ANTLR_OPTIONAL=1 set, accepting this deliberately)." \
     "See $BUILD_DIR/install.log for details. Available parsers: $AVAILABLE_JSON"
+else
+  # T0.4b acceptance: "deterministic or fail loudly" -- silently accepting
+  # a textX-only fallback here (as earlier versions of this script did)
+  # and still writing $MARKER means a machine that hit the flakiness once
+  # stays stuck on textX-only forever, since the fast path above never
+  # looks past $MARKER's existence to retry. Fail loudly instead, and do
+  # NOT write $MARKER, so a plain re-run (no --force needed) retries the
+  # whole $ANTLR_BUILD_ATTEMPTS loop rather than accepting this result.
+  log "ERROR: ANTLR C++ parser was NOT built after $ANTLR_BUILD_ATTEMPTS" \
+    "attempt(s) (available parsers: $AVAILABLE_JSON); see" \
+    "$BUILD_DIR/install.log for the cause. NOT writing the completion" \
+    "marker, so the next run (no --force needed) retries. Set" \
+    "ANTLR_OPTIONAL=1 to accept a textX-only oracle instead (e.g. on a" \
+    "machine that cannot build the ANTLR C++ extension at all)."
+  tail -n 60 "$BUILD_DIR/install.log" >&2 || true
+  exit 1
 fi
 log "installed ($INSTALL_MODE) from $FASM_FILE, pinned to $ORACLE_COMMIT ($ORACLE_COMMIT_RESOLVED)"
 

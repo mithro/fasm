@@ -84,25 +84,168 @@ The script:
    pkg-config` (system libraries the ANTLR build needs; requires root or
    passwordless `sudo`, and network access to the distro package mirror).
 4. Installs the pinned `fasm` package from `pristine-src` into the venv
-   (see above; non-editable, with an editable-of-`pristine-src` fallback).
-   `setup.py` itself already attempts to build the ANTLR C++ parser
-   extension via CMake and **falls back to the textX-only install on any
-   build failure** (missing submodules, missing `uuid.h`, no C++17
-   compiler, ...); this script does not need to (and does not) duplicate
-   that fallback logic, it just makes the prerequisites available on a
-   best effort basis first.
-5. Records which parsers ended up available, the pin, and the install mode
-   in `tests/oracle/build/status.json`, and touches
+   (see above; non-editable, with an editable-of-`pristine-src`
+   fallback). `setup.py` itself already attempts to build the ANTLR C++
+   parser extension via CMake and **falls back to the textX-only install
+   on any build failure** (missing submodules, missing `uuid.h`, no
+   C++17 compiler, ...); this script makes the prerequisites available
+   on a best effort basis first, then (T0.4b, see below) retries that
+   attempt up to `$ANTLR_BUILD_ATTEMPTS` times and, unless
+   `ANTLR_OPTIONAL=1` is set, treats an ANTLR build that never succeeds
+   as a hard failure rather than silently accepting the textX-only
+   fallback.
+5. On success, records which parsers ended up available, the pin, and
+   the install mode in `tests/oracle/build/status.json`, and touches
    `tests/oracle/venv/.oracle-setup-ok` as a completion marker so a plain
    re-run is a fast no-op (the ANTLR build alone takes roughly a minute
    the first time, since it compiles the antlr4 C++ runtime from source).
-   Logs from each step are kept in `tests/oracle/build/` (`worktree.log`,
-   `submodule.log`, `apt.log`, `install.log`) for debugging a failed or
-   partial build.
+   `status.json` is written even when step 4 ultimately fails (useful for
+   debugging), but the completion marker is not, unless `ANTLR_OPTIONAL=1`
+   -- see T0.4b below for why. Logs from each step are kept in
+   `tests/oracle/build/` (`worktree.log`, `submodule.log`, `apt.log`,
+   `install.log`) for debugging a failed or partial build.
 
 Run `tests/oracle/setup.sh --force` any time you want to re-attempt the
 ANTLR build for the current pin (e.g. after installing a missing system
 dependency by hand).
+
+### T0.4b: the ANTLR build's flakiness across identical runs
+
+T5.8's implementer reported seeing the ANTLR C++ build succeed once and
+fall back to textX on another, otherwise identical, run. Investigated by
+reading the pinned commit's own build files (never edited -- they are
+immutable history at `ORACLE_COMMIT`/`pristine-src`, and
+`third_party/antlr4` is a pinned git submodule):
+
+1. `src/CMakeLists.txt` includes `third_party/antlr4/runtime/Cpp/cmake/
+   ExternalAntlr4Cpp.cmake`, which runs its own, separate
+   `ExternalProject_Add(... GIT_REPOSITORY https://github.com/antlr/
+   antlr4.git GIT_TAG e4c1a74 ...)` -- **a fresh network `git clone` of
+   the antlr4 runtime, done at cmake build time**, every build,
+   regardless of the `third_party/antlr4` submodule (used only for the
+   ANTLR tool jar and cmake modules) already having been checked out
+   locally by `setup.sh` step 3. A transient failure reaching
+   `github.com` at that point fails the whole build.
+2. `setup.py`'s `AntlrCMakeBuild.build_extension()` runs
+   `cmake --build . -- -j` with **no job count** (unbounded) whenever
+   `CMAKE_BUILD_PARALLEL_LEVEL` is unset, both for that antlr4 runtime
+   and for the `parse_fasm` extension itself -- uncapped parallelism on
+   a container that may have as few as 4 cores and be sharing them with
+   other builds (this rewrite runs at most 2 sub-agents at a time, each
+   potentially compiling Rust or C++ concurrently; see
+   `docs/rewrite/WORKFLOW.md`). Resource contention here (compiler OOM,
+   or the runtime's own build racing the extension's) can fail the step.
+3. `AntlrCMakeBuild.run()` wraps the network clone, configure, parallel
+   build and `ctest` in one `except BaseException`, prints a message and
+   traceback, and returns normally -- **`pip install`'s own exit code is
+   always 0** whether or not ANTLR actually built, matching the T5.8
+   review's independent finding ("setup.py swallows the CMake build
+   failure ... so nothing is logged"). Only inspecting
+   `fasm.parser.available` after install (as `setup.sh` already does)
+   can tell the two outcomes apart; `pip install`'s exit status cannot.
+
+**Reproduction:** ran the install step (a fresh `pristine-src` worktree,
+fresh venv, `pip install --no-build-isolation --force-reinstall`, one
+clean `build/` per attempt) three times with the unmodified, unbounded
+`-j` behaviour (no `CMAKE_BUILD_PARALLEL_LEVEL` set). **All three
+attempts built the ANTLR parser successfully** (`available_parsers:
+["antlr", "textx"]` every time, ~75-110s each) on this container (4
+cores, reliable network to github.com through the environment's proxy)
+-- the flakiness was **not reproduced** in these 3 runs. This does not
+contradict the root cause analysis above: item 1 (network) and item 2
+(resource contention) are both genuinely present in the pinned build
+files and only need the right transient conditions (a slower/loaded
+container, a network blip) to manifest, which this session's 3 attempts
+simply did not hit.
+
+**Hardening added to `setup.sh` regardless** (a run that never reproduces
+the failure is still exactly the case the task asked to harden for):
+
+* `CMAKE_BUILD_PARALLEL_LEVEL` is exported, bounded to `min(nproc, 4)`,
+  before every install attempt -- the exact escape hatch
+  `build_extension()` checks before adding the unbounded `-j`, so this
+  both serialises/bounds the racy parallel build (item 2) and is honoured
+  natively by `cmake --build` for the antlr4_runtime `ExternalProject`
+  step too. Verified this does not regress the build: a fourth manual
+  attempt with `CMAKE_BUILD_PARALLEL_LEVEL=4` also built ANTLR
+  successfully, in comparable time (~74s).
+* Up to `$ANTLR_BUILD_ATTEMPTS` (default 3) full install attempts, each
+  followed by the same availability check `setup.sh` already does; a run
+  that falls back to textX-only is retried with backoff (5s, 10s)
+  instead of accepted on the first try, to ride out a transient failure
+  of the network clone in item 1. Each attempt's `pip install` output is
+  appended to `install.log` under its own `=== attempt N ===` header
+  (the log is truncated once at the start of the run, not per attempt,
+  so the headers stay meaningful).
+* `pip install -v` (not a plain `pip install`) is used for every
+  attempt: **an earlier version of this hardening got this wrong**
+  -- without `-v`, `pip` swallows `setup.py`'s own stdout entirely, so
+  `install.log` held nothing but `pip`'s own "Successfully installed
+  fasm" even on a build that internally failed and fell back (verified
+  with a fake `cmake` that always exits 1: `install.log` had neither
+  "Failed to build ANTLR parser" nor the underlying cmake error, only
+  pip's success message -- exactly the "nothing is logged" the T5.8
+  review already flagged, which this hardening had not actually fixed).
+  With `-v`, the same fake-`cmake` run's `install.log` shows both
+  `AntlrCMakeBuild.run()`'s own message ("Failed to build ANTLR parser,
+  falling back on slower textX parser. Error: ...") and its traceback,
+  under each attempt's header, and a *persistent* failure's actual cause
+  is genuinely visible there now (not just after this hardening was
+  supposed to add it).
+* T0.4b's "deterministic or fail loudly" is met explicitly, not just by
+  the retries above: if `$ANTLR_BUILD_ATTEMPTS` is exhausted without a
+  successful build, `setup.sh` does **not** write the completion marker
+  and exits 1 (an earlier version of this hardening still wrote the
+  marker and exited 0 after a WARNING, which -- combined with the fast
+  no-op path only checking the marker's existence -- meant a machine
+  that hit the flakiness once would silently stay on textX-only
+  forever, never retrying). Set `ANTLR_OPTIONAL=1` to accept a
+  textX-only oracle deliberately instead (needed on a machine that
+  genuinely cannot build the ANTLR C++ extension at all; the CI oracle
+  job installs every ANTLR build dependency and is expected to build it,
+  so it does *not* set this).
+* A hard `pip install` failure (distinct from the internally-swallowed
+  ANTLR fallback -- see item 3) is not retried by this loop: it exits
+  the loop immediately and falls through to the existing
+  editable-install fallback, since retrying the exact same packaging
+  error would not help.
+
+Verified the two behaviours above directly with a fake `cmake` shim
+(prepended on `PATH`, always exits 1 except for `--version`) and
+`ANTLR_BUILD_ATTEMPTS=2`: `setup.sh --force` exited 1, `install.log`
+showed the fake failure and traceback under both attempts' headers, and
+`tests/oracle/venv/.oracle-setup-ok` was never created; the same fake
+`cmake` with `ANTLR_OPTIONAL=1` and `ANTLR_BUILD_ATTEMPTS=1` instead
+logged the WARNING, exited 0 and created the marker. A real
+(non-fake-`cmake`) `setup.sh --force` run still builds ANTLR
+successfully afterward.
+
+Neither `ANTLR_BUILD_ATTEMPTS`, `CMAKE_BUILD_PARALLEL_LEVEL` nor
+`ANTLR_OPTIONAL` are required inputs -- the first two have defaults
+(3 attempts, `min(nproc, 4)` jobs) and can be overridden
+(`ANTLR_BUILD_ATTEMPTS=5 CMAKE_BUILD_PARALLEL_LEVEL=1
+tests/oracle/setup.sh --force`) if a specific machine needs different
+values; `ANTLR_OPTIONAL` defaults to unset (i.e. off: ANTLR is required).
+
+**Considered and rejected:** redirecting item 1's `ExternalProject_Add`
+network clone to the already-fetched local `third_party/antlr4`
+submodule via `git -c url.<local-path>.insteadOf=https://github.com/
+antlr/antlr4.git` (settable from the environment with
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`, so no pinned
+file needs editing) would remove the network dependency entirely if it
+worked -- but it does not, because the submodule and the `ExternalProject`
+are pinned to two **different** commits of the same upstream repo
+(`third_party/antlr4`'s own pin is `c79b0fd8...`; `src/CMakeLists.txt`'s
+`ANTLR4_TAG` for this clone is `e4c1a74`), and the submodule is fetched
+`--depth 1` (shallow, that one commit only, by `setup.sh` step 3).
+Redirecting the URL would make `ExternalProject_Add` fetch from the
+local submodule clone as a remote, but `git fetch`ing commit `e4c1a74`
+from it would still fail with "object not found": a shallow clone's
+object store holds only the commit it was fetched at, not other commits
+of the same repository, so this still needs a real network fetch of
+`e4c1a74` specifically -- it would only move where that fetch happens
+from GitHub to a local shallow clone that also does not have it,
+gaining nothing.
 
 ## Parsers available on the machine this was last set up on
 
@@ -497,6 +640,45 @@ Measured sizes on the container this was developed in (`du -sh`):
 | `prjxray-db/artix7` | 181 MiB | ~6.3s |
 | `prjxray-db/spartan7` (added to the same clone) | 64 MiB | ~1.4s |
 | `prjuray-db/zynqusp` | 217 MiB | ~3.2s |
+
+#### `openxc7` (T5.8b): the snap's own bundled prjxray-db
+
+```sh
+tools/fetch-db.sh openxc7 artix7     # -> <cache>/prjxray-db-openxc7/artix7 (~188 MiB)
+```
+
+A **third, independently pinned copy** of Project X-Ray, distinct from
+both `prjxray-db/<family>` above (this section) and `prjuray-db/zynqusp`:
+the copy bundled *inside* the openXC7 snap that `tools/e2e/setup-openxc7.sh`
+installs for the end-to-end (T7.2/T7.6) tests. It is pinned to Project
+X-Ray commit `4c157493` (2021-12-14, per the snap's own
+`prjxray-db/Info.md`) via openXC7 snap `0.8.2`
+(sha256 `6b2e07ce99ef33d3a4e41e2fd2eb916f26bb0ece34a97216ed840a0032e98587`)
+and has real content differences from the `prjxray-db` pin above (extra
+`STARTUP`/`CFG_CENTER` ppips some designs' FASM legitimately needs) -- see
+`tools/e2e/README.md`, "A note on prjxray-db provenance", for the full
+list and why it matters.
+
+Deliberately named `prjxray-db-openxc7`, not `prjxray-db`, so it can
+never collide with this section's cache entry in the same
+`$FASM_DB_CACHE`. Gets just the db (no synthesis toolchain, no OSS CAD
+Suite): reuses `tools/e2e/build/openxc7/root` if `setup-openxc7.sh` has
+already run there, otherwise downloads only the ~200 MiB snap (sha256-
+verified against the pin above, three retries with backoff, deleted
+again once extracted) and runs a *targeted* `unsquashfs` that extracts
+only the requested family's directory from it, never the ~1.3 GiB the
+snap holds in total. Every extracted file's sha256 is recorded in
+`<family>/.manifest.sha256` and checked on the next run to decide
+whether to skip re-extracting. Needs `unsquashfs` (`squashfs-tools`) and,
+unless the toolchain install already exists, network access to
+`github.com`; skips a family (exit 0, one clear line) rather than
+failing when either is unavailable -- this database is optional, only
+needed by the T7.2/T7.6 tests that deliberately compare against it.
+
+`tools/e2e/snap_prjxray_db.py` is the one helper `tests/e2e/
+test_fpgas_online.py` and `tests/e2e/test_nextpnr_examples.py` resolve
+this database through -- it tries this lean cache first, then
+`setup-openxc7.sh`'s full toolchain extraction, so either one works.
 
 ### Smoke tests (`tests/oracle/test_xilinx_oracle.py`)
 

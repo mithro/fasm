@@ -183,9 +183,16 @@ DEFAULT_ORACLE = os.path.join(REPO_ROOT, 'tests', 'oracle',
                               'fasm2frames-oracle')
 DEFAULT_RUST = os.path.join(REPO_ROOT, 'target', 'release', 'fasm2frames')
 DEFAULT_RUST_DIR = os.path.join(REPO_ROOT, 'target', 'release')
-DEFAULT_DB_CACHE = os.environ.get(
-    'FASM_DB_CACHE', os.path.join(REPO_ROOT, 'tests', 'oracle', 'build',
-                                  'db'))
+# The static (no env var, no --uray-oracle-dir) fallback of --db-cache,
+# used both in its help text and as the last resort of the runtime
+# resolution below (main()) -- which reads $FASM_DB_CACHE itself, fresh,
+# rather than through this constant, so this stays literally
+# tests/oracle/build/db regardless of the environment --help happens to
+# run in (an earlier version baked `os.environ.get('FASM_DB_CACHE', ...)`
+# into this constant, so a set $FASM_DB_CACHE made --help print the same
+# value twice under two different labels, "$FASM_DB_CACHE" and "else
+# <that same value>", which was actively misleading).
+DEFAULT_DB_CACHE = os.path.join(REPO_ROOT, 'tests', 'oracle', 'build', 'db')
 DEFAULT_WORK_DIR = os.path.join(REPO_ROOT, 'tests', 'oracle', 'build',
                                 'difftest-xilinx')
 MINI_DB = os.path.join(REPO_ROOT, 'rust', 'fasm-xilinx', 'testdata',
@@ -940,7 +947,14 @@ def oracle_identity(paths,
             for dirpath, dirnames, files in os.walk(top):
                 dirnames[:] = sorted(d for d in dirnames
                                      if d not in ('__pycache__', 'tests'))
-                if sub.endswith('lib') and not any(p in dirpath
+                # Match `packages` against the path relative to the oracle
+                # (venv) root, not the absolute path: an absolute checkout
+                # path containing e.g. "/fasm" (as .../fasm/tests/oracle/...
+                # does) would otherwise match every directory and hash the
+                # whole venv.
+                rel = '/' + os.path.relpath(dirpath, oracle_dir).replace(
+                    os.sep, '/')
+                if sub.endswith('lib') and not any(p in rel
                                                    for p in packages):
                     continue
                 for f in sorted(files):
@@ -1237,7 +1251,9 @@ def families_main(args, tools):
                   file=sys.stderr)
             return EXIT_NOT_SET_UP
         db = find_family(db_dirs, family)
-        if db is None and not args.no_fetch:
+        # --list only reports what --db-cache already has; it never
+        # fetches (same as --no-fetch).
+        if db is None and not args.no_fetch and not args.list:
             db = fetch_family(db_dirs, family)
         if db is None:
             print('difftest-xilinx: database of %s not found in %s' %
@@ -1973,10 +1989,13 @@ def main_prjuray(args):
     wanted = []
     for item in args.families:
         wanted += [f for f in item.split(',') if f]
-    for family in wanted or ([] if found else URAY_FETCH_FAMILIES):
-        if family not in found and not args.no_fetch:
-            if fetch_family(db_dirs, family, 'prjuray') is not None:
-                found = find_uray_families(db_dirs)
+    # --list only reports what --db-cache already has; it never fetches
+    # (same as --no-fetch).
+    if not args.list:
+        for family in wanted or ([] if found else URAY_FETCH_FAMILIES):
+            if family not in found and not args.no_fetch:
+                if fetch_family(db_dirs, family, 'prjuray') is not None:
+                    found = find_uray_families(db_dirs)
     families = wanted or sorted(found)
     absent = [f for f in families if f not in found]
     if absent or not families:
@@ -2123,11 +2142,12 @@ def main():
                         action='store_true',
                         help='only compare fasm2frames')
     parser.add_argument('--db-cache',
-                        default=DEFAULT_DB_CACHE,
+                        default=None,
                         help='directory of fetched databases, or several '
                         'separated by "%s" (searched in order; a family is '
-                        'fetched into the first) (default: $FASM_DB_CACHE '
-                        'or %%(default)s)' % os.pathsep)
+                        'fetched into the first) (default: $FASM_DB_CACHE, '
+                        'else <--uray-oracle-dir>/build/db if that exists, '
+                        'else %s)' % (os.pathsep, DEFAULT_DB_CACHE))
     parser.add_argument('--filter', help='only FASM files matching GLOB')
     parser.add_argument('--prjuray',
                         action='store_true',
@@ -2222,6 +2242,20 @@ def main():
                        help='keep the run directories (outputs, xdb cache)')
     group.add_argument('--json-report', help='write the result rows here')
     args = parser.parse_args()
+
+    # --db-cache default, resolved after parsing since it depends on
+    # --uray-oracle-dir: $FASM_DB_CACHE, else <uray-oracle-dir>/build/db if
+    # that exists, else tests/oracle/build/db of this checkout (same order
+    # as test_uray_corpus.find_db / test_gen_xilinx_corpus.real_uray_db).
+    if args.db_cache is None:
+        env_cache = os.environ.get('FASM_DB_CACHE')
+        uray_cache = os.path.join(args.uray_oracle_dir, 'build', 'db')
+        if env_cache:
+            args.db_cache = env_cache
+        elif os.path.isdir(uray_cache):
+            args.db_cache = uray_cache
+        else:
+            args.db_cache = DEFAULT_DB_CACHE
 
     # The Rust tools' binary database cache (FASM_XDB_CACHE, see
     # docs/rewrite/DESIGN-xilinx-db.md §8.8): a temporary directory of

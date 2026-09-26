@@ -55,11 +55,14 @@ import lzma
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO_ROOT / 'tools' / 'e2e'))
+import snap_prjxray_db  # noqa: E402
 CORPUS = REPO_ROOT / 'tests' / 'corpus' / 'xilinx'
 RUST = REPO_ROOT / 'target' / 'release'
 RUN = REPO_ROOT / 'tools' / 'e2e' / 'run-nextpnr-examples.sh'
@@ -69,8 +72,10 @@ DB_CACHE = Path(
 E2E_BUILD = Path(
     os.environ.get('OPENXC7_E2E_BUILD',
                    REPO_ROOT / 'tools' / 'e2e' / 'build'))
-SNAP_DB_CACHE = E2E_BUILD.joinpath('openxc7', 'root', 'opt', 'nextpnr-xilinx',
-                                   'external')
+# The snap's own bundled prjxray-db (T5.8b): tools/e2e/snap_prjxray_db.py
+# resolves either tools/fetch-db.sh's lean cache or setup-openxc7.sh's full
+# extraction. May be None if neither is set up; guarded at each use below.
+SNAP_DB_CACHE = snap_prjxray_db.db_cache(REPO_ROOT)
 NEXTPNR_XILINX_DIR = Path(
     os.environ.get(
         'NEXTPNR_XILINX_DIR',
@@ -191,6 +196,8 @@ def test_rust_fasm_parses(fasm, tmp_path):
 
 
 def _fasm2frames(fasm, tmp_path, db_cache):
+    if db_cache is None:
+        pytest.skip('no prjxray-db cache available')
     config = _config(fasm)
     db = db_cache / 'prjxray-db' / config['family']
     if not (db / config['part']).is_dir():

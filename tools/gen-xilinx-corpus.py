@@ -1465,7 +1465,8 @@ def main(argv=None):
                         help='also write <file>.expected.frm, the sparse '
                         'frames of each features file (without the PUDC_B '
                         'pull-up) computed by this generator\'s model of '
-                        'prjxray, a cross check')
+                        'prjxray (32-bit words) or, for a prjuray-db family, '
+                        'prjuray (16-bit words), a cross check')
     parser.add_argument('--no-errors',
                         action='store_true',
                         help='do not write errors/')

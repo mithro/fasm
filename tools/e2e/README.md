@@ -41,6 +41,11 @@ this task. Pinned URLs and their sha256 are recorded in
 `tools/e2e/setup-openxc7.sh`'s header comment and in
 `tools/e2e/build/openxc7/status.json` after a run.
 
+If all that is needed is the snap's *database* (e.g. to run the T7.2/T7.6
+tests against it without synthesizing anything), skip this whole install:
+`tools/fetch-db.sh openxc7 <family>` extracts just that (~65-215 MiB per
+family) -- see "A note on prjxray-db provenance" below.
+
 The openXC7 snap does **not** bundle yosys (its own `meta/snap.yaml`
 description says so explicitly: *"This package does not include Yosys,
 which needs to be installed separately"*) or any prebuilt chip database
@@ -317,13 +322,22 @@ identical against the Rust `fasm2frames` with *both* databases where
 applicable, and with the snap db everywhere (18/18 designs; see "Tests"
 below).
 
-**Recommendation for later tasks** (tracked by the orchestrator, not
-implemented here): `tools/fetch-db.sh` gaining an `openxc7` source that
-exposes the snap's bundled db at a stable, independent cache path (e.g.
-alongside its `prjxray`/`prjuray` sources) would let this corpus's
-differential tests select the right database by name instead of relying
-on `tools/e2e/build/openxc7`'s specific layout, and would let a
-future differential run pin *both* databases explicitly per FASM file.
+**Implemented (T5.8b):** `tools/fetch-db.sh openxc7 <family>` exposes the
+snap's bundled db at a stable, checksummed cache path,
+`$FASM_DB_CACHE/prjxray-db-openxc7/<family>`, without installing the
+~4 GiB toolchain above -- it downloads (or reuses, if already present)
+just the snap and extracts only the requested family's db directory from
+it with a targeted `unsquashfs <snap> opt/nextpnr-xilinx/external/
+prjxray-db/<family>` (the rest of the snap is never decompressed), then
+deletes the downloaded snap again. See its own usage comment
+(`tools/fetch-db.sh --help`, "openxc7") for the exact pin and layout.
+`tools/e2e/snap_prjxray_db.py` is the one helper both this cache and
+`tools/e2e/build/openxc7`'s full extraction are resolved through
+(`db_root(family)`, `db_cache()`); `tests/e2e/test_fpgas_online.py` and
+`tests/e2e/test_nextpnr_examples.py` both import it instead of hardcoding
+either layout, so either source works and the lean cache is tried first.
+Skips (exit 0, one line per family) rather than failing when network or
+`unsquashfs` is unavailable -- the snap db stays optional, as before.
 
 ### A LiteX chipdb-naming quirk (Arty a7-35)
 
