@@ -39,11 +39,10 @@ not built, since there is then nothing to compare the stub against
 (`maturin develop --release`, or a full `pip install .`, builds it; see
 docs/PYTHON.md "Install").
 
-Note: dir(fasm) is broken by a pre-existing, unrelated bug (fasm/__init__.py
-assigns a plain string to the module-level name ``__dir__``, which Python's
-dir() protocol then tries to call as fasm.__dir__()); this module therefore
-inspects modules with ``vars(...)`` instead of ``dir(...)`` throughout,
-which does not trigger that protocol.
+Inspects modules with ``vars(...)`` instead of ``dir(...)`` throughout:
+for a plain module with no custom ``__dir__``, ``dir(module)`` is just
+``sorted(vars(module))``, so the two give the same names either way;
+``vars(...)`` is used directly since the sort order does not matter here.
 """
 
 import ast

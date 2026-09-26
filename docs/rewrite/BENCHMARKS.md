@@ -589,6 +589,19 @@ path alternatives measured and rejected") moved it beyond noise.
 `annotated` did not change (its cost is in annotation/comment scanning
 and allocation).
 
+**Final state after T8.2b** (T8.2b did not target the miss path or the
+hit path's memory bound, only its code shape; see "After T8.2b"
+below): `stress` cold is still 120-129 MB/s, below the 200 MB/s target,
+for the same reason (the interner's *miss* path, not the hit path
+T8.2b touched, dominates new-tile-name insertion). The interner hit
+path is still 51-52 ns against 37-38 ns for a flat `HashMap<String,
+u32>`, still memory bound in the level 0 probe's cache miss on the
+67,500 entry table. Both are unchanged in kind from the T8.2 numbers
+above; T8.2's six rejected alternatives (`DESIGN-idstring.md`, "T8.2:
+hit path alternatives measured and rejected") already establish that
+closing either needs more memory or a slower miss/parser path, which
+was not worth it then and is not re-tried here.
+
 ### idstring (`cargo bench -p fasm --bench idstring`, ns/op)
 
 | Operation | Before | After |
@@ -661,3 +674,145 @@ one no longer timing out at this session's bound but using 6.6 GiB).
 * No `perf` in this container, and the classifier refused a callgrind
   profile of the pips parse in this session, so the per line breakdown
   above comes from timing experiments, not a profile.
+
+## After T8.2b
+
+T8.2b's performance items (3-6), measured the same way as T8.2 (before
+= this branch's base commit, after = the T8.2b changes, alternating
+runs, best of 3-5 unless noted). No output changed byte for byte in
+any of these (checked below).
+
+**Item 3** (`find_pieces` called from `find_levels` with
+`#[inline(always)]` instead of the duplicated body): kept; see
+`DESIGN-idstring.md`'s "T8.2b: `find_pieces` called from `find_levels`,
+tried again" for the numbers (best 51.7 ns after vs. 53.4 ns before,
+`cargo bench -p fasm --bench idstring`, load average 3.1-3.8; no
+regression on the parser bench's `lut` class either).
+
+**Item 4** (`CanonicalLines::index`: `foldhash::fast::RandomState`
+instead of the default `SipHash`): kept. `fasm --canonical` on the
+1,000,000-line synthetic file (`tools/bench/run-benchmarks.py`'s
+`generate_synthetic_fasm`, 62 MB, same file item 6 of T8.2 used),
+output piped to `/dev/null`, four alternating rounds, load average
+0.5-4.0 (noisier than T8.2's 1.7-2.0 session; two rounds ran under load
+3-4, two under load 0.5-2):
+
+| Round | Before (s) | After (s) |
+|---|---:|---:|
+| 1 | 3.07 | 2.44 |
+| 2 | 2.11 | 2.03 |
+| 3 | 1.99 | 2.47 |
+| 4 | 2.37 | 2.01 |
+
+Best of 4: 1.99 s before, 2.01 s after; medians 2.24 s both. Tied within
+the noise of this session (the `lut`/`stress`-class swings elsewhere in
+this document are similar in size); output is byte identical before
+and after (`md5sum` of both runs' stdout matches:
+`5d805f752682e079005e7143666c753b`). Kept per the task's "keep only if
+not slower" rule, since it is not measurably slower and removes a
+SipHash instantiation the crate does not need elsewhere.
+
+**Item 5** (library `fasm_tuple_to_string(canonical=true)` still sorts
+formatted `String`s): not changed; see "Not done (item 5), and what
+would be involved" below.
+
+**Item 6 shortfalls, final state** (carried over from T8.2's "Not
+done", still true after T8.2b):
+
+* `stress` cold parser class: 120-129 MB/s cold (T8.2 table above),
+  still below the 200 MB/s target. Root cause unchanged: nearly every
+  line interns a new tile name, and the interner's *miss* path
+  (writer lock, `OnceLock::set`, the entry number CAS, index growth,
+  ~170-180 ns per new name) dominates; T8.2b's item 3 only touches the
+  *hit* path (`find_levels`/`find_pieces`), so it does not move this
+  number, and none of T8.2's six rejected alternatives (recorded in
+  `DESIGN-idstring.md`) did either.
+* Interner hit path: 51-52 ns vs. 37-38 ns for a flat
+  `HashMap<String, u32>`, still memory bound in the level 0 probe (the
+  67,500 entry index does not fit in cache); T8.2b's item 3 keeps this
+  at the T8.2 number (call-through instead of duplicated body, not a
+  new algorithm) rather than closing the gap. Closing it would need a
+  smaller or differently laid out level 0 table, which T8.2's six
+  rejected alternatives (whole name index, inline text buckets, lower
+  load factor, custom hash, forced inlining elsewhere, miss path reuse)
+  already tried and found not worth the memory or miss path cost.
+
+### Not done (item 5), and what would be involved
+
+* **Item 5** (`fasm::output::fasm_tuple_to_string(canonical=true)`'s
+  sort, used by the Python binding's fast path): not changed this
+  round; tracked as a follow-up (T8.2c) rather than declined outright,
+  since reuse turns out to be feasible, just not a small change.
+  `rust/fasm/src/output/line.rs`'s `fasm_tuple_to_string` renders every
+  line to zero or more `String`s with `fasm_line_to_string` (which
+  calls the same `try_canonical_features` the CLI's `render_canonical`
+  -> `CanonicalLines::push` path uses, so the *inputs* are the right
+  shape: single-bit `SetFasmFeature`s, bare or addressed), then
+  `rendered.sort(); rendered.dedup();` on the formatted `String`s — the
+  same "sort the formatted lines" fallback the CLI keeps only for the
+  rare `[`-in-name case (`canonical.rs`'s
+  `bracket_in_feature_name_falls_back_to_sorting_formatted_lines`
+  test, T8.2b item 1).
+
+  `sort_by_string` (T8.2 item 3, used by `merge_and_sort`'s fast path
+  in `rust/fasm/src/output/merge.rs` and its Python binding
+  `rust/fasm-python/src/merge.rs` — *not* by `fasm_tuple_to_string`,
+  which has no non-canonical sort to begin with) does not apply here
+  directly: it sorts already-interned `IdString` handles by resolving
+  each once, and the canonical path's lines are formatted
+  `FEATURE[address]` text, never interned. Even interning them would
+  not be enough on its own: `'.'` (0x2E) sorts before `'['` (0x5B), so
+  plain feature-name order is not line order — a bare feature whose
+  name is a prefix of another's is the reason `CanonicalLines`' entity
+  comparison (`cmp_entities`, this module's introduction above) treats
+  a bare feature as "name" and an addressed one as "name followed by
+  `[`" rather than just comparing names. That per-entity comparison,
+  not a generic string sort, is what makes the CLI's counting sort
+  correct, and it is exactly what would need reusing.
+
+  Reuse is feasible, just not a small change: `CanonicalLines`/`Sorted`
+  (`rust/fasm-cli/src/tool/canonical.rs`) already do everything
+  `fasm_tuple_to_string`'s canonical branch needs — `push` takes one
+  `SetFasmFeature` at a time with no ordering requirement on its
+  caller (the `last` field is only a same-feature-run cache; any other
+  order still resolves through the `index` map), and the CLI's own
+  `render_canonical` already propagates `try_canonical_features`'
+  `OutputError` per line with `?`, the same fallibility
+  `fasm_tuple_to_string` would need. Moving `CanonicalLines`/`Sorted`
+  from `fasm-cli` into `fasm::output` (so both crates can use them) is
+  mechanical. The one real adjustment is `Sorted::write_to`'s output
+  convention: it is built for `print()`-style stdout, not
+  `fasm_tuple_to_string`'s `String` return. Measured directly
+  (`fasm --canonical` on one and two line files): `write_to` always
+  appends **two** trailing newlines (`"A.B\n\n"` for one line, `"\n\n"`
+  for none), while `fasm_tuple_to_string` does `rendered.join("\n");
+  out.push('\n')` (one trailing newline: `"A.B\n"` for one line, a
+  lone `"\n"` for none). A reused `Sorted` would need a second
+  rendering method using the library's join convention instead of (or
+  alongside) `write_to`'s.
+
+  Left undone this round because the benefit is unproven, not because
+  reuse is architecturally blocked: the Python binding's fast path
+  (`rust/fasm-python/src/lib.rs`'s `fasm_tuple_to_string`) already pays
+  for building a Python `list` of `FasmLine` tuples on the way in and
+  converting the final `String` back to a Python `str` on the way out;
+  those conversions plausibly dominate over an `O(n log n)` sort of
+  already-short formatted lines, in which case swapping the sort
+  algorithm would not be measurable at the Python call boundary this
+  item's own bench target (`tools/bench`'s Python fast-path benchmark)
+  measures at. That should be checked with a profile or an isolated
+  Rust-side micro-benchmark before spending the (contained but
+  non-trivial) effort of the move above.
+
+  **Follow-up for `docs/rewrite/TASKS.md`** (to add under T8.2b):
+
+  > - [ ] T8.2c Library canonical sort: move `CanonicalLines`/`Sorted`
+  >       (`rust/fasm-cli/src/tool/canonical.rs`) into `fasm::output`
+  >       and have `fasm_tuple_to_string(canonical=true)` use them
+  >       instead of `rendered.sort(); rendered.dedup()` on formatted
+  >       `String`s, adding a join-convention rendering next to
+  >       `write_to`'s print-style one (see BENCHMARKS.md, "After
+  >       T8.2b", item 5). Profile or micro-benchmark first: the
+  >       Python fast path's list/str conversions may already dominate
+  >       over the sort, in which case this would not be measurable
+  >       there (after T8.2).

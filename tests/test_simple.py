@@ -40,6 +40,17 @@ def check_round_trip(test, parser, result):
 
 
 class TestFasm(unittest.TestCase):
+    def test_dir_fasm(self):
+        # The original package's fasm/__init__.py assigns a plain string to
+        # the module-level name __dir__, which Python's dir() protocol then
+        # tries to call, raising TypeError ('str' object is not callable).
+        # This rewrite renames that attribute to PACKAGE_DIR so dir(fasm)
+        # works (docs/rewrite/COMPAT.md, "Python bindings").
+        names = dir(fasm)
+        self.assertIn('fasm_tuple_to_string', names)
+        self.assertIn('PACKAGE_DIR', names)
+        self.assertNotIn('__dir__', names)
+
     def test_blank_file(self):
         for name, parser in parsers.items():
             with self.subTest(name, parser=name):

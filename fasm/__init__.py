@@ -69,7 +69,11 @@ except ImportError:
         version_str = _metadata_version('fasm')
     except Exception:
         version_str = "UNKNOWN"
-__dir__ = os.path.split(os.path.abspath(os.path.realpath(__file__)))[0]
+#: Directory this package was loaded from (matches the original package's
+#: undocumented ``__dir__`` module attribute, renamed here because a
+#: module-level ``__dir__`` is called by Python's ``dir()`` protocol, which
+#: broke ``dir(fasm)`` in the original -- see ``docs/rewrite/COMPAT.md``).
+PACKAGE_DIR = os.path.split(os.path.abspath(os.path.realpath(__file__)))[0]
 __version__ = version_str
 
 
