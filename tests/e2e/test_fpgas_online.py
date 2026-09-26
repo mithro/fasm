@@ -321,6 +321,7 @@ def test_difftest_xilinx_over_corpus():
     result = subprocess.run(
         [sys.executable, str(DIFFTEST_XILINX),
          '--db-cache', str(snap_prjxray_db.db_cache()),
+         '--no-fetch',
          '--filter',
          'tests/corpus/xilinx/artix7/designs/fpgas.online-test-designs/*/arty/*.fasm'],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)

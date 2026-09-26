@@ -183,9 +183,16 @@ DEFAULT_ORACLE = os.path.join(REPO_ROOT, 'tests', 'oracle',
                               'fasm2frames-oracle')
 DEFAULT_RUST = os.path.join(REPO_ROOT, 'target', 'release', 'fasm2frames')
 DEFAULT_RUST_DIR = os.path.join(REPO_ROOT, 'target', 'release')
-DEFAULT_DB_CACHE = os.environ.get(
-    'FASM_DB_CACHE', os.path.join(REPO_ROOT, 'tests', 'oracle', 'build',
-                                  'db'))
+# The static (no env var, no --uray-oracle-dir) fallback of --db-cache,
+# used both in its help text and as the last resort of the runtime
+# resolution below (main()) -- which reads $FASM_DB_CACHE itself, fresh,
+# rather than through this constant, so this stays literally
+# tests/oracle/build/db regardless of the environment --help happens to
+# run in (an earlier version baked `os.environ.get('FASM_DB_CACHE', ...)`
+# into this constant, so a set $FASM_DB_CACHE made --help print the same
+# value twice under two different labels, "$FASM_DB_CACHE" and "else
+# <that same value>", which was actively misleading).
+DEFAULT_DB_CACHE = os.path.join(REPO_ROOT, 'tests', 'oracle', 'build', 'db')
 DEFAULT_WORK_DIR = os.path.join(REPO_ROOT, 'tests', 'oracle', 'build',
                                 'difftest-xilinx')
 MINI_DB = os.path.join(REPO_ROOT, 'rust', 'fasm-xilinx', 'testdata',
