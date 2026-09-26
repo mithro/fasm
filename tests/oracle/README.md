@@ -84,21 +84,26 @@ The script:
    pkg-config` (system libraries the ANTLR build needs; requires root or
    passwordless `sudo`, and network access to the distro package mirror).
 4. Installs the pinned `fasm` package from `pristine-src` into the venv
-   (see above; non-editable, with an editable-of-`pristine-src` fallback).
-   `setup.py` itself already attempts to build the ANTLR C++ parser
-   extension via CMake and **falls back to the textX-only install on any
-   build failure** (missing submodules, missing `uuid.h`, no C++17
-   compiler, ...); this script does not need to (and does not) duplicate
-   that fallback logic, it just makes the prerequisites available on a
-   best effort basis first.
-5. Records which parsers ended up available, the pin, and the install mode
-   in `tests/oracle/build/status.json`, and touches
+   (see above; non-editable, with an editable-of-`pristine-src`
+   fallback). `setup.py` itself already attempts to build the ANTLR C++
+   parser extension via CMake and **falls back to the textX-only install
+   on any build failure** (missing submodules, missing `uuid.h`, no
+   C++17 compiler, ...); this script makes the prerequisites available
+   on a best effort basis first, then (T0.4b, see below) retries that
+   attempt up to `$ANTLR_BUILD_ATTEMPTS` times and, unless
+   `ANTLR_OPTIONAL=1` is set, treats an ANTLR build that never succeeds
+   as a hard failure rather than silently accepting the textX-only
+   fallback.
+5. On success, records which parsers ended up available, the pin, and
+   the install mode in `tests/oracle/build/status.json`, and touches
    `tests/oracle/venv/.oracle-setup-ok` as a completion marker so a plain
    re-run is a fast no-op (the ANTLR build alone takes roughly a minute
    the first time, since it compiles the antlr4 C++ runtime from source).
-   Logs from each step are kept in `tests/oracle/build/` (`worktree.log`,
-   `submodule.log`, `apt.log`, `install.log`) for debugging a failed or
-   partial build.
+   `status.json` is written even when step 4 ultimately fails (useful for
+   debugging), but the completion marker is not, unless `ANTLR_OPTIONAL=1`
+   -- see T0.4b below for why. Logs from each step are kept in
+   `tests/oracle/build/` (`worktree.log`, `submodule.log`, `apt.log`,
+   `install.log`) for debugging a failed or partial build.
 
 Run `tests/oracle/setup.sh --force` any time you want to re-attempt the
 ANTLR build for the current pin (e.g. after installing a missing system
@@ -169,22 +174,78 @@ the failure is still exactly the case the task asked to harden for):
   that falls back to textX-only is retried with backoff (5s, 10s)
   instead of accepted on the first try, to ride out a transient failure
   of the network clone in item 1. Each attempt's `pip install` output is
-  appended to `install.log` under its own `=== attempt N ===` header, so
-  a *persistent* failure's actual cause is still visible there (this
-  did not change: the underlying `except BaseException` still means a
-  failure's Python traceback, not a bare exit code, is the only signal --
-  `setup.sh` cannot see more than `setup.py` chooses to print).
+  appended to `install.log` under its own `=== attempt N ===` header
+  (the log is truncated once at the start of the run, not per attempt,
+  so the headers stay meaningful).
+* `pip install -v` (not a plain `pip install`) is used for every
+  attempt: **an earlier version of this hardening got this wrong**
+  -- without `-v`, `pip` swallows `setup.py`'s own stdout entirely, so
+  `install.log` held nothing but `pip`'s own "Successfully installed
+  fasm" even on a build that internally failed and fell back (verified
+  with a fake `cmake` that always exits 1: `install.log` had neither
+  "Failed to build ANTLR parser" nor the underlying cmake error, only
+  pip's success message -- exactly the "nothing is logged" the T5.8
+  review already flagged, which this hardening had not actually fixed).
+  With `-v`, the same fake-`cmake` run's `install.log` shows both
+  `AntlrCMakeBuild.run()`'s own message ("Failed to build ANTLR parser,
+  falling back on slower textX parser. Error: ...") and its traceback,
+  under each attempt's header, and a *persistent* failure's actual cause
+  is genuinely visible there now (not just after this hardening was
+  supposed to add it).
+* T0.4b's "deterministic or fail loudly" is met explicitly, not just by
+  the retries above: if `$ANTLR_BUILD_ATTEMPTS` is exhausted without a
+  successful build, `setup.sh` does **not** write the completion marker
+  and exits 1 (an earlier version of this hardening still wrote the
+  marker and exited 0 after a WARNING, which -- combined with the fast
+  no-op path only checking the marker's existence -- meant a machine
+  that hit the flakiness once would silently stay on textX-only
+  forever, never retrying). Set `ANTLR_OPTIONAL=1` to accept a
+  textX-only oracle deliberately instead (needed on a machine that
+  genuinely cannot build the ANTLR C++ extension at all; the CI oracle
+  job installs every ANTLR build dependency and is expected to build it,
+  so it does *not* set this).
 * A hard `pip install` failure (distinct from the internally-swallowed
   ANTLR fallback -- see item 3) is not retried by this loop: it exits
   the loop immediately and falls through to the existing
   editable-install fallback, since retrying the exact same packaging
   error would not help.
 
-Neither `ANTLR_BUILD_ATTEMPTS` nor `CMAKE_BUILD_PARALLEL_LEVEL` are
-required inputs -- both have defaults (3 attempts, `min(nproc, 4)` jobs)
-and can be overridden (`ANTLR_BUILD_ATTEMPTS=5 CMAKE_BUILD_PARALLEL_LEVEL=1
+Verified the two behaviours above directly with a fake `cmake` shim
+(prepended on `PATH`, always exits 1 except for `--version`) and
+`ANTLR_BUILD_ATTEMPTS=2`: `setup.sh --force` exited 1, `install.log`
+showed the fake failure and traceback under both attempts' headers, and
+`tests/oracle/venv/.oracle-setup-ok` was never created; the same fake
+`cmake` with `ANTLR_OPTIONAL=1` and `ANTLR_BUILD_ATTEMPTS=1` instead
+logged the WARNING, exited 0 and created the marker. A real
+(non-fake-`cmake`) `setup.sh --force` run still builds ANTLR
+successfully afterward.
+
+Neither `ANTLR_BUILD_ATTEMPTS`, `CMAKE_BUILD_PARALLEL_LEVEL` nor
+`ANTLR_OPTIONAL` are required inputs -- the first two have defaults
+(3 attempts, `min(nproc, 4)` jobs) and can be overridden
+(`ANTLR_BUILD_ATTEMPTS=5 CMAKE_BUILD_PARALLEL_LEVEL=1
 tests/oracle/setup.sh --force`) if a specific machine needs different
-values.
+values; `ANTLR_OPTIONAL` defaults to unset (i.e. off: ANTLR is required).
+
+**Considered and rejected:** redirecting item 1's `ExternalProject_Add`
+network clone to the already-fetched local `third_party/antlr4`
+submodule via `git -c url.<local-path>.insteadOf=https://github.com/
+antlr/antlr4.git` (settable from the environment with
+`GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_0`/`GIT_CONFIG_VALUE_0`, so no pinned
+file needs editing) would remove the network dependency entirely if it
+worked -- but it does not, because the submodule and the `ExternalProject`
+are pinned to two **different** commits of the same upstream repo
+(`third_party/antlr4`'s own pin is `c79b0fd8...`; `src/CMakeLists.txt`'s
+`ANTLR4_TAG` for this clone is `e4c1a74`), and the submodule is fetched
+`--depth 1` (shallow, that one commit only, by `setup.sh` step 3).
+Redirecting the URL would make `ExternalProject_Add` fetch from the
+local submodule clone as a remote, but `git fetch`ing commit `e4c1a74`
+from it would still fail with "object not found": a shallow clone's
+object store holds only the commit it was fetched at, not other commits
+of the same repository, so this still needs a real network fetch of
+`e4c1a74` specifically -- it would only move where that fetch happens
+from GitHub to a local shallow clone that also does not have it,
+gaining nothing.
 
 ## Parsers available on the machine this was last set up on
 
