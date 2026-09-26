@@ -39,9 +39,10 @@ not built, since there is then nothing to compare the stub against
 (`maturin develop --release`, or a full `pip install .`, builds it; see
 docs/PYTHON.md "Install").
 
-Inspects modules with ``vars(...)`` instead of ``dir(...)`` throughout,
-since ``vars(...)`` gives exactly a module's own namespace without also
-picking up inherited/dunder names ``dir()`` would include.
+Inspects modules with ``vars(...)`` instead of ``dir(...)`` throughout:
+for a plain module with no custom ``__dir__``, ``dir(module)`` is just
+``sorted(vars(module))``, so the two give the same names either way;
+``vars(...)`` is used directly since the sort order does not matter here.
 """
 
 import ast
