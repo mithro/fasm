@@ -22,7 +22,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       C++ build succeeds) from the git history (`git worktree` of the
       pre-rewrite commit) so it can be used as a golden reference.
       `tests/oracle/run_fasm.py` wrapper. Document in `tests/oracle/README.md`.
-- [~] T0.4b Investigate the reported flakiness of the ANTLR extension build in
+- [r] T0.4b Investigate the reported flakiness of the ANTLR extension build in
       `tests/oracle/setup.sh` (T5.8 implementer saw it succeed once and fall
       back to textX on another identical run); make the build deterministic
       or fail loudly (after T0.4).
@@ -127,7 +127,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T5.8 Reference tool setup `tests/oracle/setup-xilinx.sh` (prjxray
       python package, f4pga-xc-fasm, prjxray C++ tools build) and database
       fetch script `tools/fetch-db.sh` (sparse clone per family) (after T0.4).
-- [~] T5.8b `tools/fetch-db.sh openxc7`: expose the openXC7 snap's bundled
+- [r] T5.8b `tools/fetch-db.sh openxc7`: expose the openXC7 snap's bundled
       prjxray-db (a snapshot with STARTUP/CFG_CENTER ppips that the pinned
       f4pga/prjxray-db lacks) at a stable, checksummed cache path so tests
       can select it without the full toolchain install (after T5.8, T7.2).
@@ -153,7 +153,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       an all-parts JSON report, and record that prjuray-db has no native
       UltraScale parts (covered by ToolsTestData and synthetic parts only).
 
-- [~] T6.3b Small follow-ups from the T6.3 review: `--expected-frm` help
+- [r] T6.3b Small follow-ups from the T6.3 review: `--expected-frm` help
       text mentions only the prjxray model; `oracle_identity` package
       filter matches `/fasm` in absolute paths (hashes the whole venv);
       `--prjuray --list` fetches the database first; `--db-cache` fallback

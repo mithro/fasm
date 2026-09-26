@@ -1011,3 +1011,14 @@ what happened, branch/commit references, open issues.
 * Fourth container restart interrupted T5.3b (4 commits kept); resumed.
 * Follow-ups T6.3b + T5.8b + T0.4b started as one task (Sonnet); T5.3b
   resumed and finishing.
+* Follow-ups implemented on branch `worktree-agent-a90a521d88835e869`
+  (6 commits): T6.3b (oracle_identity filter was hashing the whole venv
+  because the checkout path contains /fasm; --list never fetches;
+  --db-cache fallback; help; corpus README sizes), T5.8b (`fetch-db.sh
+  openxc7 <family>`: targeted unsquashfs of the snap db with sha256 and
+  manifest, tools/e2e/snap_prjxray_db.py helper used by the e2e tests),
+  T0.4b (root cause: the pinned setup.py clones the antlr4 runtime at
+  cmake build time, uses unbounded -j and swallows failures with
+  `except BaseException`; not reproduced in 3 runs; hardening:
+  CMAKE_BUILD_PARALLEL_LEVEL bounded, 3 attempts checked via
+  fasm.parser.available). Independent review (Opus) started.
