@@ -1086,3 +1086,14 @@ what happened, branch/commit references, open issues.
   causing fallbacks that delete the cache; docs must state the few ms
   target is still missed. The original agent is unresponsive, so a fresh
   Opus implementer applies the fixes on top of the branch.
+* T8.2b merged tree Python suites (fresh maturin build): 1890 passed / 39
+  skipped (test_simple, test_stubs, test_xilinx_python, test_rust_parser,
+  test_fast_paths).
+* T5.3b review fixes on branch `worktree-agent-a0d4ed8c7dd5a9836` (3
+  commits on 35ff71e): verify/clear/list see damaged files of this build
+  (name-based selection, read_format_version; format-1 files listed as
+  "other build"), positional reads (read_exact_at) for lazily decoded
+  tile types with fork tests that failed before and pass after, docs say
+  the few ms target is still missed (xc7a35t 22 -> 8.5 ms, xc7a200t 36
+  -> 29 ms, xczu3eg 23 -> 21 ms median). Short independent re-review
+  (Opus) of the three fixes started.
