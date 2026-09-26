@@ -560,7 +560,7 @@ The duplicated body in `find_levels` (see above) was there because
 calling `find_pieces` from it measurably slowed the hit path in T8.2.
 T8.2b tried it again with `#[inline(always)]` on `find_pieces` instead
 of the plain `#[inline]` it had (`find_levels` calling it, no body
-duplication): three alternating rounds each of `cargo bench -p fasm
+duplication): four alternating rounds each of `cargo bench -p fasm
 --bench idstring` (release, load average 3.1-3.8, noisier than T8.2's
 session), best of 5 per round for "intern (hit)":
 

@@ -713,7 +713,8 @@ not slower" rule, since it is not measurably slower and removes a
 SipHash instantiation the crate does not need elsewhere.
 
 **Item 5** (library `fasm_tuple_to_string(canonical=true)` still sorts
-formatted `String`s): not changed; see "Declined" below.
+formatted `String`s): not changed; see "Not done (item 5), and what
+would be involved" below.
 
 **Item 6 shortfalls, final state** (carried over from T8.2's "Not
 done", still true after T8.2b):
@@ -736,36 +737,82 @@ done", still true after T8.2b):
   load factor, custom hash, forced inlining elsewhere, miss path reuse)
   already tried and found not worth the memory or miss path cost.
 
-### Declined
+### Not done (item 5), and what would be involved
 
 * **Item 5** (`fasm::output::fasm_tuple_to_string(canonical=true)`'s
-  sort, used by the Python binding's fast path): declined for now,
-  documented rather than implemented. `rust/fasm/src/output/line.rs`'s
-  `fasm_tuple_to_string` renders every line to zero or more `String`s
-  with `fasm_line_to_string` (which calls the same
-  `try_canonical_features` the CLI's `try_canonical_features` ->
-  `CanonicalLines::push` path uses, so the *inputs* are the right
+  sort, used by the Python binding's fast path): not changed this
+  round; tracked as a follow-up (T8.2c) rather than declined outright,
+  since reuse turns out to be feasible, just not a small change.
+  `rust/fasm/src/output/line.rs`'s `fasm_tuple_to_string` renders every
+  line to zero or more `String`s with `fasm_line_to_string` (which
+  calls the same `try_canonical_features` the CLI's `render_canonical`
+  -> `CanonicalLines::push` path uses, so the *inputs* are the right
   shape: single-bit `SetFasmFeature`s, bare or addressed), then
   `rendered.sort(); rendered.dedup();` on the formatted `String`s — the
   same "sort the formatted lines" fallback the CLI keeps only for the
-  rare `[`-in-name case (this module's item 1 test). Porting the CLI's
-  entity-index-plus-counting-sort (`rust/fasm-cli/src/tool/
-  canonical.rs`) here is possible in principle (the `SetFasmFeature`
-  shapes line up) but is a design-level change, not a contained
-  follow-up: `CanonicalLines`/`Sorted` are CLI-internal, built around
-  one `SetFasmFeature` at a time from an infallible tool-side context
-  (already known to be canonical) and a `Write` sink, whereas
-  `fasm_tuple_to_string` builds one `String` in memory and must
-  propagate `OutputError` from `try_canonical_features` per line
-  (invalid input from an arbitrary Python-constructed `FasmLine` list,
-  not just parser output). Making that machinery generic over both
-  call sites, re-deriving its "same feature's lines are contiguous"
-  push-time invariant for an API that receives a `FasmLine` iterator
-  rather than parsing one file in order, and re-validating it against
-  the compatibility corpus and property tests is out of scope for this
-  follow-up's commit size and review bar. `sort_by_string` itself does
-  not apply directly either: it sorts `IdString` interner handles by
-  resolving each once, and the canonical path's formatted
-  `FEATURE[address]` strings are not interned (the address suffix
-  never is). Left as formatted-string sorting; the fast path already
-  uses `sort_by_string` on its non-canonical branch (T8.2 item 3).
+  rare `[`-in-name case (`canonical.rs`'s
+  `bracket_in_feature_name_falls_back_to_sorting_formatted_lines`
+  test, T8.2b item 1).
+
+  `sort_by_string` (T8.2 item 3, used by `merge_and_sort`'s fast path
+  in `rust/fasm/src/output/merge.rs` and its Python binding
+  `rust/fasm-python/src/merge.rs` — *not* by `fasm_tuple_to_string`,
+  which has no non-canonical sort to begin with) does not apply here
+  directly: it sorts already-interned `IdString` handles by resolving
+  each once, and the canonical path's lines are formatted
+  `FEATURE[address]` text, never interned. Even interning them would
+  not be enough on its own: `'.'` (0x2E) sorts before `'['` (0x5B), so
+  plain feature-name order is not line order — a bare feature whose
+  name is a prefix of another's is the reason `CanonicalLines`' entity
+  comparison (`cmp_entities`, this module's introduction above) treats
+  a bare feature as "name" and an addressed one as "name followed by
+  `[`" rather than just comparing names. That per-entity comparison,
+  not a generic string sort, is what makes the CLI's counting sort
+  correct, and it is exactly what would need reusing.
+
+  Reuse is feasible, just not a small change: `CanonicalLines`/`Sorted`
+  (`rust/fasm-cli/src/tool/canonical.rs`) already do everything
+  `fasm_tuple_to_string`'s canonical branch needs — `push` takes one
+  `SetFasmFeature` at a time with no ordering requirement on its
+  caller (the `last` field is only a same-feature-run cache; any other
+  order still resolves through the `index` map), and the CLI's own
+  `render_canonical` already propagates `try_canonical_features`'
+  `OutputError` per line with `?`, the same fallibility
+  `fasm_tuple_to_string` would need. Moving `CanonicalLines`/`Sorted`
+  from `fasm-cli` into `fasm::output` (so both crates can use them) is
+  mechanical. The one real adjustment is `Sorted::write_to`'s output
+  convention: it is built for `print()`-style stdout, not
+  `fasm_tuple_to_string`'s `String` return. Measured directly
+  (`fasm --canonical` on one and two line files): `write_to` always
+  appends **two** trailing newlines (`"A.B\n\n"` for one line, `"\n\n"`
+  for none), while `fasm_tuple_to_string` does `rendered.join("\n");
+  out.push('\n')` (one trailing newline: `"A.B\n"` for one line, a
+  lone `"\n"` for none). A reused `Sorted` would need a second
+  rendering method using the library's join convention instead of (or
+  alongside) `write_to`'s.
+
+  Left undone this round because the benefit is unproven, not because
+  reuse is architecturally blocked: the Python binding's fast path
+  (`rust/fasm-python/src/lib.rs`'s `fasm_tuple_to_string`) already pays
+  for building a Python `list` of `FasmLine` tuples on the way in and
+  converting the final `String` back to a Python `str` on the way out;
+  those conversions plausibly dominate over an `O(n log n)` sort of
+  already-short formatted lines, in which case swapping the sort
+  algorithm would not be measurable at the Python call boundary this
+  item's own bench target (`tools/bench`'s Python fast-path benchmark)
+  measures at. That should be checked with a profile or an isolated
+  Rust-side micro-benchmark before spending the (contained but
+  non-trivial) effort of the move above.
+
+  **Follow-up for `docs/rewrite/TASKS.md`** (to add under T8.2b):
+
+  > - [ ] T8.2c Library canonical sort: move `CanonicalLines`/`Sorted`
+  >       (`rust/fasm-cli/src/tool/canonical.rs`) into `fasm::output`
+  >       and have `fasm_tuple_to_string(canonical=true)` use them
+  >       instead of `rendered.sort(); rendered.dedup()` on formatted
+  >       `String`s, adding a join-convention rendering next to
+  >       `write_to`'s print-style one (see BENCHMARKS.md, "After
+  >       T8.2b", item 5). Profile or micro-benchmark first: the
+  >       Python fast path's list/str conversions may already dominate
+  >       over the sort, in which case this would not be measurable
+  >       there (after T8.2).
