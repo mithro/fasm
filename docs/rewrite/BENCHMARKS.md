@@ -589,6 +589,19 @@ path alternatives measured and rejected") moved it beyond noise.
 `annotated` did not change (its cost is in annotation/comment scanning
 and allocation).
 
+**Final state after T8.2b** (T8.2b did not target the miss path or the
+hit path's memory bound, only its code shape; see "After T8.2b"
+below): `stress` cold is still 120-129 MB/s, below the 200 MB/s target,
+for the same reason (the interner's *miss* path, not the hit path
+T8.2b touched, dominates new-tile-name insertion). The interner hit
+path is still 51-52 ns against 37-38 ns for a flat `HashMap<String,
+u32>`, still memory bound in the level 0 probe's cache miss on the
+67,500 entry table. Both are unchanged in kind from the T8.2 numbers
+above; T8.2's six rejected alternatives (`DESIGN-idstring.md`, "T8.2:
+hit path alternatives measured and rejected") already establish that
+closing either needs more memory or a slower miss/parser path, which
+was not worth it then and is not re-tried here.
+
 ### idstring (`cargo bench -p fasm --bench idstring`, ns/op)
 
 | Operation | Before | After |
@@ -661,3 +674,98 @@ one no longer timing out at this session's bound but using 6.6 GiB).
 * No `perf` in this container, and the classifier refused a callgrind
   profile of the pips parse in this session, so the per line breakdown
   above comes from timing experiments, not a profile.
+
+## After T8.2b
+
+T8.2b's performance items (3-6), measured the same way as T8.2 (before
+= this branch's base commit, after = the T8.2b changes, alternating
+runs, best of 3-5 unless noted). No output changed byte for byte in
+any of these (checked below).
+
+**Item 3** (`find_pieces` called from `find_levels` with
+`#[inline(always)]` instead of the duplicated body): kept; see
+`DESIGN-idstring.md`'s "T8.2b: `find_pieces` called from `find_levels`,
+tried again" for the numbers (best 51.7 ns after vs. 53.4 ns before,
+`cargo bench -p fasm --bench idstring`, load average 3.1-3.8; no
+regression on the parser bench's `lut` class either).
+
+**Item 4** (`CanonicalLines::index`: `foldhash::fast::RandomState`
+instead of the default `SipHash`): kept. `fasm --canonical` on the
+1,000,000-line synthetic file (`tools/bench/run-benchmarks.py`'s
+`generate_synthetic_fasm`, 62 MB, same file item 6 of T8.2 used),
+output piped to `/dev/null`, four alternating rounds, load average
+0.5-4.0 (noisier than T8.2's 1.7-2.0 session; two rounds ran under load
+3-4, two under load 0.5-2):
+
+| Round | Before (s) | After (s) |
+|---|---:|---:|
+| 1 | 3.07 | 2.44 |
+| 2 | 2.11 | 2.03 |
+| 3 | 1.99 | 2.47 |
+| 4 | 2.37 | 2.01 |
+
+Best of 4: 1.99 s before, 2.01 s after; medians 2.24 s both. Tied within
+the noise of this session (the `lut`/`stress`-class swings elsewhere in
+this document are similar in size); output is byte identical before
+and after (`md5sum` of both runs' stdout matches:
+`5d805f752682e079005e7143666c753b`). Kept per the task's "keep only if
+not slower" rule, since it is not measurably slower and removes a
+SipHash instantiation the crate does not need elsewhere.
+
+**Item 5** (library `fasm_tuple_to_string(canonical=true)` still sorts
+formatted `String`s): not changed; see "Declined" below.
+
+**Item 6 shortfalls, final state** (carried over from T8.2's "Not
+done", still true after T8.2b):
+
+* `stress` cold parser class: 120-129 MB/s cold (T8.2 table above),
+  still below the 200 MB/s target. Root cause unchanged: nearly every
+  line interns a new tile name, and the interner's *miss* path
+  (writer lock, `OnceLock::set`, the entry number CAS, index growth,
+  ~170-180 ns per new name) dominates; T8.2b's item 3 only touches the
+  *hit* path (`find_levels`/`find_pieces`), so it does not move this
+  number, and none of T8.2's six rejected alternatives (recorded in
+  `DESIGN-idstring.md`) did either.
+* Interner hit path: 51-52 ns vs. 37-38 ns for a flat
+  `HashMap<String, u32>`, still memory bound in the level 0 probe (the
+  67,500 entry index does not fit in cache); T8.2b's item 3 keeps this
+  at the T8.2 number (call-through instead of duplicated body, not a
+  new algorithm) rather than closing the gap. Closing it would need a
+  smaller or differently laid out level 0 table, which T8.2's six
+  rejected alternatives (whole name index, inline text buckets, lower
+  load factor, custom hash, forced inlining elsewhere, miss path reuse)
+  already tried and found not worth the memory or miss path cost.
+
+### Declined
+
+* **Item 5** (`fasm::output::fasm_tuple_to_string(canonical=true)`'s
+  sort, used by the Python binding's fast path): declined for now,
+  documented rather than implemented. `rust/fasm/src/output/line.rs`'s
+  `fasm_tuple_to_string` renders every line to zero or more `String`s
+  with `fasm_line_to_string` (which calls the same
+  `try_canonical_features` the CLI's `try_canonical_features` ->
+  `CanonicalLines::push` path uses, so the *inputs* are the right
+  shape: single-bit `SetFasmFeature`s, bare or addressed), then
+  `rendered.sort(); rendered.dedup();` on the formatted `String`s — the
+  same "sort the formatted lines" fallback the CLI keeps only for the
+  rare `[`-in-name case (this module's item 1 test). Porting the CLI's
+  entity-index-plus-counting-sort (`rust/fasm-cli/src/tool/
+  canonical.rs`) here is possible in principle (the `SetFasmFeature`
+  shapes line up) but is a design-level change, not a contained
+  follow-up: `CanonicalLines`/`Sorted` are CLI-internal, built around
+  one `SetFasmFeature` at a time from an infallible tool-side context
+  (already known to be canonical) and a `Write` sink, whereas
+  `fasm_tuple_to_string` builds one `String` in memory and must
+  propagate `OutputError` from `try_canonical_features` per line
+  (invalid input from an arbitrary Python-constructed `FasmLine` list,
+  not just parser output). Making that machinery generic over both
+  call sites, re-deriving its "same feature's lines are contiguous"
+  push-time invariant for an API that receives a `FasmLine` iterator
+  rather than parsing one file in order, and re-validating it against
+  the compatibility corpus and property tests is out of scope for this
+  follow-up's commit size and review bar. `sort_by_string` itself does
+  not apply directly either: it sorts `IdString` interner handles by
+  resolving each once, and the canonical path's formatted
+  `FEATURE[address]` strings are not interned (the address suffix
+  never is). Left as formatted-string sorting; the fast path already
+  uses `sort_by_string` on its non-canonical branch (T8.2 item 3).

@@ -51,7 +51,7 @@ use fasm::SetFasmFeature;
 #[derive(Default)]
 pub(super) struct CanonicalLines {
     /// Index of each distinct feature in `features`.
-    index: HashMap<IdString, u32>,
+    index: HashMap<IdString, u32, foldhash::fast::RandomState>,
     /// The distinct features, in order of appearance.
     features: Vec<IdString>,
     /// The feature pushed last and its index (the lines of one
