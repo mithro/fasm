@@ -83,6 +83,8 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(REPO_ROOT / 'tools' / 'e2e'))
+import snap_prjxray_db  # noqa: E402
 CORPUS_ROOT = (
     REPO_ROOT / 'tests' / 'corpus' / 'xilinx' / 'artix7' / 'designs' /
     'fpgas.online-test-designs')
@@ -101,15 +103,10 @@ DIFFTEST_XILINX = REPO_ROOT / 'tools' / 'difftest-xilinx.py'
 # and the whole LiteX openxc7 flow are built against for these designs),
 # and the two databases have verified, real content differences -- see
 # tools/e2e/README.md, "A note on prjxray-db provenance" (T7.2 review).
-# Resolved the same way tools/e2e/openxc7-env.sh resolves PRJXRAY_DB_DIR
-# (that script is bash-only, not sourced from here).
-OPENXC7_ROOT = REPO_ROOT / 'tools' / 'e2e' / 'build' / 'openxc7' / 'root'
-SNAP_PRJXRAY_DB_DIR = (
-    OPENXC7_ROOT / 'opt' / 'nextpnr-xilinx' / 'external' / 'prjxray-db')
-# tools/difftest-xilinx.py's --db-cache expects <db-cache>/prjxray-db/
-# <family>; the snap's own directory already ends in .../prjxray-db, so
-# the db-cache to pass it is that directory's parent.
-SNAP_DB_CACHE = SNAP_PRJXRAY_DB_DIR.parent
+# Resolved by tools/e2e/snap_prjxray_db.py (T5.8b): either
+# `tools/fetch-db.sh openxc7`'s lean, checksummed cache, or
+# `tools/e2e/setup-openxc7.sh`'s full extraction of the snap, whichever
+# is present.
 
 
 def _discover_designs():
@@ -256,13 +253,14 @@ require_rust_fasm2frames = pytest.mark.skipif(
         "this test will start comparing automatically once it lands"))
 
 require_snap_db = pytest.mark.skipif(
-    not SNAP_PRJXRAY_DB_DIR.is_dir(),
+    snap_prjxray_db.db_cache() is None,
     reason=(
-        f"{SNAP_PRJXRAY_DB_DIR} not found (run tools/e2e/setup-openxc7.sh "
-        "first). This corpus's .frm/.bit were regenerated specifically "
-        "against the openXC7 snap's own bundled prjxray-db (see "
-        "tools/e2e/README.md, 'A note on prjxray-db provenance'), so this "
-        "test deliberately never falls back to the differently-pinned "
+        "the openXC7 snap's own bundled prjxray-db was not found "
+        "(run 'tools/fetch-db.sh openxc7 artix7' or "
+        "tools/e2e/setup-openxc7.sh first). This corpus's .frm/.bit were "
+        "regenerated specifically against that db (see tools/e2e/"
+        "README.md, 'A note on prjxray-db provenance'), so this test "
+        "deliberately never falls back to the differently-pinned "
         "tests/oracle db -- that pairing can legitimately disagree for "
         "some designs (e.g. spi-flash-id's STARTUPE2 usage) and would "
         "produce a false failure, not a real one."))
@@ -279,10 +277,11 @@ def test_corpus_frames_match_rust_fasm2frames(design, board, fasm_path, tmp_path
     the committed reference .frm (also regenerated against the snap db)."""
     part, family = _config_for(design, board)
     assert part and family, f"could not resolve the part/family for {design}/{board}"
-    db_root = SNAP_PRJXRAY_DB_DIR / family
-    if not db_root.is_dir():
-        pytest.skip(f"{db_root} not found under the snap's prjxray-db "
-                     f"(family {family!r}); run tools/e2e/setup-openxc7.sh")
+    db_root = snap_prjxray_db.db_root(family)
+    if db_root is None:
+        pytest.skip(f"the snap's prjxray-db has no {family!r} family "
+                     "(run 'tools/fetch-db.sh openxc7 %s' or "
+                     "tools/e2e/setup-openxc7.sh)" % family)
 
     board_dir = fasm_path.parent
     frm_xz = board_dir / 'top.frm.xz'
@@ -321,7 +320,7 @@ def test_difftest_xilinx_over_corpus():
     to test_corpus_frames_match_rust_fasm2frames instead."""
     result = subprocess.run(
         [sys.executable, str(DIFFTEST_XILINX),
-         '--db-cache', str(SNAP_DB_CACHE),
+         '--db-cache', str(snap_prjxray_db.db_cache()),
          '--filter',
          'tests/corpus/xilinx/artix7/designs/fpgas.online-test-designs/*/arty/*.fasm'],
         cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
