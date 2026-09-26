@@ -553,3 +553,31 @@ measured against the unchanged binary in alternating runs, and not kept:
 What did help the parser is not probing faster but doing less around the
 probe: the scan hands the dot positions to `intern_split` and nothing
 validates the names as UTF-8 (see `BENCHMARKS.md`, "After T8.2").
+
+## T8.2b: `find_pieces` called from `find_levels`, tried again
+
+The duplicated body in `find_levels` (see above) was there because
+calling `find_pieces` from it measurably slowed the hit path in T8.2.
+T8.2b tried it again with `#[inline(always)]` on `find_pieces` instead
+of the plain `#[inline]` it had (`find_levels` calling it, no body
+duplication): three alternating rounds each of `cargo bench -p fasm
+--bench idstring` (release, load average 3.1-3.8, noisier than T8.2's
+session), best of 5 per round for "intern (hit)":
+
+| Round | Duplicated body (before) | Call through `#[inline(always)]` (after) |
+|---|---:|---:|
+| 1 | 61.6 | 51.7 |
+| 2 | 53.4 | 57.6 |
+| 3 | 54.3 | 52.6 |
+| 4 | 56.4 | 52.8 |
+
+Best of the four rounds: 53.4 ns before, 51.7 ns after; medians 54.9 vs.
+52.7. The call-through version is at or slightly below the duplicated
+body given the run to run noise at this load, matching the ~51 ns target
+in `BENCHMARKS.md`'s "After T8.2" table, and a spot check of `cargo
+bench -p fasm --bench parser`'s `lut` class (the one the T8.2 attempt at
+forcing inlining elsewhere regressed, 420 -> 367 MB/s) found no
+regression (452/485/496 MB/s before vs. 448/455/493 MB/s after, cold
+then two warm runs, within the ranges `BENCHMARKS.md` already records).
+Kept: `find_levels` now calls `find_pieces` (`#[inline(always)]`)
+instead of repeating its body.
