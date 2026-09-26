@@ -173,7 +173,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T7.4 VTR: build VTR `genfasm`, run the VTR regression designs that can
       produce FASM (f4pga arch defs + VTR `utils/fasm/test`), add to corpus
       (after T1.5).
-- [r] T7.5 RapidWright: determine FASM/bitstream export capability, generate
+- [x] T7.5 RapidWright: determine FASM/bitstream export capability, generate
       reference data for the corpus designs, compare (after T5.6).
 - [x] T7.6 nextpnr-xilinx (openXC7) test designs beyond the two repos:
       `nextpnr-xilinx/xilinx/examples` designs (after T7.1).

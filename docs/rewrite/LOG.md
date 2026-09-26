@@ -996,3 +996,16 @@ what happened, branch/commit references, open issues.
   prjxray keeps counting under CTL1 bit 21), RapidWrightDCP has no
   licence file so its derived FASM/frames must not be committed. Fixes
   requested.
+* T7.5 done: review fixes (restored COMPAT C API and DESIGN §9 headings,
+  per-frame-CRC mechanism corrected, RapidWrightDCP has no licence file
+  so its derived FASM/frames are no longer committed but regenerated and
+  pinned by hash; expected DCP outcomes pinned in rwcheck.py). Merged
+  with --no-ff (d4aba34). Merged tree: fmt/clippy clean,
+  test_rapidwright.py 144 passed / 1 skipped, tests/cli + tests/e2e 3298
+  passed / 17 skipped, xilinx-difftest 96 files 387/387 + 270/270 + 6/6
+  identical, uray-difftest 268 runs 0 different. The RapidWright setup
+  (jar, device files, DCPs, schema; 162 MB) was copied to
+  tools/e2e/build/rapidwright without its venv; `tools/e2e/
+  setup-rapidwright.sh --with-interchange` recreates the venv. Worktree
+  removed. Phase 7 is complete.
+* Fourth container restart interrupted T5.3b (4 commits kept); resumed.
