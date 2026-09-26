@@ -1097,3 +1097,4 @@ what happened, branch/commit references, open issues.
   the few ms target is still missed (xc7a35t 22 -> 8.5 ms, xc7a200t 36
   -> 29 ms, xczu3eg 23 -> 21 ms median). Short independent re-review
   (Opus) of the three fixes started.
+* Fifth container restart interrupted the T5.3b fix re-review; resumed.
