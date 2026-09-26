@@ -1030,3 +1030,14 @@ what happened, branch/commit references, open issues.
   setup.sh still exits 0 and writes the marker (must fail loudly unless
   ANTLR_OPTIONAL=1); snap_prjxray_db db_root/db_cache disagree on the
   lookup order. Fixes requested. T5.3b still running.
+* Follow-ups T6.3b/T5.8b/T0.4b done: review fixes (pip -v so the ANTLR
+  failure cause is logged; setup.sh exits 1 and writes no marker when
+  ANTLR does not build unless ANTLR_OPTIONAL=1; url.insteadOf redirect
+  of the antlr4 clone investigated and shown not to work (different
+  pinned commit, shallow submodule); snap_prjxray_db lean cache first
+  in both lookups with a safe shim; fetch-db.sh openxc7 hard fails on a
+  sha256 mismatch, one download per run, temp files under the cache dir
+  with a trap). Merged with --no-ff; verification (tests/cli+e2e,
+  xilinx-difftest, uray-difftest) runs in the background and is logged
+  below. Worktree removed.
+* T8.2b + T8.3b started as one task (Sonnet); T5.3b still to report.

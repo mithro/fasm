@@ -22,7 +22,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       C++ build succeeds) from the git history (`git worktree` of the
       pre-rewrite commit) so it can be used as a golden reference.
       `tests/oracle/run_fasm.py` wrapper. Document in `tests/oracle/README.md`.
-- [r] T0.4b Investigate the reported flakiness of the ANTLR extension build in
+- [x] T0.4b Investigate the reported flakiness of the ANTLR extension build in
       `tests/oracle/setup.sh` (T5.8 implementer saw it succeed once and fall
       back to textX on another identical run); make the build deterministic
       or fail loudly (after T0.4).
@@ -127,7 +127,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
 - [x] T5.8 Reference tool setup `tests/oracle/setup-xilinx.sh` (prjxray
       python package, f4pga-xc-fasm, prjxray C++ tools build) and database
       fetch script `tools/fetch-db.sh` (sparse clone per family) (after T0.4).
-- [r] T5.8b `tools/fetch-db.sh openxc7`: expose the openXC7 snap's bundled
+- [x] T5.8b `tools/fetch-db.sh openxc7`: expose the openXC7 snap's bundled
       prjxray-db (a snapshot with STARTUP/CFG_CENTER ppips that the pinned
       f4pga/prjxray-db lacks) at a stable, checksummed cache path so tests
       can select it without the full toolchain install (after T5.8, T7.2).
@@ -153,7 +153,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       an all-parts JSON report, and record that prjuray-db has no native
       UltraScale parts (covered by ToolsTestData and synthetic parts only).
 
-- [r] T6.3b Small follow-ups from the T6.3 review: `--expected-frm` help
+- [x] T6.3b Small follow-ups from the T6.3 review: `--expected-frm` help
       text mentions only the prjxray model; `oracle_identity` package
       filter matches `/fasm` in absolute paths (hashes the whole venv);
       `--prjuray --list` fetches the database first; `--db-cache` fallback
@@ -187,7 +187,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       150-164 MB/s (target 200) with ~48% of instructions in idstring
       interning and ~9% in UTF-8 validation of names; speed up the interner
       hit path and validate names byte-wise (they are ASCII by grammar).
-- [ ] T8.2b Performance follow-ups from the T8.2 review: the `stress`
+- [~] T8.2b Performance follow-ups from the T8.2 review: the `stress`
       parser class is still 120-129 MB/s cold (new tile name insertion
       ~175 ns each) and the interner hit path (51 ns vs 38 ns for a flat
       HashMap) is memory bound in the level-0 probe; add a unit test for
@@ -198,7 +198,7 @@ reviewed merge. Dependencies are listed as `(after Tn)`.
       canonical path still sorts formatted Strings (after T8.2).
 - [x] T8.3 Documentation: README update, crate docs, Python docs, C/C++ docs,
       `docs/rewrite/COMPAT.md`.
-- [ ] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
+- [~] T8.3b `fasm/__init__.py` binds a string to the module name `__dir__`
       (inherited from the original package, `dir(fasm)` raises TypeError);
       decide: fix with a COMPAT.md row (recommended, nothing relies on the
       crash) or keep for 1:1 compatibility and document (after T8.3).
