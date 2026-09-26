@@ -392,10 +392,23 @@ mod tests {
         lines.push(&addressed("B", 2));
         lines.push(&addressed("B", 10));
         lines.push(&bare("A["));
+        // A case where the fast (non-fallback) path would misorder: the
+        // bare feature literally named "A[1]x" and the addressed feature
+        // "A[5]" (feature "A" at address 5) are adjacent by their text
+        // ('1' < '5' right after the shared "A["), but an entity-based
+        // comparison that treats an addressed feature as "name, then
+        // bracket" would compare entity "A" (not "A[1]x") against "A[5]"
+        // and get the wrong order. Only the formatted-line fallback (this
+        // test) gets this right; it is exactly why `finish` switches to
+        // it whenever any feature name contains `[`.
+        lines.push(&bare("A[1]x"));
+        lines.push(&addressed("A", 5));
 
         let mut expected: Vec<String> = vec![
             "A[".to_string(),
+            "A[1]x".to_string(),
             "A[1]x[5]".to_string(),
+            "A[5]".to_string(),
             "B".to_string(),
             "B[2]".to_string(),
             "B[10]".to_string(),
