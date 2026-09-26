@@ -103,10 +103,13 @@ impl CanonicalLines {
             Some((id, index)) if id == feature.feature => index,
             _ => {
                 let next = self.features.len();
-                let index = *self
-                    .index
-                    .entry(feature.feature)
-                    .or_insert_with(|| u32::try_from(next).expect("fewer than 2^31 features"));
+                let index = *self.index.entry(feature.feature).or_insert_with(|| {
+                    // `2 * index + 1` below must fit in a `u32`, so `index`
+                    // (hence `next`) must stay below 2^31, not just below
+                    // 2^32 (what `u32::try_from` alone would check).
+                    assert!(next < 1 << 31, "fewer than 2^31 features");
+                    next as u32
+                });
                 if index as usize == next {
                     self.features.push(feature.feature);
                 }
